@@ -13,6 +13,7 @@
   // nodes) can re-render instantly from cache without a second decrypt call.
   const _processedIds   = new Set();
   const _decryptedCache = new Map();
+  const _warningCache   = new Map(); // msgId → {text, state} for sig-failed messages
 
   let _identity    = null;  // full two-line blob (age key + ed25519 priv)
   let _signingKey  = null;  // CryptoKey (Ed25519 private), imported on unlock
@@ -192,7 +193,10 @@
       const sigInput = new TextEncoder().encode(`${sid}:${cipher}`);
       const sigBytes = await crypto.subtle.sign('Ed25519', _signingKey, sigInput);
       // Clamp to 64 bytes — some Chromium builds return 65 bytes from Ed25519 sign.
-      const sig      = bytesToBase64Url(new Uint8Array(sigBytes).slice(0, 64));
+      // Use base64Disc encoding (/ → .) rather than base64Url (/ → _) for the sig.
+      // The Url variant can produce '__' which Discord's markdown engine strips from the DOM,
+      // corrupting the sig and causing spurious verification failures (e.g. 63-byte sigs).
+      const sig      = bytesToBase64Disc(new Uint8Array(sigBytes).slice(0, 64));
 
       _outgoingCache.set(sid, plain);
       await pasteIntoEditor(`${PREFIX}:${sid}:${cipher}:${sig}`);
@@ -277,14 +281,23 @@
 
     if (_processedIds.has(msgId)) {
       const cached = _decryptedCache.get(msgId);
-      if (cached && el.dataset.ageState !== 'ok') renderDecrypted(el, cached);
+      if (cached && el.dataset.ageState !== 'ok') {
+        renderDecrypted(el, cached);
+      } else if (!cached) {
+        // No decrypted content — check for a stored warning (e.g. sig failure).
+        // Discord re-renders message elements on edit/nav, resetting textContent
+        // to raw ciphertext. Re-apply the warning so it doesn't revert.
+        const warning = _warningCache.get(msgId);
+        if (warning && el.dataset.ageState !== 'ok')
+          markMessage(el, warning.text, warning.state);
+      }
       return;
     }
 
     const text = el.dataset.ageRaw ?? directTextContent(el).trim();
     if (!text.startsWith(PREFIX)) return;
 
-    const m = text.match(/^\[age\]:([A-Z0-9]+):([A-Za-z0-9\-.]+):([A-Za-z0-9_-]+)$/);
+    const m = text.match(/^\[age\]:([A-Z0-9]+):([A-Za-z0-9\-.]+):([A-Za-z0-9_.\-]+)$/);
     if (!m) return;
 
     el.dataset.ageRaw = text;
@@ -302,34 +315,91 @@
       return;
     }
 
+    // Claim this msgId immediately to prevent the MutationObserver from spawning
+    // a second concurrent IIFE while the first is still in flight (the markMessage
+    // call above mutates the DOM and can re-trigger processMessageNode).
+    // CONTACTS_UPDATED selectively evicts non-ok entries when contacts change.
+    _processedIds.add(msgId);
     markMessage(el, '🔒 Decrypting…', 'pending');
 
     (async () => {
-      const contact     = getContact();
-      const sigInput    = new TextEncoder().encode(`${m[1]}:${m[2]}`);
+      const contact  = getContact();
+      const sigInput = new TextEncoder().encode(`${m[1]}:${m[2]}`);
+      // Detect sig encoding: new messages use base64Disc (/ → ., no _),
+      // old messages used base64Url (/ → _, no .). Decode accordingly.
       // Clamp to 64 bytes — some Chromium builds produce a 65-byte sign output.
-      const sigBytes    = base64UrlToBytes(m[3]).slice(0, 64);
+      const sigBytes = (m[3].includes('_') ? base64UrlToBytes(m[3]) : base64DiscToBytes(m[3])).slice(0, 64);
 
-      const contactKey  = contact ? await importVerifyKey(contact.ageRecipient).catch(() => null) : null;
-      const contactValid = contactKey
-        ? await crypto.subtle.verify('Ed25519', contactKey, sigBytes, sigInput)
-        : false;
+      // ── No contact for this channel ───────────────────────────────────────
+      // Show a clear warning and do not decrypt. The ciphertext is present but
+      // we have no trusted key to verify the signature against, so we cannot
+      // establish who sent it. The user should add this person as a contact.
+      if (!contact) {
+        _processedIds.add(msgId); // prevent re-processing on every observer tick
+        const noContactWarnText = '⚠️ Encrypted message — add sender as a contact to decrypt';
+        _warningCache.set(msgId, { text: noContactWarnText, state: 'warn' });
+        markMessage(el, noContactWarnText, 'warn');
+        return;
+      }
+
+      // ── Contact key verification ──────────────────────────────────────────
+      let contactKeyErr = null;
+      let contactValid  = false;
+
+      try {
+        const contactKey = await importVerifyKey(contact.ageRecipient);
+        contactValid = await crypto.subtle.verify('Ed25519', contactKey, sigBytes, sigInput);
+      } catch (e) {
+        contactKeyErr = e.message;
+      }
+
+      // ── Self key verification (fallback — message we sent ourselves) ──────
+      // A known limitation: you can replay your own messages to the same
+      // contact channel and they will decrypt, because self-signed messages
+      // are indistinguishable from originals. Cross-channel replay is blocked
+      // because the contact entry (and thus contactValid) would differ.
+      let selfKeyErr = null;
+      let selfValid  = false;
 
       if (!contactValid) {
-        const self        = await localGet(['ageRecipient']);
-        const selfKey     = self.ageRecipient
-          ? await importVerifyKey(self.ageRecipient).catch(() => null)
-          : null;
-        const selfValid   = selfKey
-          ? await crypto.subtle.verify('Ed25519', selfKey, sigBytes, sigInput)
-          : false;
-
-        if (!selfValid) {
-          console.error('[age] signature invalid', { msgId });
-          markMessage(el, '🔴 Signature invalid — possible tampering.', 'error');
-          return;
+        const self = await localGet(['ageRecipient']);
+        if (self.ageRecipient) {
+          try {
+            const selfKey = await importVerifyKey(self.ageRecipient);
+            selfValid = await crypto.subtle.verify('Ed25519', selfKey, sigBytes, sigInput);
+          } catch (e) {
+            selfKeyErr = e.message;
+          }
         }
       }
+
+      // ── Verdict ───────────────────────────────────────────────────────────
+      if (!contactValid && !selfValid) {
+        const reason = contactKeyErr  ? `Failed to import contact key for "${contact.username}": ${contactKeyErr}`
+                     : selfKeyErr     ? `Failed to import your own verify key: ${selfKeyErr}`
+                     :                  'Signature mismatch — possible tampering, cross-channel replay, or stale contact key.';
+
+        console.log('[age] signature invalid', {
+          msgId,
+          sessionId:  m[1],
+          sigB64url:  m[3],
+          sigByteLen: sigBytes.length,
+          contact:    contact.username,
+          contactKeyErr, contactValid,
+          selfKeyErr,    selfValid,
+          reason,
+        });
+
+        const shortReason = contactKeyErr ? 'contact key import error — see console'
+                          : selfKeyErr    ? 'your key import error — see console'
+                          :                 'possible tampering or cross-channel replay';
+        _processedIds.add(msgId); // prevent infinite re-processing on sig failure
+        const sigWarnText = '⚠️ Signature invalid (' + shortReason + ')';
+        _warningCache.set(msgId, { text: sigWarnText, state: 'warn' });
+        markMessage(el, sigWarnText, 'warn');
+        return; // do NOT decrypt — signature is the authenticity gate
+      }
+
       try {
         const plain = await decryptMessage(m[2]);
         _processedIds.add(msgId);
@@ -6498,17 +6568,40 @@
         const data   = await localGet(['contacts', 'globalOn']);
         _contacts = data.contacts || {};
         _globalOn = data.globalOn !== false;
+
         if (_globalOn && !prevOn) {
+          // Global toggle just turned ON — full rescan of everything.
           _processedIds.clear();
           _decryptedCache.clear();
+          _warningCache.clear();
           rescanPending();
         } else if (!_globalOn && prevOn) {
+          // Global toggle just turned OFF — clear all caches and mark visible
+          // messages as disabled.
           _processedIds.clear();
           _decryptedCache.clear();
+          _warningCache.clear();
           document.querySelectorAll('[id^="message-content-"][data-age-state="ok"]').forEach(el => {
             el.dataset.ageState = '';
             markMessage(el, '🔒 Decryption disabled.', 'pending');
           });
+        } else {
+          // Contacts changed (key edit, add, delete, import) but toggle state
+          // is unchanged. Evict only messages still in-flight (data-age-state
+          // !== 'ok') so they re-run verification against the updated _contacts.
+          // Already-decrypted messages stay cached — they were correctly
+          // verified against the key that was in effect when they arrived.
+          // This prevents the race where CONTACTS_UPDATED fires mid-flight and
+          // some concurrent IIFEs verify against the old key, some the new one.
+          document.querySelectorAll('[id^="message-content-"][data-age-raw]').forEach(el => {
+            if (el.dataset.ageState === 'ok') return;
+            const li = el.closest('li[id^="chat-messages-"]');
+            if (!li) return;
+            _processedIds.delete(li.id);
+            _decryptedCache.delete(li.id);
+            _warningCache.delete(li.id);
+          });
+          rescanPending();
         }
         return;
       }
@@ -6518,6 +6611,7 @@
         _signingKey = null;
         _processedIds.clear();
         _decryptedCache.clear();
+        _warningCache.clear();
         detachEnterHook();
         document.querySelectorAll('[id^="message-content-"][data-age-state="ok"]').forEach(el => {
           el.dataset.ageState = '';
