@@ -27,6 +27,7 @@
   let _globalOn        = true;
   let _selectedId      = null;
   let _sessionIdentity = null;  // decrypted two-line identity blob, kept for export
+  let _myKeyGeneration = 0;     // incremented on each showMyKey() call; guards stale async continuations
 
   // ─── Screen router ──────────────────────────────────────────────────────────
   const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact', 'my-key', 'about'];
@@ -352,12 +353,18 @@
   // ─── Main screen ─────────────────────────────────────────────────────────────
 
   async function showMain() {
+    // Navigate immediately so back buttons feel instant — don't wait for storage.
+    // We render with the current in-memory state first, then refresh from storage
+    // in case another context changed contacts or globalOn since last load.
+    document.getElementById('global-toggle').checked = _globalOn;
+    renderContacts();
+    show('main');
+    // Background refresh — updates the list if storage differs from memory.
     const data = await store.get(['contacts', 'globalOn']);
     _contacts = data.contacts || {};
     _globalOn = data.globalOn !== false;
     document.getElementById('global-toggle').checked = _globalOn;
     renderContacts();
-    show('main');
   }
 
   document.getElementById('global-toggle').addEventListener('change', async (e) => {
@@ -732,15 +739,25 @@
 
   // ─── My key screen ───────────────────────────────────────────────────────
 
-  document.getElementById('btn-back-key').addEventListener('click', showMain);
+  document.getElementById('btn-back-key').addEventListener('click', () => {
+    _myKeyGeneration++; // abort any in-flight showMyKey async continuations
+    showMain();
+  });
 
   async function showMyKey() {
+    const gen = ++_myKeyGeneration;
     const { ageRecipient } = await store.get(['ageRecipient']);
+    // If the back button was clicked while we were awaiting, abort.
+    if (gen !== _myKeyGeneration) return;
     if (!ageRecipient) return;
     document.getElementById('my-key-box').textContent = ageRecipient;
     document.getElementById('my-key-fp').textContent = 'Computing fingerprint…';
     show('my-key');
-    document.getElementById('my-key-fp').textContent = await keyFingerprint(ageRecipient);
+    const fp = await keyFingerprint(ageRecipient);
+    // Guard the second continuation too — back button may have been clicked
+    // after show('my-key') but before keyFingerprint resolved.
+    if (gen === _myKeyGeneration)
+      document.getElementById('my-key-fp').textContent = fp;
   }
 
   document.getElementById('btn-copy-key').addEventListener('click', async () => {
