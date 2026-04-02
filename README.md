@@ -1,10 +1,10 @@
-# Discord Age Encryption
+## Discord Age Encryption
 
 A browser extension that adds end-to-end encrypted messaging to Discord DMs. Messages are encrypted on your device before being sent — Discord's servers only see ciphertext.
 
 ---
 
-## Features
+### Features
 
 - 🔒 **End-to-end encrypted —** only you and your contact can read messages;
 - ✍️ **Signed messages —** every message is cryptographically signed, preventing tampering;
@@ -13,7 +13,7 @@ A browser extension that adds end-to-end encrypted messaging to Discord DMs. Mes
 
 ---
 
-## Cryptography
+### Cryptography
 
 Encryption uses [age](https://github.com/FiloSottile/typage) (X25519 key agreement + ChaCha20-Poly1305), a modern and well-audited encryption format. Each message is also signed with an Ed25519 signature, which guarantees that a message could only have been sent by the person who owns that keypair — any tampering or forgery is flagged immediately.
 
@@ -67,21 +67,21 @@ printf '%s' "age1..." | b3sum --length 64 | awk '{s=toupper($1); for(i=1;i<=leng
 
 ---
 
-## 🐛 Known Issues
+### 🐛 Known Issues
 
 Editing encrypted messages does not update the decrypted view. If you edit an already sent encrypted message, it'll continue to show the old decrypted content until you do a full page reload (`Ctrl+R`/`Cmd+R`). This is a limitation of how the extension hooks into Discord's React-based DOM and does not have a simple fix at this time. Contributions are welcome.
 
 ---
 
-## Installation
+### Installation
 
-### Chromium & Firefox
+#### Chromium & Firefox
 
 See the latest [release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest). Only Firefox supports auto update for the time being.
 
 ---
 
-## Getting started
+### Getting started
 
 **First time setup**
 
@@ -105,14 +105,14 @@ Once a contact is added and enabled, just type and press **Enter** — the exten
 
 ---
 
-## Key management
+### Key management
 
 - **Export private key —** requires passphrase re-entry. Save the exported blob somewhere safe (a password manager or encrypted vault). Anyone who has it can read and write encrypted messages on your behalf.
 - **Regenerate keypair —** creates a new keypair. All previous encrypted messages become permanently unreadable and all contacts are disabled. Use only if your key is compromised.
 
 ---
 
-## License
+### License
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
