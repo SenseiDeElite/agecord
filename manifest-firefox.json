@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Discord Age Encryption",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "End-to-end age encryption for Discord DMs.",
   "browser_specific_settings": {
     "gecko": {
@@ -29,6 +29,7 @@
   ],
   "background": {
     "scripts": [
+      "lib/age.min.js",
       "background.js"
     ]
   },
@@ -38,7 +39,6 @@
         "https://discord.com/*"
       ],
       "js": [
-        "lib/age.min.js",
         "content.js"
       ],
       "run_at": "document_idle"
