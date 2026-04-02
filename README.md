@@ -112,9 +112,9 @@ Once a contact is added and enabled, just type and press **Enter** — the exten
 
 ---
 
-### License
+### Licenses
 
-[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE)
 
 See [THIRD_PARTY_NOTICES.txt](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
 
