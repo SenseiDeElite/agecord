@@ -1,7 +1,5 @@
 # Discord Age Encryption
 
-[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-
 A browser extension that adds end-to-end encrypted messaging to Discord DMs. Messages are encrypted on your device before being sent — Discord's servers only see ciphertext.
 
 ---
@@ -116,8 +114,8 @@ Once a contact is added and enabled, just type and press **Enter** — the exten
 
 ## License
 
-GNU General Public License v3.0 — see [`LICENSE`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE).
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-See [`THIRD_PARTY_NOTICES.txt`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
+See [THIRD_PARTY_NOTICES.txt](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
 
 This extension is not affiliated with or endorsed by Discord Inc. or any of the projects mentioned.
