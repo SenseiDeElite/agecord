@@ -2,8 +2,10 @@
 //
 // Key storage : age identity (AGE-SECRET-KEY-1…) encrypted with a user passphrase,
 //               stored as base64 in chrome.storage.local.
-// Session     : decrypted identity kept in chrome.storage.session for the browser
-//               session; content scripts receive it via UNLOCK message on popup open.
+// Session     : decrypted identity is sent to background.js via SET_IDENTITY.
+//               background.js holds it in memory and in chrome.storage.session.
+//               Content scripts never receive the raw identity — they ask the
+//               background to encrypt/sign/decrypt on their behalf.
 
 (() => {
   'use strict';
@@ -15,6 +17,9 @@
     remove: keys => new Promise(r => chrome.storage.local.remove(keys, r)),
   };
 
+  // Send a fire-and-forget signal to all Discord tabs (RELOCK, CONTACTS_UPDATED).
+  // UNLOCK is handled by background.js directly — it signals tabs itself after
+  // SET_IDENTITY and also handles tab-reload unlock with retry logic.
   function sendToDiscordTabs(msg) {
     chrome.tabs.query({ url: 'https://discord.com/*' }, tabs => {
       for (const tab of tabs)
@@ -22,11 +27,26 @@
     });
   }
 
+  // Tell background.js about the identity (it stores it and imports the signing key),
+  // then signal Discord tabs only after the background confirms it is ready.
+  // Awaiting the response ensures applyIdentity() and session storage writes have
+  // both completed before any DECRYPT request can arrive from a content script.
+  async function setIdentityInBackground(identity) {
+    await chrome.runtime.sendMessage({ type: 'SET_IDENTITY', identity });
+    // Background confirmed ready — now safe to wake Discord tabs.
+    sendToDiscordTabs({ type: 'UNLOCK' });
+  }
+
+  // Tell background.js to wipe the identity.
+  async function clearIdentityInBackground() {
+    await chrome.runtime.sendMessage({ type: 'CLEAR_IDENTITY' });
+  }
+
   // ─── State ──────────────────────────────────────────────────────────────────
   let _contacts        = {};
   let _globalOn        = true;
   let _selectedId      = null;
-  let _sessionIdentity = null;  // decrypted two-line identity blob, kept for export
+  let _sessionIdentity = null;  // kept in popup memory for private key export only
   let _myKeyGeneration = 0;     // incremented on each showMyKey() call; guards stale async continuations
 
   // ─── Screen router ──────────────────────────────────────────────────────────
@@ -35,6 +55,8 @@
     screens.forEach(id => { document.getElementById(`screen-${id}`).hidden = (id !== screenId); });
 
   // ─── Session helpers ─────────────────────────────────────────────────────────
+  // The popup reads session state from storage to know if already unlocked on boot.
+  // All writes go through background.js (SET_IDENTITY / CLEAR_IDENTITY messages).
 
   async function getSessionIdentity() {
     try {
@@ -44,22 +66,6 @@
       }
     } catch {}
     return null;
-  }
-
-  async function setSession(identity) {
-    try {
-      if (chrome.storage.session) {
-        await new Promise(res => chrome.storage.session.set({ age_unlocked: true, age_identity: identity }, res));
-        return;
-      }
-    } catch {}
-  }
-
-  async function clearSession() {
-    try {
-      if (chrome.storage.session)
-        await new Promise(res => chrome.storage.session.remove(['age_unlocked', 'age_identity'], res));
-    } catch {}
   }
 
   // ─── Boot ───────────────────────────────────────────────────────────────────
@@ -78,7 +84,12 @@
     const identity = await getSessionIdentity();
     if (identity) {
       _sessionIdentity = identity;
-      sendToDiscordTabs({ type: 'UNLOCK', identity });
+      // background.js already holds the identity (it persisted it to session
+      // storage on the original unlock).  Re-signal Discord tabs in case any
+      // opened since then — background will handle retry logic on its own for
+      // tab-reload events; this covers tabs that were already open when the
+      // popup re-opens.
+      sendToDiscordTabs({ type: 'UNLOCK' });
       await showMain();
     } else {
       document.getElementById('btn-goto-setup').hidden = false;
@@ -108,7 +119,7 @@
   document.getElementById('btn-reset-confirm').addEventListener('click', async () => {
     document.getElementById('modal-reset-keypair').hidden = true;
     await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'contacts', 'globalOn']);
-    await clearSession();
+    await clearIdentityInBackground();
     _contacts = {};
     _globalOn = true;
     sendToDiscordTabs({ type: 'RELOCK' });
@@ -143,8 +154,8 @@
       if (!identityLines[1]?.startsWith('ed25519priv:'))
         throw new Error('Keypair missing Ed25519 signing key — please reset and generate a new keypair.');
 
-      await setSession(identity);
-      sendToDiscordTabs({ type: 'UNLOCK', identity });
+      await setIdentityInBackground(identity);
+      _sessionIdentity = identity;
       document.getElementById('passphrase-input').value = '';
       await showMain();
 
@@ -221,19 +232,18 @@
 
       const fullRecipient = recipient + ';ed25519:' + sigPubB64;
 
-      // scrypt N=14: strong enough without the noticeable freeze of the default N=18.
+      // scrypt N=18: the age default. Key generation runs in the popup page, not
+      // the service worker, so the UI can show a spinner without freezing.
       const enc = new age.Encrypter();
       enc.setPassphrase(pass);
-      enc.setScryptWorkFactor(14);
+      enc.setScryptWorkFactor(18);
       const encryptedB64 = bytesToBase64(await enc.encrypt(new TextEncoder().encode(identityBlob)));
 
       await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: encryptedB64, contacts: {}, globalOn: true });
-      await setSession(identityBlob);
+      await setIdentityInBackground(identityBlob);
       _sessionIdentity = identityBlob;
       _contacts = {};
       _globalOn = true;
-
-      sendToDiscordTabs({ type: 'UNLOCK', identity: identityBlob });
       await showMain();
 
     } catch (e) {
@@ -247,7 +257,9 @@
   // ─── Import existing keypair ────────────────────────────────────────────────
 
   const DRAFT_TTL           = 10 * 60 * 1000;
-  const IMPORT_DRAFT_FIELDS = ['import-blob', 'import-passphrase', 'import-passphrase2'];
+  // Intentionally excludes passphrase fields — passphrases must never be
+  // persisted, even to session storage.
+  const IMPORT_DRAFT_FIELDS = ['import-blob'];
 
   async function saveImportDraft() {
     const draft = { ts: Date.now() };
@@ -326,11 +338,11 @@
 
       const enc = new age.Encrypter();
       enc.setPassphrase(pass);
-      enc.setScryptWorkFactor(14);
+      enc.setScryptWorkFactor(18);
       const encryptedB64 = bytesToBase64(await enc.encrypt(new TextEncoder().encode(identityBlob)));
 
       await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: encryptedB64, contacts: {}, globalOn: true });
-      await setSession(identityBlob);
+      await setIdentityInBackground(identityBlob);
       _sessionIdentity = identityBlob;
       _contacts = {};
       _globalOn = true;
@@ -339,7 +351,6 @@
       document.getElementById('import-passphrase').value  = '';
       document.getElementById('import-passphrase2').value = '';
       clearImportDraft();
-      sendToDiscordTabs({ type: 'UNLOCK', identity: identityBlob });
       await showMain();
 
     } catch (e) {
@@ -374,7 +385,7 @@
   });
 
   document.getElementById('btn-lock').addEventListener('click', async () => {
-    await clearSession();
+    await clearIdentityInBackground();
     _sessionIdentity = null;
     sendToDiscordTabs({ type: 'RELOCK' });
     document.getElementById('passphrase-input').value = '';
@@ -668,6 +679,14 @@
       if (!channelId || !username || !ageRecipient) { skipped++; continue; }
       if (!/^\d+$/.test(channelId))                 { skipped++; continue; }
       if (!ageRecipient.startsWith('age1'))          { skipped++; continue; }
+      if (typeof username !== 'string' || username.length > 64) { skipped++; continue; }
+
+      // Validate key format the same way the manual add-contact flow does.
+      try {
+        const test = new age.Encrypter();
+        test.addRecipient(ageRecipient.split(';')[0]);
+        await test.encrypt(new TextEncoder().encode(''));
+      } catch { skipped++; continue; }
 
       const exists = Object.prototype.hasOwnProperty.call(_contacts, channelId);
       _contacts[channelId] = { username, ageRecipient, enabled: (enabled !== false) };
@@ -675,15 +694,10 @@
     }
 
     await store.set({ contacts: _contacts });
-    // Send CONTACTS_UPDATED so content scripts reload contacts from storage.
-    // Also re-send UNLOCK with the current session identity — the most reliable
-    // way to make content scripts pick up new contacts, since UNLOCK triggers a
-    // full re-init of _contacts + the enter-key hook in case the content script
-    // initialised before this import completed.
+    // CONTACTS_UPDATED tells content scripts to reload contacts from storage.
+    // No need to re-send UNLOCK — the background already holds the identity
+    // and content scripts are already unlocked.
     sendToDiscordTabs({ type: 'CONTACTS_UPDATED' });
-    if (_sessionIdentity) {
-      sendToDiscordTabs({ type: 'UNLOCK', identity: _sessionIdentity });
-    }
     renderContacts();
 
     const parts = [];
@@ -717,6 +731,16 @@
       const data = await new Promise(r =>
         chrome.storage.session.get(['pending_import', 'pending_import_tab'], r));
       if (!data.pending_import) return;
+      // Guard against oversized payloads that could exhaust session storage quota
+      // or cause a DoS on the import loop.
+      if (data.pending_import.length > 500_000) {
+        await new Promise(r => chrome.storage.session.remove(
+          ['pending_import', 'pending_import_tab'], r));
+        const msgEl = document.getElementById('modal-import-contacts-msg');
+        msgEl.textContent = 'Import failed — file too large (max 500 KB).';
+        document.getElementById('modal-import-contacts').hidden = false;
+        return;
+      }
       _importHelperTabId = data.pending_import_tab ?? null;
       await new Promise(r => chrome.storage.session.remove(
         ['pending_import', 'pending_import_tab'], r));
@@ -853,7 +877,7 @@
     Object.keys(_contacts).forEach(id => { _contacts[id].enabled = false; });
     await store.remove(['ageRecipient', 'ageEncryptedIdentity']);
     await store.set({ contacts: _contacts });
-    await clearSession();
+    await clearIdentityInBackground();
     _sessionIdentity = null;
     sendToDiscordTabs({ type: 'RELOCK' });
     document.getElementById('setup-passphrase').value  = '';
