@@ -6,11 +6,24 @@
 //
 // Identity lifecycle
 // ──────────────────
-//   popup unlocks/generates  →  SET_IDENTITY   →  background stores in memory
-//                                                  + chrome.storage.session
-//   popup locks / resets     →  CLEAR_IDENTITY →  background wipes memory
-//                                                  + chrome.storage.session
-//   service worker restarts  →  reads chrome.storage.session on first use
+//   popup unlocks/generates  →  SET_IDENTITY   →  background imports signing key,
+//                                                  generates a fresh AES-GCM session
+//                                                  key (heap only), encrypts the
+//                                                  identity blob with it, and stores
+//                                                  only the ciphertext in session storage.
+//   popup locks / resets     →  CLEAR_IDENTITY →  background nulls the session key and
+//                                                  wipes memory + session storage.
+//                                                  Ciphertext is permanently unreadable.
+//   service worker restarts  →  _sessionKey is gone (heap wiped).
+//                                  ensureIdentityLoaded() returns false immediately.
+//                                  User must re-enter passphrase to unlock again.
+//
+// Session storage schema (values are base64-disc encoded)
+// ────────────────────────────────────────────────────────
+//   age_unlocked      : boolean flag (true when a valid session exists)
+//   age_identity_ct   : AES-GCM-256 ciphertext of the identity blob
+//   age_identity_iv   : 12-byte random IV used for that encryption
+//   (no plaintext identity is ever written to any storage)
 //
 // Message protocol (content script → background)
 // ───────────────────────────────────────────────
@@ -44,31 +57,100 @@ if (typeof importScripts === 'function') {
 
 // ─── In-memory identity state ─────────────────────────────────────────────────
 
-let _identity   = null;  // two-line blob: "AGE-SECRET-KEY-1…\ned25519priv:…"
-let _signingKey = null;  // CryptoKey (Ed25519 private, non-extractable)
+let _identity     = null;  // two-line blob: "AGE-SECRET-KEY-1…\ned25519priv:…"
+let _signingKey   = null;  // CryptoKey (Ed25519 private, non-extractable)
+let _contacts     = null;  // decrypted contacts map — set via SET_CONTACTS
+let _ownRecipient = null;  // own public key string — set via SET_CONTACTS
+
+// AES-GCM-256 key used to encrypt the identity blob in session storage.
+// Generated fresh on every unlock.  Never stored anywhere — lives only in
+// this heap.  If the service worker restarts, this becomes null, making the
+// session ciphertext permanently unreadable: the user must re-enter their
+// passphrase.  non-extractable: the raw key bytes cannot be read out even
+// by this extension's own code.
+let _sessionKey = null;
+
+// ─── Encrypted session storage ────────────────────────────────────────────────
+
+async function writeEncryptedSession(identityBlob) {
+  _sessionKey = await crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    false,               // non-extractable — key bytes never leave the heap
+    ['encrypt', 'decrypt']
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    _sessionKey,
+    new TextEncoder().encode(identityBlob)
+  );
+  await chrome.storage.session.set({
+    age_unlocked:    true,
+    age_identity_ct: bytesToBase64Disc(new Uint8Array(ct)),
+    age_identity_iv: bytesToBase64Disc(iv),
+  });
+}
+
+async function readEncryptedSession() {
+  // If _sessionKey is null (worker restarted, heap wiped) there is nothing
+  // to decrypt — return null immediately without touching session storage.
+  if (!_sessionKey) return null;
+  try {
+    const data = await chrome.storage.session.get(
+      ['age_unlocked', 'age_identity_ct', 'age_identity_iv']
+    );
+    if (!data.age_unlocked || !data.age_identity_ct || !data.age_identity_iv) return null;
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: base64DiscToBytes(data.age_identity_iv) },
+      _sessionKey,
+      base64DiscToBytes(data.age_identity_ct)
+    );
+    return new TextDecoder().decode(plain);
+  } catch {
+    return null; // auth tag mismatch or other decryption failure → treat as locked
+  }
+}
 
 // ─── Restore from session storage after service worker restart ────────────────
+// With the encrypted session design this only succeeds when the worker did NOT
+// restart (heap state intact, _sessionKey present).  If the worker restarted,
+// _sessionKey is null → readEncryptedSession returns null → returns false →
+// caller gets 'Extension is locked.' and the user re-enters their passphrase.
 
 async function ensureIdentityLoaded() {
   if (_identity && _signingKey) return true;
+  if (!_sessionKey) return false;
   try {
-    const data = await chrome.storage.session.get(['age_unlocked', 'age_identity']);
-    if (!data.age_unlocked || !data.age_identity) return false;
-    await applyIdentity(data.age_identity);
+    const identityBlob = await readEncryptedSession();
+    if (!identityBlob) return false;
+    // writeSession=false: session key and ciphertext already exist; just
+    // re-import the signing key into the recovered heap state.
+    await applyIdentity(identityBlob, /* writeSession= */ false);
     return !!(_identity && _signingKey);
   } catch {
     return false;
   }
 }
 
-async function applyIdentity(identityBlob) {
+// applyIdentity(blob, writeSession)
+//   writeSession=true  (default) — fresh unlock or key generation: generate a
+//                                  new session key and write encrypted ciphertext.
+//   writeSession=false           — in-session heap recovery: _sessionKey is
+//                                  already present; only re-import signing key.
+
+async function applyIdentity(identityBlob, writeSession = true) {
   const line = identityBlob.split('\n')[1] ?? '';
   if (!line.startsWith('ed25519priv:')) throw new Error('No Ed25519 private key in identity blob');
   const pkcs8 = base64UrlToBytes(line.slice('ed25519priv:'.length));
   _signingKey = await crypto.subtle.importKey(
     'pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']
   );
-  _identity = identityBlob;
+  _identity     = identityBlob;
+  _contacts     = null;   // will be populated by SET_CONTACTS from popup
+  _ownRecipient = null;
+  if (writeSession) {
+    await writeEncryptedSession(identityBlob);
+  }
 }
 
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
@@ -199,23 +281,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const fromDiscord   = !!(sender.tab && sender.url?.startsWith('https://discord.com/'));
   const fromExtension = !sender.tab; // popup has no sender.tab
 
+  if (msg.type === 'GET_IDENTITY') {
+    // Popup requests the identity blob to re-derive its contacts key after
+    // reopening while a session is already live.  Only the popup (no sender.tab)
+    // may call this — content scripts never receive the raw identity.
+    if (!fromExtension) { sendResponse({ ok: false, error: 'Unauthorized' }); return true; }
+    if (!_identity) { sendResponse({ ok: false, error: 'Extension is locked.' }); return false; }
+    sendResponse({ ok: true, identity: _identity });
+    return false;
+  }
+
   if (msg.type === 'SET_IDENTITY') {
     if (!fromExtension) { sendResponse({ ok: false, error: 'Unauthorized' }); return true; }
+    // writeSession=true (default): generate fresh session key, write encrypted
+    // ciphertext to session storage.  No plaintext identity is stored anywhere.
     applyIdentity(msg.identity)
-      .then(() => chrome.storage.session.set({
-        age_unlocked: true,
-        age_identity: msg.identity,
-      }))
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
 
+  if (msg.type === 'SET_CONTACTS') {
+    // Popup sends decrypted contacts and own recipient after unlock.
+    // Content scripts then use GET_CONTACTS rather than reading local storage.
+    if (!fromExtension) { sendResponse({ ok: false, error: 'Unauthorized' }); return true; }
+    _contacts     = msg.contacts     ?? {};
+    _ownRecipient = msg.ownRecipient ?? null;
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.type === 'GET_CONTACTS') {
+    // Content scripts request the decrypted contact map and own recipient.
+    // Background is the sole source of truth for these values.
+    if (!fromDiscord) { sendResponse({ ok: false, error: 'Unauthorized' }); return true; }
+    sendResponse({ ok: true, contacts: _contacts ?? {}, ownRecipient: _ownRecipient ?? null });
+    return false;
+  }
+
   if (msg.type === 'CLEAR_IDENTITY') {
     if (!fromExtension) { sendResponse({ ok: false, error: 'Unauthorized' }); return true; }
-    _identity   = null;
-    _signingKey = null;
-    chrome.storage.session.remove(['age_unlocked', 'age_identity'])
+    _identity     = null;
+    _signingKey   = null;
+    _contacts     = null;
+    _ownRecipient = null;
+    // Null the session key first: the moment this is gone from the heap, the
+    // ciphertext in session storage becomes permanently unreadable — even if
+    // removal below is delayed, no decryption is possible.
+    _sessionKey = null;
+    chrome.storage.session.remove(['age_unlocked', 'age_identity_ct', 'age_identity_iv'])
       .then(() => sendResponse({ ok: true }))
       .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
