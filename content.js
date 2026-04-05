@@ -31,12 +31,25 @@
   let _unlocked    = false;
   let _contacts    = {};
   let _globalOn    = true;
+  let _ownRecipient = null;  // own public key, kept in sync via background
   let _msgObserver = null;
   let _banner      = null;
   let _bannerTimer = null;
 
-  const sleep    = ms => new Promise(r => setTimeout(r, ms));
-  const localGet = keys => new Promise(r => chrome.storage.local.get(keys, r));
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // Fetch decrypted contacts and own recipient from the background.
+  // Background is the sole source — contacts are encrypted in local storage
+  // and the background holds the only copy of the decrypted map.
+  async function bgGetContacts() {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: 'GET_CONTACTS' }, response => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+        else if (response?.ok) resolve(response);
+        else reject(new Error(response?.error ?? 'GET_CONTACTS failed'));
+      });
+    });
+  }
 
   // ─── DOM helpers ─────────────────────────────────────────────────────────────
 
@@ -134,16 +147,13 @@
     if (!plain || !contact || !channelId) return;
     _sending = true;
     try {
-      // Retrieve our own public key so the background can encrypt to ourselves
-      // as well as the contact (so we can read our own sent messages).
-      const selfData = await localGet(['ageRecipient']);
-
+      // Use the own recipient cached from background (set at UNLOCK time).
       const result = await bgSend({
         type:             'ENCRYPT',
         plain,
         channelId,
         contactRecipient: contact.ageRecipient,
-        selfRecipient:    selfData.ageRecipient ?? null,
+        selfRecipient:    _ownRecipient,
       });
 
       // Wire format: [age]:<cipher>:<sig>
@@ -332,14 +342,13 @@
       // and decryption atomically.  The raw key never enters this context.
       // selfKey is sent so the background can also verify messages we sent.
       try {
-        const selfData = await localGet(['ageRecipient']);
-        const result   = await bgSend({
+        const result = await bgSend({
           type:       'DECRYPT',
           cipher,
           sig:        sigRaw,
           channelId,
           contactKey: contact.ageRecipient,
-          selfKey:    selfData.ageRecipient ?? null,
+          selfKey:    _ownRecipient,
         });
 
         _cipherCache.set(cipher, { plain: result.plain });
@@ -6506,8 +6515,6 @@
   // ─── Extension messages ───────────────────────────────────────────────────────
 
   const LOCKED_MSG = '🔒 Unlock extension to decrypt.';
-  const LOCKED_BANNER = 'Discord Age Encryption is locked — click the extension icon to unlock.';
-
   function listenForMessages() {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
@@ -6516,9 +6523,10 @@
         // No identity payload — the private key stays in background.js.
         (async () => {
           try {
-            const data = await localGet(['contacts', 'globalOn']);
-            _contacts = data.contacts || {};
-            _globalOn = data.globalOn !== false;
+            const data = await bgGetContacts();
+            _contacts     = data.contacts     || {};
+            _ownRecipient = data.ownRecipient ?? null;
+            _globalOn     = data.globalOn     !== false;
             _unlocked = true;
             // Clear caches — re-decrypt everything with the freshly available background.
             _cipherCache.clear();
@@ -6537,9 +6545,10 @@
 
       if (msg.type === 'CONTACTS_UPDATED') {
         const prevOn = _globalOn;
-        localGet(['contacts', 'globalOn']).then(data => {
-          _contacts = data.contacts || {};
-          _globalOn = data.globalOn !== false;
+        bgGetContacts().then(data => {
+          _contacts     = data.contacts     || {};
+          _ownRecipient = data.ownRecipient ?? null;
+          _globalOn     = data.globalOn     !== false;
 
           if (_globalOn && !prevOn) {
             _cipherCache.clear();
@@ -6576,7 +6585,6 @@
           el.dataset.ageState = '';
           markMessage(el, LOCKED_MSG, 'pending');
         });
-        showBanner(LOCKED_BANNER, 'info', false);
         return false;
       }
     });
@@ -6602,9 +6610,10 @@
   async function init() {
     listenForMessages();
     startNavObserver();
-    const data = await localGet(['contacts', 'globalOn']);
-    _contacts = data.contacts || {};
-    _globalOn = data.globalOn !== false;
+    const data = await bgGetContacts().catch(() => ({ contacts: {}, ownRecipient: null, globalOn: true }));
+    _contacts     = data.contacts     || {};
+    _ownRecipient = data.ownRecipient ?? null;
+    _globalOn     = data.globalOn     !== false;
     // Check if the background already has a live identity (e.g. the content
     // script is initialising into a tab that was already open while unlocked).
     // We read only the flag — never the identity itself.
@@ -6615,9 +6624,7 @@
         attachEnterHook();
       }
     } catch { /* session storage unavailable — stay locked */ }
-    waitForMessageList(() => {
-      if (!_unlocked) showBanner(LOCKED_BANNER, 'info', false);
-    });
+    waitForMessageList();
   }
 
   if (document.body) {
