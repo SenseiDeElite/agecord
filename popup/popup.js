@@ -1,11 +1,27 @@
 // popup.js — Discord Age Encryption
 //
-// Key storage : age identity (AGE-SECRET-KEY-1…) encrypted with a user passphrase,
-//               stored as base64 in chrome.storage.local.
+// Key storage : age identity (AGE-SECRET-KEY-1…) encrypted with a user passphrase
+//               via age scrypt (N=18), stored as base64 in chrome.storage.local.
+//               Contacts are encrypted with AES-GCM-256 using a key derived from
+//               the identity via HKDF-SHA-256, so metadata is opaque at rest.
 // Session     : decrypted identity is sent to background.js via SET_IDENTITY.
-//               background.js holds it in memory and in chrome.storage.session.
+//               background.js generates a fresh non-extractable AES-GCM-256 key,
+//               encrypts the identity blob with it, and stores only the ciphertext
+//               in chrome.storage.session.  The encryption key lives exclusively
+//               in the background heap and is never written to any storage.
+//               If the service worker restarts the key is gone and the ciphertext
+//               is permanently unreadable — user must re-enter their passphrase.
 //               Content scripts never receive the raw identity — they ask the
 //               background to encrypt/sign/decrypt on their behalf.
+// Lockout     : 3 failed unlock attempts trigger a 10-minute lockout, matching
+//               Linux pam_faillock defaults (deny=3, unlock_time=600).  Counter
+//               lives in chrome.storage.local (survives popup closes and worker
+//               restarts, resets on extension reload just as /var/run/faillock
+//               resets on reboot).
+// Performance : all scrypt operations (unlock, keygen, import, export verify)
+//               run in a dedicated Web Worker (popup/scrypt-worker.js) so the
+//               popup UI thread stays fully responsive during the 2–5 s scrypt
+//               computation on Chromium.  A fresh worker is created per call.
 
 (() => {
   'use strict';
@@ -16,6 +32,37 @@
     set:    data => new Promise(r => chrome.storage.local.set(data, r)),
     remove: keys => new Promise(r => chrome.storage.local.remove(keys, r)),
   };
+
+  // ─── Passphrase constants ────────────────────────────────────────────────────
+  const PASSPHRASE_MIN_LEN = 20;
+  const PASSPHRASE_MAX_LEN = 512;
+
+  // ─── Lockout constants (matching Linux pam_faillock defaults) ────────────────
+  //   deny=3          — lock after 3 consecutive failures
+  //   unlock_time=600 — flat 10-minute lockout (no escalation; Linux doesn't use it)
+  const LOCKOUT_MAX_ATTEMPTS = 3;
+  const LOCKOUT_DURATION_MS  = 10 * 60 * 1000; // 600 s
+
+  async function getLockoutState() {
+    const { failCount = 0, lockUntil = 0 } = await store.get(['failCount', 'lockUntil']);
+    return { failCount, lockUntil };
+  }
+
+  async function recordFailure() {
+    const { failCount } = await getLockoutState();
+    const newCount = failCount + 1;
+    const update   = { failCount: newCount };
+    if (newCount >= LOCKOUT_MAX_ATTEMPTS) {
+      update.lockUntil = Date.now() + LOCKOUT_DURATION_MS;
+    }
+    await store.set(update);
+    return newCount;
+  }
+
+  async function recordSuccess() {
+    // Clear both counter and lockout timestamp on a successful unlock.
+    await store.remove(['failCount', 'lockUntil']);
+  }
 
   // Send a fire-and-forget signal to all Discord tabs (RELOCK, CONTACTS_UPDATED).
   // UNLOCK is handled by background.js directly — it signals tabs itself after
@@ -28,18 +75,61 @@
   }
 
   // Tell background.js about the identity (it stores it and imports the signing key),
-  // then signal Discord tabs only after the background confirms it is ready.
-  // Awaiting the response ensures applyIdentity() and session storage writes have
-  // both completed before any DECRYPT request can arrive from a content script.
-  async function setIdentityInBackground(identity) {
+  // then send the decrypted contacts and own recipient so content scripts can
+  // request them from the background instead of reading local storage directly.
+  // Finally signal Discord tabs only after both are confirmed.
+  async function setIdentityInBackground(identity, contacts, ownRecipient) {
     await chrome.runtime.sendMessage({ type: 'SET_IDENTITY', identity });
+    await chrome.runtime.sendMessage({ type: 'SET_CONTACTS', contacts, ownRecipient });
     // Background confirmed ready — now safe to wake Discord tabs.
     sendToDiscordTabs({ type: 'UNLOCK' });
+  }
+
+  // Push updated contacts to the background so content scripts see them immediately.
+  async function pushContactsToBackground() {
+    const { ageRecipient } = await store.get(['ageRecipient']);
+    await chrome.runtime.sendMessage({
+      type:         'SET_CONTACTS',
+      contacts:     _contacts,
+      ownRecipient: ageRecipient ?? null,
+    });
   }
 
   // Tell background.js to wipe the identity.
   async function clearIdentityInBackground() {
     await chrome.runtime.sendMessage({ type: 'CLEAR_IDENTITY' });
+  }
+
+  // ─── Scrypt worker ───────────────────────────────────────────────────────────
+  // Runs the expensive age scrypt operations (encrypt/decrypt) in a dedicated
+  // Web Worker so the popup UI thread stays fully responsive during the 2–5 s
+  // computation.  A fresh worker is created per call and terminated on completion
+  // so there is no persistent worker state to worry about.
+
+  function scryptInWorker(message) {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(chrome.runtime.getURL('popup/scrypt-worker.js'));
+
+      // Safety net: scrypt N=18 should never exceed 60 s even on slow hardware.
+      // If the worker hasn't responded by then, terminate it and reject.
+      const timeout = setTimeout(() => {
+        worker.terminate();
+        reject(new Error('Scrypt worker timed out'));
+      }, 60_000);
+
+      worker.onmessage = ({ data }) => {
+        clearTimeout(timeout);
+        worker.terminate();
+        if (data.ok) resolve(data);
+        else reject(new Error(data.error ?? 'Worker failed'));
+      };
+      worker.onerror = (e) => {
+        clearTimeout(timeout);
+        worker.terminate();
+        reject(new Error(e.message ?? 'Worker error'));
+      };
+      worker.postMessage(message);
+    });
   }
 
   // ─── State ──────────────────────────────────────────────────────────────────
@@ -49,30 +139,92 @@
   let _sessionIdentity = null;  // kept in popup memory for private key export only
   let _myKeyGeneration = 0;     // incremented on each showMyKey() call; guards stale async continuations
 
+  // AES-GCM-256 key derived from the identity blob via HKDF-SHA-256.
+  // Lives only in this popup's heap — never stored anywhere.
+  // Wiped (set to null) on lock, popup close, or key regeneration.
+  // Bound to the identity: contacts from one keypair cannot be decrypted
+  // with a different keypair's derived key.
+  let _contactsKey = null;
+
+  // ─── Contacts encryption helpers ────────────────────────────────────────────
+  // Key derivation: import the raw identity bytes as an HKDF base key, then
+  // derive a dedicated AES-GCM-256 key with a fixed info label.  This is a
+  // one-way derivation — knowing _contactsKey does not reveal the identity.
+
+  async function deriveContactsKey(identityBlob) {
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(identityBlob),
+      { name: 'HKDF' },
+      false,               // non-extractable
+      ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+      {
+        name:   'HKDF',
+        hash:   'SHA-256',
+        salt:   new Uint8Array(32),          // zero salt — domain separation is in info
+        info:   new TextEncoder().encode('discord-age-encryption/contacts-key/v1'),
+      },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,               // non-extractable
+      ['encrypt', 'decrypt']
+    );
+  }
+
+  async function encryptContacts(contacts) {
+    if (!_contactsKey) throw new Error('Extension is locked.');
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      _contactsKey,
+      new TextEncoder().encode(JSON.stringify(contacts))
+    );
+    return bytesToBase64(new Uint8Array(iv)) + '.' + bytesToBase64(new Uint8Array(ct));
+  }
+
+  async function decryptContacts(encoded) {
+    if (!_contactsKey) throw new Error('Extension is locked.');
+    const dot = encoded.indexOf('.');
+    if (dot === -1) throw new Error('Invalid contacts ciphertext format.');
+    const iv = base64ToBytes(encoded.slice(0, dot));
+    const ct = base64ToBytes(encoded.slice(dot + 1));
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, _contactsKey, ct);
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+
+  // Persist _contacts to local storage, encrypted with the derived contacts key.
+  async function saveContacts() {
+    const encoded = await encryptContacts(_contacts);
+    await store.set({ ageEncryptedContacts: encoded });
+  }
+
   // ─── Screen router ──────────────────────────────────────────────────────────
-  const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact', 'my-key', 'about'];
+  const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact', 'my-key', 'change-pass', 'about'];
   const show = screenId =>
     screens.forEach(id => { document.getElementById(`screen-${id}`).hidden = (id !== screenId); });
 
   // ─── Session helpers ─────────────────────────────────────────────────────────
-  // The popup reads session state from storage to know if already unlocked on boot.
-  // All writes go through background.js (SET_IDENTITY / CLEAR_IDENTITY messages).
+  // The popup only checks the age_unlocked flag to know if the session is live.
+  // The identity itself is stored encrypted in background.js; the popup never
+  // reads or holds the plaintext identity from session storage.
+  // _sessionIdentity is kept in popup memory solely for the private key export UI.
 
-  async function getSessionIdentity() {
+  async function isSessionUnlocked() {
     try {
       if (chrome.storage.session) {
-        const r = await new Promise(res => chrome.storage.session.get(['age_unlocked', 'age_identity'], res));
-        return r.age_unlocked === true ? (r.age_identity ?? null) : null;
+        const r = await new Promise(res => chrome.storage.session.get('age_unlocked', res));
+        return r.age_unlocked === true;
       }
     } catch {}
-    return null;
+    return false;
   }
 
   // ─── Boot ───────────────────────────────────────────────────────────────────
 
   async function boot() {
-    const data = await store.get(['ageRecipient', 'ageEncryptedIdentity', 'contacts', 'globalOn']);
-    _contacts = data.contacts || {};
+    const data = await store.get(['ageRecipient', 'ageEncryptedIdentity', 'ageEncryptedContacts', 'globalOn']);
     _globalOn = data.globalOn !== false;
 
     if (!data.ageRecipient || !data.ageEncryptedIdentity) {
@@ -81,14 +233,26 @@
       return;
     }
 
-    const identity = await getSessionIdentity();
-    if (identity) {
-      _sessionIdentity = identity;
-      // background.js already holds the identity (it persisted it to session
-      // storage on the original unlock).  Re-signal Discord tabs in case any
-      // opened since then — background will handle retry logic on its own for
-      // tab-reload events; this covers tabs that were already open when the
-      // popup re-opens.
+    // Contacts are encrypted at rest — we need the contacts key to read them.
+    // The key is derived from the identity, which the background holds in memory.
+    if (await isSessionUnlocked()) {
+      try {
+        // Re-derive the contacts key by fetching the identity from the background.
+        // This covers the common case: popup closed and reopened while unlocked.
+        const idResp = await chrome.runtime.sendMessage({ type: 'GET_IDENTITY' });
+        if (idResp?.ok && idResp.identity) {
+          _sessionIdentity = idResp.identity;
+          _contactsKey = await deriveContactsKey(idResp.identity);
+          const { ageEncryptedContacts } = await store.get(['ageEncryptedContacts']);
+          if (ageEncryptedContacts) {
+            try { _contacts = await decryptContacts(ageEncryptedContacts); }
+            catch { _contacts = {}; }
+          } else {
+            _contacts = {};
+          }
+        }
+      } catch { /* background not ready yet — contacts stay empty, UNLOCK will repopulate */ }
+      // Re-signal Discord tabs in case any opened since last unlock.
       sendToDiscordTabs({ type: 'UNLOCK' });
       await showMain();
     } else {
@@ -118,10 +282,11 @@
   });
   document.getElementById('btn-reset-confirm').addEventListener('click', async () => {
     document.getElementById('modal-reset-keypair').hidden = true;
-    await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'contacts', 'globalOn']);
+    await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'ageEncryptedContacts', 'globalOn', 'failCount', 'lockUntil']);
     await clearIdentityInBackground();
-    _contacts = {};
-    _globalOn = true;
+    _contacts        = {};
+    _contactsKey     = null;
+    _globalOn        = true;
     sendToDiscordTabs({ type: 'RELOCK' });
     document.getElementById('btn-goto-setup').hidden = true;
     document.getElementById('passphrase-input').value = '';
@@ -136,17 +301,40 @@
     const errEl = document.getElementById('unlock-error');
     const btn   = document.getElementById('btn-unlock');
     errEl.hidden = true;
+
+    // ── Lockout check — before any crypto work ────────────────────────────────
+    // This prevents the scrypt cost being paid on every rejected attempt, and
+    // avoids timing side-channels from scrypt execution time.
+    const { lockUntil } = await getLockoutState();
+    if (Date.now() < lockUntil) {
+      const minsLeft = Math.ceil((lockUntil - Date.now()) / 60000);
+      showErr(errEl, `Too many failed attempts. Try again in ${minsLeft} minute${minsLeft !== 1 ? 's' : ''}.`);
+      return;
+    }
+
     btn.disabled = true;
     btn.textContent = 'Unlocking…';
 
     try {
-      const { ageEncryptedIdentity } = await store.get(['ageEncryptedIdentity']);
+      const { ageEncryptedIdentity, ageEncryptedContacts } =
+        await store.get(['ageEncryptedIdentity', 'ageEncryptedContacts']);
       if (!ageEncryptedIdentity) throw new Error('No keypair found.');
 
-      const d = new age.Decrypter();
-      d.addPassphrase(passphrase);
-      const identityBytes = await d.decrypt(base64ToBytes(ageEncryptedIdentity), 'uint8array');
-      const identity      = new TextDecoder().decode(identityBytes);
+      // ── Decrypt identity in a Worker (keeps UI thread responsive) ────────────
+      // scrypt N=18 takes 2–5 s on Chromium.  The worker runs age's async
+      // decrypt path which yields every 10 ms so the event loop stays alive.
+      let identity;
+      try {
+        const result = await scryptInWorker({
+          op:           'DECRYPT',
+          encryptedB64: ageEncryptedIdentity,
+          passphrase,
+        });
+        identity = result.identity;
+      } catch (workerErr) {
+        // Re-throw with a message the wrong-passphrase detector can recognise.
+        throw new Error('bad decrypt: ' + workerErr.message);
+      }
 
       const identityLines = identity.split('\n');
       if (!identityLines[0].startsWith('AGE-SECRET-KEY-1'))
@@ -154,19 +342,44 @@
       if (!identityLines[1]?.startsWith('ed25519priv:'))
         throw new Error('Keypair missing Ed25519 signing key — please reset and generate a new keypair.');
 
-      await setIdentityInBackground(identity);
+      // ── Decrypt contacts using the HKDF-derived key ───────────────────────
+      // Key derivation is cheap (no scrypt) — bound to the identity blob so
+      // contacts from a different keypair are unreadable with this key.
+      _contactsKey = await deriveContactsKey(identity);
+      if (ageEncryptedContacts) {
+        try {
+          _contacts = await decryptContacts(ageEncryptedContacts);
+        } catch {
+          _contacts = {}; // corrupted or from an older format — start fresh
+        }
+      } else {
+        _contacts = {};
+      }
+
+      await recordSuccess();
+      const { ageRecipient } = await store.get(['ageRecipient']);
+      await setIdentityInBackground(identity, _contacts, ageRecipient ?? null);
       _sessionIdentity = identity;
       document.getElementById('passphrase-input').value = '';
       await showMain();
 
     } catch (e) {
       const msg = e.message?.toLowerCase() ?? '';
-      showErr(
-        errEl,
-        (msg.includes('bad') || msg.includes('decrypt') || msg.includes('passphrase') || msg.includes('hmac'))
-          ? 'Wrong passphrase. Try again.'
-          : 'Unlock failed: ' + e.message
-      );
+      const isWrongPassphrase =
+        msg.includes('bad') || msg.includes('decrypt') ||
+        msg.includes('passphrase') || msg.includes('hmac');
+
+      if (isWrongPassphrase) {
+        const newCount  = await recordFailure();
+        const remaining = LOCKOUT_MAX_ATTEMPTS - newCount;
+        if (remaining <= 0) {
+          showErr(errEl, 'Too many failed attempts. Locked for 10 minutes.');
+        } else {
+          showErr(errEl, `Wrong passphrase. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.`);
+        }
+      } else {
+        showErr(errEl, 'Unlock failed: ' + e.message);
+      }
     } finally {
       btn.disabled = false;
       btn.textContent = 'Unlock';
@@ -181,6 +394,13 @@
 
   setupPassEl.addEventListener('input', () => {
     const p = setupPassEl.value;
+    if (p.length > PASSPHRASE_MAX_LEN) {
+      strengthBar.style.width      = '100%';
+      strengthBar.style.background = '#ed4245';
+      strengthLbl.style.color      = '#ed4245';
+      strengthLbl.textContent      = `Too long (max ${PASSPHRASE_MAX_LEN} chars)`;
+      return;
+    }
     let score = 0;
     if (p.length >= 20) score++;
     if (p.length >= 30) score++;
@@ -197,7 +417,8 @@
 
   function validatePassphrase(p) {
     const errs = [];
-    if (p.length < 20)           errs.push('at least 20 characters');
+    if (p.length < PASSPHRASE_MIN_LEN) errs.push(`at least ${PASSPHRASE_MIN_LEN} characters`);
+    if (p.length > PASSPHRASE_MAX_LEN) return `Passphrase must be at most ${PASSPHRASE_MAX_LEN} characters.`;
     if (!/[A-Z]/.test(p))        errs.push('an uppercase letter (A–Z)');
     if (!/[a-z]/.test(p))        errs.push('a lowercase letter (a–z)');
     if (!/[0-9]/.test(p))        errs.push('a number (0–9)');
@@ -232,17 +453,28 @@
 
       const fullRecipient = recipient + ';ed25519:' + sigPubB64;
 
-      // scrypt N=18: the age default. Key generation runs in the popup page, not
-      // the service worker, so the UI can show a spinner without freezing.
-      const enc = new age.Encrypter();
-      enc.setPassphrase(pass);
-      enc.setScryptWorkFactor(18);
-      const encryptedB64 = bytesToBase64(await enc.encrypt(new TextEncoder().encode(identityBlob)));
+      // Encrypt identity blob in a Worker — scrypt N=18 keeps the UI alive.
+      const encResult = await scryptInWorker({
+        op:          'ENCRYPT',
+        identityBlob,
+        passphrase:  pass,
+      });
+      const encryptedB64 = encResult.encryptedB64;
 
-      await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: encryptedB64, contacts: {}, globalOn: true });
-      await setIdentityInBackground(identityBlob);
+      // Derive contacts key and encrypt the initial empty contacts map.
+      // No scrypt cost — key is derived from the identity via HKDF.
+      _contactsKey = await deriveContactsKey(identityBlob);
+      _contacts    = {};
+      const encryptedContacts = await encryptContacts({});
+
+      await store.set({
+        ageRecipient:          fullRecipient,
+        ageEncryptedIdentity:  encryptedB64,
+        ageEncryptedContacts:  encryptedContacts,
+        globalOn:              true,
+      });
+      await setIdentityInBackground(identityBlob, {}, fullRecipient);
       _sessionIdentity = identityBlob;
-      _contacts = {};
       _globalOn = true;
       await showMain();
 
@@ -293,32 +525,70 @@
   document.getElementById('btn-back-import').addEventListener('click', () => show('setup'));
 
   document.getElementById('btn-import').addEventListener('click', async () => {
-    const blob  = document.getElementById('import-blob').value.trim();
-    const pass  = document.getElementById('import-passphrase').value;
-    const pass2 = document.getElementById('import-passphrase2').value;
-    const errEl = document.getElementById('import-error');
-    errEl.hidden = true;
+    const blobRaw  = document.getElementById('import-blob').value.trim();
+    const pass     = document.getElementById('import-passphrase').value;
+    const pass2    = document.getElementById('import-passphrase2').value;
+    const exportPw = document.getElementById('import-export-passphrase').value;
+    const errEl    = document.getElementById('import-error');
+    errEl.hidden   = true;
 
     const passErr = validatePassphrase(pass);
     if (passErr)        { showErr(errEl, passErr); return; }
     if (pass !== pass2) { showErr(errEl, 'Passphrases do not match.'); return; }
-    if (!blob)          { showErr(errEl, 'Paste your private key blob first.'); return; }
-
-    const lines = blob.split('\n');
-    if (!lines[0].startsWith('AGE-SECRET-KEY-1')) {
-      showErr(errEl, 'Invalid blob — line 1 must be an age secret key (AGE-SECRET-KEY-1…).');
-      return;
-    }
-    if (!lines[1]?.startsWith('ed25519priv:')) {
-      showErr(errEl, 'Invalid blob — line 2 must be an Ed25519 private key (ed25519priv:…).');
-      return;
-    }
+    if (!blobRaw)       { showErr(errEl, 'Paste your exported key blob first.'); return; }
 
     const btn = document.getElementById('btn-import');
     btn.hidden = true;
     document.getElementById('import-spinner').hidden = false;
 
     try {
+      // ── Detect blob type ─────────────────────────────────────────────────
+      // A plain blob starts with "AGE-SECRET-KEY-1" (two-line format).
+      // An export-encrypted blob is a base64 string produced by the export flow
+      // — it doesn't start with that prefix, so we try to decrypt it first.
+      let blob;
+      const isPlain = blobRaw.startsWith('AGE-SECRET-KEY-1');
+      if (isPlain) {
+        blob = blobRaw;
+      } else {
+        // Treat blobRaw as a v1: export-encrypted blob.
+        if (!exportPw) {
+          showErr(errEl, 'This looks like an encrypted export blob — enter the export passphrase below.');
+          btn.hidden = false;
+          document.getElementById('import-spinner').hidden = true;
+          document.getElementById('import-export-pass-row').hidden = false;
+          document.getElementById('import-export-passphrase').focus();
+          return;
+        }
+        try {
+          const decResult = await scryptInWorker({
+            op:           'EXPORT_DECRYPT',
+            encryptedB64: blobRaw,
+            passphrase:   exportPw,
+          });
+          blob = decResult.identity;
+        } catch {
+          showErr(errEl, 'Could not decrypt blob — check the export passphrase and try again.');
+          btn.hidden = false;
+          document.getElementById('import-spinner').hidden = true;
+          return;
+        }
+      }
+
+      const lines = blob.split('\n');
+      if (!lines[0].startsWith('AGE-SECRET-KEY-1')) {
+        showErr(errEl, 'Invalid blob — line 1 must be an age secret key (AGE-SECRET-KEY-1…).');
+        btn.hidden = false;
+        document.getElementById('import-spinner').hidden = true;
+        return;
+      }
+      if (!lines[1]?.startsWith('ed25519priv:')) {
+        showErr(errEl, 'Invalid blob — line 2 must be an Ed25519 private key (ed25519priv:…).');
+        btn.hidden = false;
+        document.getElementById('import-spinner').hidden = true;
+        return;
+      }
+
       const identity  = lines[0];
       const recipient = await age.identityToRecipient(identity);
 
@@ -336,20 +606,34 @@
       const fullRecipient = recipient + ';ed25519:' + sigPubB64;
       const identityBlob  = blob;
 
-      const enc = new age.Encrypter();
-      enc.setPassphrase(pass);
-      enc.setScryptWorkFactor(18);
-      const encryptedB64 = bytesToBase64(await enc.encrypt(new TextEncoder().encode(identityBlob)));
+      // Encrypt identity blob in a Worker — keeps spinner alive on Chromium.
+      const encResult = await scryptInWorker({
+        op:          'ENCRYPT',
+        identityBlob,
+        passphrase:  pass,
+      });
+      const encryptedB64 = encResult.encryptedB64;
 
-      await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: encryptedB64, contacts: {}, globalOn: true });
-      await setIdentityInBackground(identityBlob);
+      // Derive contacts key and create an encrypted empty contacts map.
+      _contactsKey = await deriveContactsKey(identityBlob);
+      _contacts    = {};
+      const encryptedContacts = await encryptContacts({});
+
+      await store.set({
+        ageRecipient:          fullRecipient,
+        ageEncryptedIdentity:  encryptedB64,
+        ageEncryptedContacts:  encryptedContacts,
+        globalOn:              true,
+      });
+      await setIdentityInBackground(identityBlob, {}, fullRecipient);
       _sessionIdentity = identityBlob;
-      _contacts = {};
       _globalOn = true;
 
-      document.getElementById('import-blob').value        = '';
-      document.getElementById('import-passphrase').value  = '';
-      document.getElementById('import-passphrase2').value = '';
+      document.getElementById('import-blob').value             = '';
+      document.getElementById('import-passphrase').value       = '';
+      document.getElementById('import-passphrase2').value      = '';
+      document.getElementById('import-export-passphrase').value = '';
+      document.getElementById('import-export-pass-row').hidden  = true;
       clearImportDraft();
       await showMain();
 
@@ -365,14 +649,14 @@
 
   async function showMain() {
     // Navigate immediately so back buttons feel instant — don't wait for storage.
-    // We render with the current in-memory state first, then refresh from storage
-    // in case another context changed contacts or globalOn since last load.
+    // We render with the current in-memory state first.
     document.getElementById('global-toggle').checked = _globalOn;
     renderContacts();
     show('main');
-    // Background refresh — updates the list if storage differs from memory.
-    const data = await store.get(['contacts', 'globalOn']);
-    _contacts = data.contacts || {};
+    // Background refresh of globalOn — contacts live in _contacts (in-memory,
+    // decrypted at unlock); reading them from storage would require another
+    // decrypt round-trip and is unnecessary since all writes go through saveContacts().
+    const data = await store.get(['globalOn']);
     _globalOn = data.globalOn !== false;
     document.getElementById('global-toggle').checked = _globalOn;
     renderContacts();
@@ -381,12 +665,15 @@
   document.getElementById('global-toggle').addEventListener('change', async (e) => {
     _globalOn = e.target.checked;
     await store.set({ globalOn: _globalOn });
+    await pushContactsToBackground();
     sendToDiscordTabs({ type: 'CONTACTS_UPDATED' });
   });
 
   document.getElementById('btn-lock').addEventListener('click', async () => {
     await clearIdentityInBackground();
     _sessionIdentity = null;
+    _contactsKey     = null;
+    _contacts        = {};
     sendToDiscordTabs({ type: 'RELOCK' });
     document.getElementById('passphrase-input').value = '';
     document.getElementById('unlock-error').hidden = true;
@@ -511,7 +798,8 @@
     }
 
     _contacts[channelId] = { username, ageRecipient: recipient, enabled: true };
-    await store.set({ contacts: _contacts });
+    await saveContacts();
+    await pushContactsToBackground();
     sendToDiscordTabs({ type: 'CONTACTS_UPDATED' });
     DRAFT_FIELDS.forEach(id => { document.getElementById(id).value = ''; });
     await clearDraft();
@@ -544,7 +832,8 @@
   document.getElementById('sheet-contact-toggle').addEventListener('change', async (e) => {
     if (!_selectedId) return;
     _contacts[_selectedId].enabled = e.target.checked;
-    await store.set({ contacts: _contacts });
+    await saveContacts();
+    await pushContactsToBackground();
     sendToDiscordTabs({ type: 'CONTACTS_UPDATED' });
     renderContacts();
   });
@@ -564,7 +853,8 @@
     document.getElementById('modal-delete-contact').hidden = true;
     if (!_selectedId) return;
     delete _contacts[_selectedId];
-    await store.set({ contacts: _contacts });
+    await saveContacts();
+    await pushContactsToBackground();
     sendToDiscordTabs({ type: 'CONTACTS_UPDATED' });
     closeSheet();
     renderContacts();
@@ -608,7 +898,8 @@
     if (_selectedId && _selectedId !== channelId) delete _contacts[_selectedId];
     _contacts[channelId] = { username, ageRecipient: recipient, enabled: _contacts[channelId]?.enabled ?? true };
     _selectedId = null;
-    await store.set({ contacts: _contacts });
+    await saveContacts();
+    await pushContactsToBackground();
     sendToDiscordTabs({ type: 'CONTACTS_UPDATED' });
     await showMain();
   });
@@ -693,10 +984,11 @@
       exists ? updated++ : added++;
     }
 
-    await store.set({ contacts: _contacts });
+    await saveContacts();
     // CONTACTS_UPDATED tells content scripts to reload contacts from storage.
     // No need to re-send UNLOCK — the background already holds the identity
     // and content scripts are already unlocked.
+    await pushContactsToBackground();
     sendToDiscordTabs({ type: 'CONTACTS_UPDATED' });
     renderContacts();
 
@@ -827,15 +1119,24 @@
     btn.textContent = 'Verifying…';
     try {
       const { ageEncryptedIdentity } = await store.get(['ageEncryptedIdentity']);
-      const d = new age.Decrypter();
-      d.addPassphrase(passphrase);
-      const identityBytes = await d.decrypt(base64ToBytes(ageEncryptedIdentity), 'uint8array');
-      const identity      = new TextDecoder().decode(identityBytes);
+      // Verify passphrase by decrypting in a Worker — non-blocking on Chromium.
+      const result = await scryptInWorker({
+        op:           'DECRYPT',
+        encryptedB64: ageEncryptedIdentity,
+        passphrase,
+      });
+      const identity = result.identity;
 
       document.getElementById('export-passphrase-input').value = '';
       document.getElementById('modal-export-key').hidden = true;
-      document.getElementById('export-key-blob').value = identity;
-      document.getElementById('modal-export-display').hidden = false;
+
+      // Ask for an export passphrase to encrypt the blob before displaying.
+      // This is stored temporarily for the next step.
+      _pendingExportIdentity = identity;
+      document.getElementById('export-blob-passphrase').value  = '';
+      document.getElementById('export-blob-passphrase2').value = '';
+      document.getElementById('export-blob-pass-error').hidden = true;
+      document.getElementById('modal-export-set-pass').hidden  = false;
     } catch (e) {
       const msg = e.message?.toLowerCase() ?? '';
       showErr(errEl,
@@ -846,6 +1147,50 @@
     } finally {
       btn.disabled = false;
       btn.textContent = 'Reveal key';
+    }
+  });
+
+  // Temporary storage for the identity blob between the verify and encrypt steps.
+  let _pendingExportIdentity = null;
+
+  document.getElementById('btn-export-set-pass-cancel').addEventListener('click', () => {
+    _pendingExportIdentity = null;
+    document.getElementById('modal-export-set-pass').hidden = true;
+  });
+
+  document.getElementById('btn-export-set-pass-confirm').addEventListener('click', async () => {
+    const exportPass  = document.getElementById('export-blob-passphrase').value;
+    const exportPass2 = document.getElementById('export-blob-passphrase2').value;
+    const errEl       = document.getElementById('export-blob-pass-error');
+    const btn         = document.getElementById('btn-export-set-pass-confirm');
+    errEl.hidden = true;
+
+    const passErr = validatePassphrase(exportPass);
+    if (passErr)               { showErr(errEl, passErr); return; }
+    if (exportPass !== exportPass2) { showErr(errEl, 'Passphrases do not match.'); return; }
+    if (!_pendingExportIdentity)    { showErr(errEl, 'Session expired, please try again.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Encrypting…';
+    try {
+      // Encrypt in the Worker using scryptAsync + AES-GCM.
+      // scryptAsync yields periodically so the worker event loop stays alive
+      // and doesn't get killed by the browser the way synchronous scrypt would.
+      const encResult = await scryptInWorker({
+        op:           'EXPORT_ENCRYPT',
+        identityBlob: _pendingExportIdentity,
+        passphrase:   exportPass,
+      });
+      if (!encResult?.ok) throw new Error(encResult?.error ?? 'Encryption failed');
+      _pendingExportIdentity = null;
+      document.getElementById('modal-export-set-pass').hidden = true;
+      document.getElementById('export-key-blob').value = encResult.encryptedB64;
+      document.getElementById('modal-export-display').hidden = false;
+    } catch (e) {
+      showErr(errEl, 'Encryption failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Encrypt & show';
     }
   });
   function closeExportDisplay() {
@@ -874,11 +1219,13 @@
   });
   document.getElementById('btn-regen-confirm').addEventListener('click', async () => {
     document.getElementById('modal-regen').hidden = true;
+    // Disable all contacts before losing the old keypair — new keypair gets empty contacts.
     Object.keys(_contacts).forEach(id => { _contacts[id].enabled = false; });
-    await store.remove(['ageRecipient', 'ageEncryptedIdentity']);
-    await store.set({ contacts: _contacts });
+    await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'ageEncryptedContacts']);
     await clearIdentityInBackground();
     _sessionIdentity = null;
+    _contactsKey     = null;
+    _contacts        = {};
     sendToDiscordTabs({ type: 'RELOCK' });
     document.getElementById('setup-passphrase').value  = '';
     document.getElementById('setup-passphrase2').value = '';
@@ -932,6 +1279,111 @@
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }
+
+  // ─── Change passphrase ───────────────────────────────────────────────────────
+  // Re-encrypts the identity with a new passphrase.  Contacts do not need
+  // re-encryption because they use an HKDF key derived from the identity blob
+  // itself, not from the passphrase.
+
+  document.getElementById('btn-change-pass').addEventListener('click', () => {
+    document.getElementById('change-pass-current').value  = '';
+    document.getElementById('change-pass-new').value     = '';
+    document.getElementById('change-pass-new2').value    = '';
+    document.getElementById('change-pass-error').hidden  = true;
+    show('change-pass');
+  });
+
+  document.getElementById('btn-back-change-pass').addEventListener('click', showMain);
+
+  const changePassNewEl  = document.getElementById('change-pass-new');
+  const changePassBar    = document.getElementById('change-pass-strength-bar');
+  const changePassLbl    = document.getElementById('change-pass-strength-label');
+
+  changePassNewEl.addEventListener('input', () => {
+    const p = changePassNewEl.value;
+    if (p.length > PASSPHRASE_MAX_LEN) {
+      changePassBar.style.width      = '100%';
+      changePassBar.style.background = '#ed4245';
+      changePassLbl.textContent      = `Too long (max ${PASSPHRASE_MAX_LEN} chars)`;
+      changePassLbl.style.color      = '#ed4245';
+      return;
+    }
+    let score = 0;
+    if (p.length >= 20) score++;
+    if (p.length >= 30) score++;
+    if (/[A-Z]/.test(p)) score++;
+    if (/[a-z]/.test(p)) score++;
+    if (/[0-9]/.test(p)) score++;
+    if (/[^A-Za-z0-9]/.test(p)) score++;
+    const colors = ['#ed4245','#ed4245','#fee75c','#fee75c','#57f287','#57f287','#57f287'];
+    changePassBar.style.width      = Math.round((score / 6) * 100) + '%';
+    changePassBar.style.background = colors[score];
+    changePassLbl.style.color      = colors[score];
+    changePassLbl.textContent      = p.length ? ['Too short','Weak','Weak','Fair','Good','Strong','Very strong'][score] : '';
+  });
+
+  document.getElementById('btn-change-pass-confirm').addEventListener('click', async () => {
+    const currentPass = document.getElementById('change-pass-current').value;
+    const newPass     = document.getElementById('change-pass-new').value;
+    const newPass2    = document.getElementById('change-pass-new2').value;
+    const errEl       = document.getElementById('change-pass-error');
+    const btn         = document.getElementById('btn-change-pass-confirm');
+    errEl.hidden = true;
+
+    if (!currentPass) { showErr(errEl, 'Enter your current passphrase.'); return; }
+    const passErr = validatePassphrase(newPass);
+    if (passErr)              { showErr(errEl, passErr); return; }
+    if (newPass !== newPass2) { showErr(errEl, 'New passphrases do not match.'); return; }
+    if (newPass === currentPass) { showErr(errEl, 'New passphrase must differ from current.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Changing…';
+    try {
+      const { ageEncryptedIdentity } = await store.get(['ageEncryptedIdentity']);
+      if (!ageEncryptedIdentity) throw new Error('No keypair found.');
+
+      // Verify current passphrase by decrypting.
+      let identity;
+      try {
+        const decResult = await scryptInWorker({
+          op:           'DECRYPT',
+          encryptedB64: ageEncryptedIdentity,
+          passphrase:   currentPass,
+        });
+        identity = decResult.identity;
+      } catch {
+        throw new Error('bad decrypt: wrong current passphrase');
+      }
+
+      // Re-encrypt with the new passphrase using scryptAsync in the Worker.
+      const encResult = await scryptInWorker({
+        op:           'EXPORT_ENCRYPT',
+        identityBlob: identity,
+        passphrase:   newPass,
+      });
+      if (!encResult?.ok) throw new Error(encResult?.error ?? 'Encryption failed');
+
+      await store.set({ ageEncryptedIdentity: encResult.encryptedB64 });
+
+      document.getElementById('change-pass-current').value = '';
+      document.getElementById('change-pass-new').value     = '';
+      document.getElementById('change-pass-new2').value    = '';
+
+      // Show confirmation and return to main.
+      await showMain();
+      // Brief in-popup feedback via the lock button area — no toast needed.
+    } catch (e) {
+      const msg = e.message?.toLowerCase() ?? '';
+      showErr(errEl,
+        (msg.includes('bad') || msg.includes('decrypt') || msg.includes('passphrase') || msg.includes('hmac'))
+          ? 'Wrong current passphrase.'
+          : 'Failed: ' + e.message
+      );
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Change passphrase';
+    }
+  });
 
   // ─── About screen ────────────────────────────────────────────────────────────
 
