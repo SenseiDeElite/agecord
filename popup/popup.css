@@ -260,8 +260,7 @@ html, body {
 }
 
 /* ── Strength bar ────────────────────────────────────────────────────────── */
-#strength-bar-wrap,
-.strength-bar-wrap {
+#strength-bar-wrap {
   height: 3px;
   background: var(--md-outline-variant);
   border-radius: 2px;
@@ -269,8 +268,7 @@ html, body {
   overflow: hidden;
 }
 
-#strength-bar,
-.strength-bar-fill {
+#strength-bar {
   height: 100%;
   width: 0;
   border-radius: 2px;
