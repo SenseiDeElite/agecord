@@ -42,8 +42,8 @@
   let _contacts        = {};
   let _globalOn        = true;
   let _selectedId      = null;
+  let _editingId       = null;   // channelId currently open in the edit screen
   let _sessionIdentity = null;  // decrypted two-line identity blob, kept for export
-
   // ─── Screen router ──────────────────────────────────────────────────────────
   const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact', 'my-key', 'about'];
   const show = screenId =>
@@ -639,35 +639,36 @@
     document.getElementById('edit-username').value   = c.username;
     document.getElementById('edit-key').value        = c.ageRecipient;
     document.getElementById('edit-contact-error').hidden = true;
+    _editingId = _selectedId;   // capture before closeSheet() nulls _selectedId
     closeSheet();
     show('edit-contact');
   });
 
-  document.getElementById('btn-back-edit').addEventListener('click', showMain);
+  document.getElementById('btn-back-edit').addEventListener('click', () => { _editingId = null; showMain(); });
 
   document.getElementById('btn-save-edit').addEventListener('click', async () => {
-    const channelId  = document.getElementById('edit-channel-id').value.trim();
-    const username   = document.getElementById('edit-username').value.trim();
-    const recipient  = document.getElementById('edit-key').value.trim();
-    const errEl      = document.getElementById('edit-contact-error');
-    const editingId  = _selectedId; // the original channelId being edited
-    errEl.hidden     = true;
+    const channelId = document.getElementById('edit-channel-id').value.trim();
+    const username  = document.getElementById('edit-username').value.trim();
+    const recipient = document.getElementById('edit-key').value.trim();
+    const errEl     = document.getElementById('edit-contact-error');
+    errEl.hidden    = true;
 
-    // Pass editingId so the duplicate check skips this contact's own fields.
-    const fieldErr = validateContactFields(channelId, username, recipient, editingId);
+    // _editingId is set when the edit screen opens and survives closeSheet().
+    // Pass it so the duplicate check skips this contact's own fields.
+    const fieldErr = validateContactFields(channelId, username, recipient, _editingId);
     if (fieldErr) { showErr(errEl, fieldErr); return; }
 
     const recipErr = await validateRecipient(recipient);
     if (recipErr)  { showErr(errEl, recipErr); return; }
 
     // If the channelId changed, remove the old entry.
-    if (editingId && editingId !== channelId) delete _contacts[editingId];
+    if (_editingId && _editingId !== channelId) delete _contacts[_editingId];
     _contacts[channelId] = {
       username,
       ageRecipient: recipient,
-      enabled: _contacts[channelId]?.enabled ?? _contacts[editingId]?.enabled ?? true,
+      enabled: _contacts[channelId]?.enabled ?? _contacts[_editingId]?.enabled ?? true,
     };
-    _selectedId = null;
+    _editingId = null;
     await store.set({ contacts: _contacts });
     await bgSend({ type: 'CONTACTS_UPDATED' });
     await showMain();
