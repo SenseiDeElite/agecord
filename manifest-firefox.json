@@ -40,7 +40,8 @@
       ],
       "js": [
         "lib/age.min.js",
-        "content.js"
+        "content/emoji_map.js",
+        "content/content.js"
       ],
       "run_at": "document_idle"
     }
