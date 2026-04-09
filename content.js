@@ -1,55 +1,39 @@
 // content.js — Discord Age Encryption
 //
-// Wire format : [age]:<base64disc_cipher>:<base64disc_ed25519_sig>
-// Signed over : UTF8(channelId + ":" + base64disc_cipher)
+// Wire format : [age]:<base64disc_payload>:<base64disc_ed25519_sig>
+// Crypto      : age-encryption (X25519 + ChaCha20-Poly1305) + Ed25519 signatures
+// Compression : deflate-raw applied to plaintext before encryption
+// Sig input   : UTF-8("<channelId>:<cipher>") — channel ID binds sig to channel,
+//               preventing cross-channel replay without using wire-format space.
+// Encoding    : both cipher and sig use the "disc" base64 alphabet (+ → -  / → .)
+//               so that neither field ever contains _ which Discord renders as
+//               underline markup and strips from the DOM.
 //
-// Security model (Phase 3): all cryptographic operations (encrypt, sign,
-// verify, decrypt) run exclusively in background.js.  This content script
-// handles only DOM interaction — it sends plaintext/ciphertext to the
-// background via chrome.runtime.sendMessage and receives only results.
-// The raw private key never enters this context.
+// Decryption is delegated to the background service worker so the raw age
+// identity never enters the content script's memory.
 
 (() => {
   'use strict';
 
   const PREFIX = '[age]';
 
-  // Keyed on the ciphertext string so cache hits/misses follow the actual content,
-  // not the DOM element ID.  This means edited messages (same li.id, new cipher)
-  // automatically get a cache miss and are re-decrypted — fixing the edit bug.
-  //
-  //   _cipherCache  cipher → { plain: string }          (successful decrypt)
-  //                 cipher → { warn: string, state }    (sig failure / no contact)
-  //   _inFlight     Set of cipher strings currently being processed — prevents the
-  //                 MutationObserver from spawning duplicate concurrent attempts.
-  const _cipherCache = new Map();
-  const _inFlight    = new Set();
+  // _decryptedCache: Map<msgId (li.id), plaintext>
+  // Keyed on stable li.id so React DOM reconciliation can re-render instantly.
+  const _processedIds   = new Set();
+  const _decryptedCache = new Map();
 
-  // _unlocked: true when background.js has a live identity and is ready to
-  // handle ENCRYPT / DECRYPT requests.  The raw private key never enters
-  // this context — background.js is the sole crypto boundary.
-  let _unlocked    = false;
+  // _outgoingCache: Map<cipherBase64disc, plaintext>
+  // Populated when we send a message; lets us render our own message immediately
+  // without a background decrypt round-trip. TTL: 8 s.
+  const _outgoingCache = new Map();
+
+  let _signingKey  = null;   // non-extractable CryptoKey (Ed25519 private), from background
   let _contacts    = {};
   let _globalOn    = true;
-  let _ownRecipient = null;  // own public key, kept in sync via background
   let _msgObserver = null;
-  let _banner      = null;
-  let _bannerTimer = null;
 
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-  // Fetch decrypted contacts and own recipient from the background.
-  // Background is the sole source — contacts are encrypted in local storage
-  // and the background holds the only copy of the decrypted map.
-  async function bgGetContacts() {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: 'GET_CONTACTS' }, response => {
-        if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
-        else if (response?.ok) resolve(response);
-        else reject(new Error(response?.error ?? 'GET_CONTACTS failed'));
-      });
-    });
-  }
+  const sleep    = ms => new Promise(r => setTimeout(r, ms));
+  const localGet = keys => new Promise(r => chrome.storage.local.get(keys, r));
 
   // ─── DOM helpers ─────────────────────────────────────────────────────────────
 
@@ -69,7 +53,7 @@
   // ─── Enter key interception ───────────────────────────────────────────────────
 
   function isEncryptionActive() {
-    return !!(_unlocked && getContact()?.enabled && _globalOn);
+    return !!(_signingKey && getContact()?.enabled && _globalOn);
   }
 
   function attachEnterHook() {
@@ -97,28 +81,88 @@
     }
   }
 
-  // ─── Background messaging helpers ────────────────────────────────────────────
+  // ─── Crypto helpers (content-side) ────────────────────────────────────────────
+  // Only public-key operations live here; decryption is handled by the background.
 
-  // Send a message to background.js and return a promise of the response.
-  // Throws if the background returns { ok: false } or if the channel errors.
-  function bgSend(msg) {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(msg, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else if (response?.ok) {
-          resolve(response);
-        } else {
-          reject(new Error(response?.error ?? 'Unknown background error'));
-        }
-      });
-    });
+  async function importVerifyKey(contactKeyString) {
+    const m = contactKeyString.match(/;ed25519:([A-Za-z0-9_-]+)$/);
+    if (!m) return null;
+    const raw = base64UrlToBytes(m[1]);
+    return crypto.subtle.importKey('raw', raw, { name: 'Ed25519' }, false, ['verify']);
+  }
+
+  // ─── Encryption (outgoing) ────────────────────────────────────────────────────
+
+  async function encryptMessage(plaintext, contact) {
+    const enc = new age.Encrypter();
+    enc.addRecipient(contact.ageRecipient.split(';')[0]);
+    const self = await localGet(['ageRecipient']);
+    if (self.ageRecipient) enc.addRecipient(self.ageRecipient.split(';')[0]);
+    return bytesToBase64Disc(await enc.encrypt(await compress(plaintext)));
+  }
+
+  // ─── Compression ─────────────────────────────────────────────────────────────
+
+  async function streamTransform(stream, bytes) {
+    const writer = stream.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    const chunks = [];
+    const reader = stream.readable.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.length; }
+    return out;
+  }
+
+  const compress = str => streamTransform(
+    new CompressionStream('deflate-raw'), new TextEncoder().encode(str));
+
+  // ─── Base64 variants ──────────────────────────────────────────────────────────
+  // "Disc" variant (+ → -  / → .) : used for ALL wire-format fields (cipher + sig).
+  //   Dot never appears in standard base64 and triggers no Discord markdown.
+  //   Underscore-free, so __ can never corrupt the DOM via Discord underline markup.
+  // "Url"  variant (+ → -  / → _) : used only for key material stored outside the
+  //   wire format (Ed25519 public keys in contact strings, PKCS8 in identity blob).
+
+  function bytesToBase64Url(bytes) {
+    let s = '';
+    for (const b of bytes) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  function base64UrlToBytes(str) {
+    let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const bin = atob(b64);
+    const out  = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function bytesToBase64Disc(bytes) {
+    let s = '';
+    for (const b of bytes) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '.').replace(/=/g, '');
+  }
+
+  function base64DiscToBytes(str) {
+    let b64 = str.replace(/-/g, '+').replace(/\./g, '/');
+    while (b64.length % 4) b64 += '=';
+    const bin = atob(b64);
+    const out  = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
   }
 
   // ─── Send ─────────────────────────────────────────────────────────────────────
-
   // Plaintext is inserted via synthetic ClipboardEvent — Slate serialises from its
-  // internal model, not the DOM, so execCommand('insertText') would send the wrong text.
+  // internal model, not the DOM, so execCommand('insertText') sends the wrong text.
 
   async function pasteIntoEditor(text) {
     const tb = getTextbox();
@@ -134,42 +178,38 @@
   }
 
   let _sending = false;
-  // Keyed on ciphertext string — survives the round-trip echo from Discord's
-  // servers so we can render outgoing messages without a decrypt round-trip.
-  const _outgoingCache = new Map();
 
   async function handleEncryptClick() {
     if (_sending) return;
     if (!isEncryptionActive()) return;
     const contact   = getContact();
-    const plain     = getTextbox()?.innerText?.trim();
     const channelId = getCurrentChannelId();
+    const plain     = getTextbox()?.innerText?.trim();
     if (!plain || !contact || !channelId) return;
     _sending = true;
     try {
-      // Use the own recipient cached from background (set at UNLOCK time).
-      const result = await bgSend({
-        type:             'ENCRYPT',
-        plain,
-        channelId,
-        contactRecipient: contact.ageRecipient,
-        selfRecipient:    _ownRecipient,
-      });
+      const cipher = await encryptMessage(plain, contact);
 
-      // Wire format: [age]:<cipher>:<sig>
-      const { cipher, sig } = result;
+      // Signature input binds to channel ID (replay prevention) + ciphertext.
+      const sigInput = new TextEncoder().encode(`${channelId}:${cipher}`);
+      const sigBytes = await crypto.subtle.sign('Ed25519', _signingKey, sigInput);
+      // Clamp to 64 bytes — some Chromium builds return 65 bytes from Ed25519 sign.
+      const sig = bytesToBase64Disc(new Uint8Array(sigBytes).slice(0, 64));
+
+      // Cache own outgoing message by cipher so we can render it immediately
+      // when it echoes back in the message list, without a background decrypt.
       _outgoingCache.set(cipher, plain);
-      await pasteIntoEditor(`${PREFIX}:${cipher}:${sig}`);
       setTimeout(() => _outgoingCache.delete(cipher), 8000);
+
+      await pasteIntoEditor(`${PREFIX}:${cipher}:${sig}`);
     } catch (err) {
       console.error('[age] encrypt error:', err);
-      showBanner('Encryption failed — ' + err.message, 'error');
     } finally {
       _sending = false;
     }
   }
 
-  // ─── Receive ─────────────────────────────────────────────────────────────────
+  // ─── Receive ──────────────────────────────────────────────────────────────────
 
   function waitForMessageList(onReady) {
     const list = getMessageList();
@@ -222,16 +262,9 @@
   }
 
   function rescanPending() {
-    // Re-visit every visible age message that isn't already successfully decrypted
-    // or actively in-flight. With cipher-keyed cache, "pending" means the cipher
-    // is absent from _cipherCache (as an ok entry) and not in _inFlight.
     document.querySelectorAll('[id^="message-content-"][data-age-raw]').forEach(el => {
       if (el.closest('[class*="repliedText"]') || el.closest('[class*="replyPreview"]')) return;
-      const cipher = el.dataset.ageCipher;
-      if (!cipher) return;
-      const cached = _cipherCache.get(cipher);
-      if (cached?.plain !== undefined) return; // already ok
-      if (_inFlight.has(cipher)) return;       // already being processed
+      if (el.dataset.ageState === 'ok') return;
       const li = el.closest('li[id^="chat-messages-"]');
       if (li) processMessageNode(li);
     });
@@ -244,149 +277,83 @@
     );
     if (!el) return;
 
-    // Text resolution strategy:
-    //  1. Read the live DOM text to detect edits (Discord message edits change
-    //     the DOM content — if it starts with PREFIX it's a new/updated cipher).
-    //  2. If the live DOM text has been overwritten by markMessage (pending/warn/
-    //     error state), it won't start with PREFIX.  In that case fall back to
-    //     the stored data-age-raw, which holds the last known ciphertext for this
-    //     element.  This is the key fix for unlock: after RELOCK the elements
-    //     show "🔒 Unlock..." so directTextContent returns that string, but
-    //     data-age-raw still holds the ciphertext we need to decrypt.
-    //  3. If neither yields a PREFIX-starting string, this isn't an age message.
-    const liveText = directTextContent(el).trim();
-    let text;
-    if (liveText.startsWith(PREFIX)) {
-      text = liveText;
-      // If the live text differs from our stored raw value, the message was
-      // edited — evict the old cipher from all caches before proceeding.
-      if (el.dataset.ageRaw && el.dataset.ageRaw !== liveText) {
-        const oldCipher = el.dataset.ageCipher;
-        if (oldCipher) {
-          _cipherCache.delete(oldCipher);
-          _inFlight.delete(oldCipher);
-        }
-        el.dataset.ageRaw    = '';
-        el.dataset.ageCipher = '';
-      }
-    } else if (el.dataset.ageRaw?.startsWith(PREFIX)) {
-      // Element text was overwritten by markMessage — use stored ciphertext.
-      text = el.dataset.ageRaw;
-    } else {
-      return; // not an age message
-    }
+    const msgId = li.id;
 
-    // Wire format: [age]:<base64disc_cipher>:<base64disc_sig>
-    const m = text.match(/^\[age\]:([A-Za-z0-9\-.]+):([A-Za-z0-9.\-]+)$/);
-    if (!m) return;
-
-    const cipher = m[1];
-    const sigRaw = m[2];
-
-    // Mark the element so sanitizeReplyPreviews and rescanPending can find it,
-    // and so we can retrieve the cipher string cheaply without re-parsing.
-    el.dataset.ageRaw    = text;
-    el.dataset.ageCipher = cipher;
-
-    if (!_unlocked || !_globalOn) {
-      markMessage(el, !_unlocked ? '🔒 Unlock extension to decrypt.' : '🔒 Decryption disabled.', 'pending');
+    if (_processedIds.has(msgId)) {
+      const cached = _decryptedCache.get(msgId);
+      if (cached && el.dataset.ageState !== 'ok') renderDecrypted(el, cached);
       return;
     }
 
-    // ── Outgoing fast-path ────────────────────────────────────────────────────
-    // If we just sent this message ourselves, skip decrypt — we already have the
-    // plaintext.  Cache it so future re-renders are also instant.
+    const text = el.dataset.ageRaw ?? directTextContent(el).trim();
+    if (!text.startsWith(PREFIX)) return;
+
+    // New wire format: [age]:<cipher>:<sig>
+    const m = text.match(/^\[age\]:([A-Za-z0-9\-.]+):([A-Za-z0-9\-.]+)$/);
+    if (!m) return;
+
+    el.dataset.ageRaw = text;
+
+    if (!_signingKey || !_globalOn) {
+      markMessage(el, !_signingKey ? '🔒 Unlock extension to decrypt.' : '🔒 Decryption disabled.', 'pending');
+      return;
+    }
+
+    // Own outgoing message: render from cache without background round-trip.
+    const cipher = m[1];
     const outgoingPlain = _outgoingCache.get(cipher);
     if (outgoingPlain !== undefined) {
-      _cipherCache.set(cipher, { plain: outgoingPlain });
+      _processedIds.add(msgId);
+      _decryptedCache.set(msgId, outgoingPlain);
       renderDecrypted(el, outgoingPlain);
       return;
     }
 
-    // ── Cache hit ─────────────────────────────────────────────────────────────
-    const cached = _cipherCache.get(cipher);
-    if (cached !== undefined) {
-      if (cached.plain !== undefined) {
-        renderDecrypted(el, cached.plain);
-      } else {
-        markMessage(el, cached.warn, cached.state);
-      }
-      return;
-    }
-
-    // ── In-flight deduplication ───────────────────────────────────────────────
-    if (_inFlight.has(cipher)) {
-      markMessage(el, '🔒 Decrypting…', 'pending');
-      return;
-    }
-
-    _inFlight.add(cipher);
     markMessage(el, '🔒 Decrypting…', 'pending');
 
     (async () => {
-      const channelId = getCurrentChannelId();
-      const contact   = getContact();
+      const channelId   = getCurrentChannelId();
+      const sig         = m[2];
+      const sigInput    = new TextEncoder().encode(`${channelId}:${cipher}`);
+      const sigBytes    = base64DiscToBytes(sig).slice(0, 64); // clamp for Chromium
 
-      // ── No contact for this channel ───────────────────────────────────────
-      if (!contact) {
-        const warn = '⚠️ Encrypted message — add sender as a contact to decrypt';
-        _cipherCache.set(cipher, { warn, state: 'warn' });
-        _inFlight.delete(cipher);
-        const liveEl = getLiveContentEl(li);
-        if (liveEl?.dataset.ageCipher === cipher) markMessage(liveEl, warn, 'warn');
+      const contact    = getContact();
+      const contactKey = contact ? await importVerifyKey(contact.ageRecipient).catch(() => null) : null;
+
+      if (!contactKey) {
+        // No contact configured for this channel — cannot verify sender.
+        console.info('[age] no contact key for channel', channelId, '— msgId', msgId);
+        markMessage(el, '⚠️ No contact configured for this channel.', 'warn');
         return;
       }
 
-      // ── Delegate verify + decrypt to background.js ────────────────────────
-      // The background holds the private key and performs signature verification
-      // and decryption atomically.  The raw key never enters this context.
-      // selfKey is sent so the background can also verify messages we sent.
+      const sigValid = await crypto.subtle.verify('Ed25519', contactKey, sigBytes, sigInput);
+      if (!sigValid) {
+        console.info('[age] signature mismatch — msgId', msgId);
+        markMessage(el, '🔴 Signature invalid — possible tampering.', 'error');
+        return;
+      }
+
+      // Signature is valid — delegate decryption to the background.
       try {
-        const result = await bgSend({
-          type:       'DECRYPT',
-          cipher,
-          sig:        sigRaw,
-          channelId,
-          contactKey: contact.ageRecipient,
-          selfKey:    _ownRecipient,
-        });
-
-        _cipherCache.set(cipher, { plain: result.plain });
-        _inFlight.delete(cipher);
-        const liveEl = getLiveContentEl(li);
-        if (liveEl?.dataset.ageCipher === cipher) renderDecrypted(liveEl, result.plain);
-
-      } catch (err) {
-        _inFlight.delete(cipher);
-        const liveEl = getLiveContentEl(li);
-        if (!liveEl || liveEl.dataset.ageCipher !== cipher) return;
-
-        if (err.message?.startsWith('SIG_INVALID:')) {
-          const reason = err.message.slice('SIG_INVALID:'.length);
-          console.log('[age] signature invalid', { cipher, contact: contact.username, reason });
-          const warn = '⚠️ Signature invalid (' + reason + ')';
-          _cipherCache.set(cipher, { warn, state: 'warn' });
-          markMessage(liveEl, warn, 'warn');
-        } else if (err.message === 'Extension is locked.') {
-          // Background was killed and restarted without identity — mark pending
-          // so it retries when UNLOCK arrives.
-          _cipherCache.delete(cipher);
-          markMessage(liveEl, '🔒 Unlock extension to decrypt.', 'pending');
-        } else {
-          console.error('[age] decrypt failed', { cipher, err });
-          markMessage(liveEl, '🔓 Could not decrypt.', 'error');
+        const resp = await chrome.runtime.sendMessage({ type: 'DECRYPT_MSG', cipher });
+        if (!resp?.ok) {
+          if (resp?.error === 'locked') {
+            markMessage(el, '🔒 Unlock extension to decrypt.', 'pending');
+          } else {
+            console.info('[age] decrypt failed — msgId', msgId, resp?.error);
+            markMessage(el, '🔓 Could not decrypt.', 'error');
+          }
+          return;
         }
+        _processedIds.add(msgId);
+        _decryptedCache.set(msgId, resp.plaintext);
+        renderDecrypted(el, resp.plaintext);
+      } catch (err) {
+        console.info('[age] decrypt IPC error — msgId', msgId, err?.message);
+        markMessage(el, '🔓 Could not decrypt.', 'error');
       }
     })();
-  }
-
-  // Re-query the live content element inside li after an async gap.
-  // Discord's React reconciler may have replaced the element node entirely.
-  function getLiveContentEl(li) {
-    return [...li.querySelectorAll('[id^="message-content-"]')].find(e =>
-      !e.closest('[class*="repliedText"]') &&
-      !e.closest('[class*="replyPreview"]')
-    ) ?? null;
   }
 
   function directTextContent(el) {
@@ -408,7 +375,7 @@
   }
 
   setInterval(() => {
-    if (_unlocked) attachEnterHook();
+    if (_signingKey) attachEnterHook();
     sanitizeReplyPreviews();
   }, 1500);
 
@@ -492,10 +459,6 @@
   }
 
   // ─── Emoji map ───────────────────────────────────────────────────────────────
-  // Full dataset sourced from emojilib (the same library node-emoji wraps),
-  // which is what Discord itself uses for :shortcode: → emoji resolution.
-  // 1570 entries across 8 categories, generated via extract_discord_emojis.js.
-
   const EMOJI_MAP = {
   // Source: discord-emoji npm package (extracted from Discord client source)
   // 5940 entries | correct Discord :shortcode: names
@@ -6468,124 +6431,64 @@
     el.style.color = ({ ok: '#889ce6', warn: '#fee75c', error: '#ed4245', pending: '#99aab5' })[state] ?? '#99aab5';
   }
 
-  // ─── Banner ──────────────────────────────────────────────────────────────────
-
-  const BANNER_COLORS = {
-    info:  { bg: '#313338', border: '#5865f2', icon: '🔐', color: '#c9cdfb' },
-    warn:  { bg: '#2b2400', border: '#fee75c', icon: '⚠️',  color: '#fee75c' },
-    error: { bg: '#2c0f0f', border: '#ed4245', icon: '🔓',  color: '#f38183' },
-    ok:    { bg: '#0d2117', border: '#57f287', icon: '🔒',  color: '#57f287' },
-  };
-
-  function showBanner(msg, type = 'info', autohide = true) {
-    if (_bannerTimer) { clearTimeout(_bannerTimer); _bannerTimer = null; }
-    const cfg = BANNER_COLORS[type] ?? BANNER_COLORS.info;
-    if (!_banner) {
-      _banner = document.createElement('div');
-      _banner.id = 'age-banner';
-      Object.assign(_banner.style, {
-        position: 'fixed', bottom: '80px', left: '50%', transform: 'translateX(-50%)',
-        zIndex: '999999', maxWidth: '480px', width: 'max-content',
-        borderRadius: '14px', padding: '10px 18px 10px 14px',
-        display: 'flex', alignItems: 'center', gap: '10px',
-        boxShadow: '0 4px 24px rgba(0,0,0,.45)',
-        fontFamily: '"Segoe UI",system-ui,sans-serif', fontSize: '13px',
-        fontWeight: '500', lineHeight: '1.4', transition: 'opacity 0.2s ease',
-      });
-      document.body.appendChild(_banner);
-    }
-    Object.assign(_banner.style, {
-      background: cfg.bg, border: `1px solid ${cfg.border}`,
-      color: cfg.color, opacity: '1', display: 'flex',
-    });
-    const icon = Object.assign(document.createElement('span'), { textContent: cfg.icon });
-    icon.style.cssText = 'font-size:16px;flex-shrink:0';
-    const textEl = Object.assign(document.createElement('span'), { textContent: msg });
-    textEl.style.cssText = 'max-width:360px;white-space:normal';
-    _banner.replaceChildren(icon, textEl);
-    if (autohide) _bannerTimer = setTimeout(hideBanner, 4000);
-  }
-
-  function hideBanner() {
-    if (!_banner) return;
-    _banner.style.opacity = '0';
-    setTimeout(() => { if (_banner) _banner.style.display = 'none'; }, 220);
-  }
-
   // ─── Extension messages ───────────────────────────────────────────────────────
 
   const LOCKED_MSG = '🔒 Unlock extension to decrypt.';
+
   function listenForMessages() {
-    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    chrome.runtime.onMessage.addListener(async (msg) => {
 
       if (msg.type === 'UNLOCK') {
-        // Background has a live identity and is ready to handle crypto requests.
-        // No identity payload — the private key stays in background.js.
-        (async () => {
-          try {
-            const data = await bgGetContacts();
-            _contacts     = data.contacts     || {};
-            _ownRecipient = data.ownRecipient ?? null;
-            _globalOn     = data.globalOn     !== false;
-            _unlocked = true;
-            // Clear caches — re-decrypt everything with the freshly available background.
-            _cipherCache.clear();
-            _inFlight.clear();
-            hideBanner();
-            attachEnterHook();
-            scanExisting();
-            rescanPending();
-          } catch (e) {
-            console.error('[age] unlock error:', e);
-          }
-          sendResponse({ ok: true }); // ack for background retry logic
-        })();
-        return true; // keep channel open for async sendResponse
+        // Background sends signingKeyB64 — the PKCS8 private key as base64url.
+        // CryptoKey objects cannot survive chrome.tabs.sendMessage (JSON IPC
+        // silently drops them), so we import the raw bytes locally instead.
+        try {
+          const data  = await localGet(['contacts', 'globalOn']);
+          _contacts   = data.contacts || {};
+          _globalOn   = data.globalOn !== false;
+          const pkcs8 = base64UrlToBytes(msg.signingKeyB64);
+          _signingKey = await crypto.subtle.importKey(
+            'pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']
+          );
+          attachEnterHook();
+          scanExisting();
+          rescanPending();
+        } catch (e) {
+          console.error('[age] unlock error:', e);
+        }
+        return;
       }
 
       if (msg.type === 'CONTACTS_UPDATED') {
         const prevOn = _globalOn;
-        bgGetContacts().then(data => {
-          _contacts     = data.contacts     || {};
-          _ownRecipient = data.ownRecipient ?? null;
-          _globalOn     = data.globalOn     !== false;
-
-          if (_globalOn && !prevOn) {
-            _cipherCache.clear();
-            _inFlight.clear();
-            rescanPending();
-          } else if (!_globalOn && prevOn) {
-            _cipherCache.clear();
-            _inFlight.clear();
-            document.querySelectorAll('[id^="message-content-"][data-age-cipher]').forEach(el => {
-              if (el.closest('[class*="repliedText"]') || el.closest('[class*="replyPreview"]')) return;
-              el.dataset.ageState = '';
-              markMessage(el, '🔒 Decryption disabled.', 'pending');
-            });
-          } else {
-            _inFlight.clear();
-            for (const [c, entry] of _cipherCache) {
-              if (entry.plain === undefined) _cipherCache.delete(c);
-            }
-            rescanPending();
-          }
-        });
-        return false;
+        const data   = await localGet(['contacts', 'globalOn']);
+        _contacts = data.contacts || {};
+        _globalOn = data.globalOn !== false;
+        if (_globalOn && !prevOn) {
+          _processedIds.clear();
+          _decryptedCache.clear();
+          rescanPending();
+        } else if (!_globalOn && prevOn) {
+          _processedIds.clear();
+          _decryptedCache.clear();
+          document.querySelectorAll('[id^="message-content-"][data-age-state="ok"]').forEach(el => {
+            el.dataset.ageState = '';
+            markMessage(el, '🔒 Decryption disabled.', 'pending');
+          });
+        }
+        return;
       }
 
       if (msg.type === 'RELOCK') {
-        _unlocked = false;
-        _cipherCache.clear();
-        _inFlight.clear();
+        _signingKey = null;
+        _processedIds.clear();
+        _decryptedCache.clear();
+        _outgoingCache.clear();
         detachEnterHook();
-        document.querySelectorAll('[id^="message-content-"][data-age-cipher]').forEach(el => {
-          if (el.closest('[class*="repliedText"]') || el.closest('[class*="replyPreview"]')) return;
-          // Clear the 'ok' state so markMessage's guard doesn't skip already-decrypted
-          // messages — on RELOCK every visible message must revert to locked appearance.
+        document.querySelectorAll('[id^="message-content-"][data-age-state="ok"]').forEach(el => {
           el.dataset.ageState = '';
           markMessage(el, LOCKED_MSG, 'pending');
         });
-        return false;
       }
     });
   }
@@ -6598,7 +6501,7 @@
       if (location.href === lastUrl) return;
       lastUrl = location.href;
       setTimeout(() => {
-        if (_unlocked) attachEnterHook();
+        if (_signingKey) attachEnterHook();
         _msgObserver?.disconnect();
         waitForMessageList();
       }, 800);
@@ -6610,20 +6513,9 @@
   async function init() {
     listenForMessages();
     startNavObserver();
-    const data = await bgGetContacts().catch(() => ({ contacts: {}, ownRecipient: null, globalOn: true }));
-    _contacts     = data.contacts     || {};
-    _ownRecipient = data.ownRecipient ?? null;
-    _globalOn     = data.globalOn     !== false;
-    // Check if the background already has a live identity (e.g. the content
-    // script is initialising into a tab that was already open while unlocked).
-    // We read only the flag — never the identity itself.
-    try {
-      const session = await new Promise(r => chrome.storage.session.get('age_unlocked', r));
-      if (session.age_unlocked) {
-        _unlocked = true;
-        attachEnterHook();
-      }
-    } catch { /* session storage unavailable — stay locked */ }
+    const data = await localGet(['contacts', 'globalOn']);
+    _contacts = data.contacts || {};
+    _globalOn = data.globalOn !== false;
     waitForMessageList();
   }
 
