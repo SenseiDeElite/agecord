@@ -23,6 +23,7 @@
         "https://discord.com/*"
       ],
       "js": [
+        "lib/age.min.js",
         "content.js"
       ],
       "run_at": "document_idle"
