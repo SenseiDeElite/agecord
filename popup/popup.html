@@ -31,7 +31,7 @@
     <div class="screen-header">
       <span class="lock-icon">🏛️</span>
       <h2>Discord Age Encryption</h2>
-      <p class="subtitle">One-time setup. Your private key never leaves your device.</p>
+      <p class="subtitle">One-time setup.</p>
     </div>
 
     <div class="form-group">
@@ -48,7 +48,7 @@
 
     <button id="btn-generate" class="btn btn-primary btn-full">Generate keypair</button>
     <div id="setup-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Generating…</span>
+      <div class="spinner"></div><span>Generating keypair… this may take a few seconds.</span>
     </div>
 
     <button id="btn-show-import" class="btn btn-outlined btn-full">Import existing keypair</button>
@@ -66,11 +66,7 @@
 
     <div class="form-group">
       <label for="import-blob">Private key blob</label>
-      <textarea id="import-blob" rows="4" placeholder="Paste your exported key blob here (plain or encrypted)…" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
-      <div id="import-export-pass-row" hidden>
-        <label style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;display:block;">Export passphrase (the one used when exporting):</label>
-        <input id="import-export-passphrase" type="password" placeholder="Export passphrase…" autocomplete="off">
-      </div>
+      <textarea id="import-blob" rows="4" placeholder="Paste your exported private key blob here…" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
     </div>
     <div class="form-group">
       <label for="import-passphrase">New passphrase</label>
@@ -83,27 +79,23 @@
     <div id="import-error" class="error-msg" hidden></div>
     <button id="btn-import" class="btn btn-primary btn-full">Import &amp; unlock</button>
     <div id="import-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Importing…</span>
+      <div class="spinner"></div><span>Importing… this may take a few seconds.</span>
     </div>
   </div>
 
   <!-- ── SCREEN: MAIN ──────────────────────────────────────────────────── -->
   <div id="screen-main" class="screen screen-main" hidden>
     <div class="main-header">
-      <!-- glow layer -->
       <div class="main-header-glow"></div>
-      <!-- top strip: actions pinned right -->
       <div class="main-header-actions">
         <button id="btn-my-key" class="icon-btn" title="My public key" aria-label="My public key">🔑</button>
         <button id="btn-lock"   class="icon-btn" title="Lock session"  aria-label="Lock session">🔒</button>
         <button id="btn-about"  class="icon-btn" title="About"         aria-label="About">ℹ️</button>
       </div>
-      <!-- hero: icon + title centred -->
       <div class="main-header-hero">
         <span class="main-header-icon">🏛️</span>
         <span class="main-header-title">Discord Age Encryption</span>
       </div>
-      <!-- toggle row -->
       <div class="main-header-toggle-row">
         <span class="main-header-toggle-label">🔐 Encryption &amp; Decryption</span>
         <label class="switch" aria-label="Toggle global encryption">
@@ -157,7 +149,7 @@
     </div>
     <div class="form-group">
       <label for="contact-key">Public key</label>
-      <textarea id="contact-key" rows="5" placeholder="age1…"></textarea>
+      <textarea id="contact-key" rows="5" placeholder="age1… (must include the full key with ;ed25519: suffix)"></textarea>
     </div>
     <div id="add-contact-error" class="error-msg" hidden></div>
 
@@ -198,46 +190,20 @@
 
     <p class="hint" style="padding: 8px 16px 0">Share this with contacts so they can encrypt messages to you.</p>
     <div class="key-box" id="my-key-box"></div>
-    <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">BLAKE3 Fingerprint</div>
-    <div class="sheet-fingerprint" id="my-key-fp" style="padding: 4px 16px 8px; text-align: center;">Computing fingerprint…</div>
 
     <button id="btn-copy-key" class="btn btn-primary btn-full">Copy to clipboard</button>
 
+    <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">BLAKE3 Fingerprint</div>
+    <div class="sheet-fingerprint" id="my-key-fp" style="padding: 4px 16px 8px; text-align: center;">Computing fingerprint…</div>
+
     <div class="danger-zone">
-      <div class="section-label" style="color: var(--md-error)">Advanced</div>
-      <button id="btn-export-key"   class="btn btn-outlined-error btn-full">Export private key</button>
-      <button id="btn-change-pass" class="btn btn-outlined-error btn-full">Change passphrase</button>
-      <button id="btn-regen"       class="btn btn-outlined-error btn-full">Regenerate keypair</button>
+      <div class="section-label" style="color: var(--md-on-surface-variant)">Advanced</div>
+      <button id="btn-change-passphrase" class="btn btn-outlined-error btn-full">Change passphrase</button>
+      <button id="btn-export-key"        class="btn btn-outlined-error btn-full">Export private key</button>
+      <button id="btn-regen"             class="btn btn-outlined-error btn-full">Regenerate keypair</button>
     </div>
   </div>
 
-
-  <!-- ── SCREEN: CHANGE PASSPHRASE ───────────────────────────────────── -->
-  <div id="screen-change-pass" class="screen screen-form" hidden>
-    <div class="topbar">
-      <button id="btn-back-change-pass" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Change passphrase</span>
-    </div>
-
-    <p class="hint" style="padding: 8px 16px 4px">Re-encrypts your stored key with a new passphrase. Your contacts are not affected.</p>
-
-    <div class="form-group">
-      <label for="change-pass-current">Current passphrase</label>
-      <input id="change-pass-current" type="password" placeholder="Your current passphrase" autocomplete="current-password">
-    </div>
-    <div class="form-group">
-      <label for="change-pass-new">New passphrase</label>
-      <input id="change-pass-new" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password">
-      <div class="strength-bar-wrap"><div id="change-pass-strength-bar" class="strength-bar-fill"></div></div>
-      <span id="change-pass-strength-label" class="hint"></span>
-    </div>
-    <div class="form-group">
-      <label for="change-pass-new2">Repeat new passphrase</label>
-      <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password">
-    </div>
-    <div id="change-pass-error" class="error-msg" hidden></div>
-    <button id="btn-change-pass-confirm" class="btn btn-outlined-error btn-full">Change passphrase</button>
-  </div>
 
   <!-- ── SCREEN: ABOUT ────────────────────────────────────────────────── -->
   <div id="screen-about" class="screen" hidden>
@@ -258,7 +224,7 @@
         <div class="about-section-title">Project</div>
         <div class="about-card">
           <button class="about-row" id="about-repo-link">
-            <span class="about-row-icon">📦</span>
+            <span class="about-row-icon">📁</span>
             <span class="about-row-text">
               <div class="about-row-label">Discord Age Encryption</div>
             </span>
@@ -303,8 +269,7 @@
       </div>
 
       <p class="about-legal">
-        Your private key never leaves your device.<br>
-        This extension is not affiliated with Discord Inc.
+        This extension is not affiliated with nor endorsed by Discord Inc.
       </p>
 
     </div>
@@ -345,32 +310,14 @@
     </div>
   </div>
 
-
-  <!-- ── MODAL: EXPORT — SET EXPORT PASSPHRASE ─────────────────────────── -->
-  <div id="modal-export-set-pass" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>🔑 Set export passphrase</h3>
-      <p>Choose a passphrase to encrypt the exported blob. Anyone who receives the blob will also need this passphrase to import it.</p>
-      <p>This passphrase can differ from your unlock passphrase.</p>
-      <label for="export-blob-passphrase" style="font-size:13px;font-weight:500;">Export passphrase:</label>
-      <input id="export-blob-passphrase"  type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password" style="margin-top:4px;">
-      <input id="export-blob-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password" style="margin-top:8px;">
-      <div id="export-blob-pass-error" class="error-msg" hidden></div>
-      <div class="modal-actions">
-        <button id="btn-export-set-pass-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-export-set-pass-confirm" class="btn btn-primary">Encrypt &amp; show</button>
-      </div>
-    </div>
-  </div>
-
   <!-- ── MODAL: EXPORT KEY DISPLAY ────────────────────────────────────── -->
   <div id="modal-export-display" class="modal-overlay" hidden>
     <div class="modal">
-      <h3>🔑 Encrypted key blob</h3>
-      <p style="font-size: 12px;">This blob is encrypted with your export passphrase. Store it safely — it requires the export passphrase to import.</p>
+      <h3>🔑 Private key blob</h3>
+      <p style="color: var(--md-error); font-size: 12px;">⚠️ Keep this secret. Do not share it with anyone.</p>
       <textarea id="export-key-blob" rows="6" readonly spellcheck="false" style="width:100%; font-family: monospace; font-size: 10px; background: var(--md-surface-container); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 8px; box-sizing: border-box; resize: none;"></textarea>
       <div class="modal-actions">
-        <button id="btn-export-copy"  class="btn btn-primary">Copy encrypted blob</button>
+        <button id="btn-export-copy"  class="btn btn-primary">Copy</button>
         <button id="btn-export-close" class="btn btn-text">Close</button>
       </div>
     </div>
