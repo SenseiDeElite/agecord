@@ -15,8 +15,6 @@ document.getElementById('f').addEventListener('change', async (e) => {
   try {
     const text = await file.text();
 
-    if (text.length > 500_000) throw new Error('File too large — max 500 KB.');
-
     const parsed = JSON.parse(text);
     const entries = Array.isArray(parsed) ? parsed : parsed && parsed.contacts;
     if (!Array.isArray(entries)) throw new Error('Not a valid contacts export.');
