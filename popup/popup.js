@@ -6,6 +6,11 @@
 //               background service worker holds it in memory and sends only the
 //               non-extractable Ed25519 signing CryptoKey to content scripts.
 // Scrypt      : offloaded to popup/scrypt-worker.js so the UI stays responsive.
+//
+// Data model  : contacts stored as { [uuid]: ContactEntry } where uuid is a
+//               stable v4 UUID generated at creation time.  channelId is a
+//               field on the entry, not the map key.  This is the v2 model
+//               introduced in 0.4.0.
 
 (() => {
   'use strict';
@@ -13,11 +18,13 @@
   // ─── Constants ───────────────────────────────────────────────────────────────
 
   const MAX_CONTACTS    = 1000;
+  const MAX_SERVERS     = 200;
   const MAX_CHANNEL_ID  = 20;   // chars
   const MIN_CHANNEL_ID  = 1;
   const MAX_USERNAME    = 32;
   const MIN_USERNAME    = 1;
-  const MAX_IMPORT_ROWS = 1000;
+  const MAX_GROUP_MEMBERS  = 10;
+  const CONTACTS_VERSION   = 2;
 
   // ─── Storage helpers ────────────────────────────────────────────────────────
   const store = {
@@ -25,6 +32,111 @@
     set:    data => new Promise(r => chrome.storage.local.set(data, r)),
     remove: keys => new Promise(r => chrome.storage.local.remove(keys, r)),
   };
+
+  // ageRecipient is a public key — safe to read from local storage directly.
+  async function getAgeRecipient() {
+    const d = await store.get(['ageRecipient']);
+    return d.ageRecipient ?? null;
+  }
+
+  // ─── Encrypted contacts storage ──────────────────────────────────────────────
+  // Contacts are stored encrypted at rest in chrome.storage.local as "contactsEnc".
+  // The AES-GCM-256 key lives only in the background service worker (_contactsKey).
+  // The popup reads/writes contacts by sending ENCRYPT_CONTACTS / DECRYPT_CONTACTS
+  // messages to the background.
+  //
+  // While unlocked, _contacts is the live in-memory object and is the source of
+  // truth.  Any write goes: mutate _contacts → saveContacts() → store.set.
+  //
+  // _sessionPassphrase: held in popup memory for the lifetime of an unlocked
+  //   session so that UNLOCK messages re-sent to the background (e.g. after a
+  //   service-worker restart) can re-derive the contacts key without re-prompting
+  //   the user.
+
+  let _sessionPassphrase = null;
+
+  async function saveContacts(contacts) {
+    const json = JSON.stringify(contacts);
+
+    // Always update session storage immediately — this keeps the popup and content
+    // scripts consistent even if the encrypted-at-rest write fails below.
+    await setSessionContacts(contacts);
+
+    const resp = await bgSend({ type: 'ENCRYPT_CONTACTS', json });
+    if (resp?.ok) {
+      await store.set({ contactsEnc: resp.ciphertextB64 });
+      return;
+    }
+
+    // Background key unavailable (service-worker restarted, passphrase not cached).
+    // Try to re-derive the key using the cached passphrase, then retry.
+    if (_sessionPassphrase) {
+      const identity = await getSessionIdentity();
+      if (identity) {
+        await bgUnlock(identity, _sessionPassphrase);
+        const resp2 = await bgSend({ type: 'ENCRYPT_CONTACTS', json });
+        if (resp2?.ok) {
+          await store.set({ contactsEnc: resp2.ciphertextB64 });
+          return;
+        }
+      }
+    }
+
+    // Could not encrypt — the encrypted blob on disk is stale until next full
+    // unlock.  The session storage copy is up to date so the current session
+    // is unaffected.  Log for diagnostics but don't surface to the user.
+    console.warn('[age] saveContacts: could not update encrypted blob (background key unavailable).');
+  }
+
+  async function loadContacts() {
+    const { contactsEnc } = await store.get(['contactsEnc']);
+    if (!contactsEnc) {
+      return {};
+    }
+
+    const resp = await bgSend({ type: 'DECRYPT_CONTACTS', ciphertextB64: contactsEnc });
+    if (resp?.ok) {
+      try {
+        const parsed = JSON.parse(resp.json);
+        await setSessionContacts(parsed);
+        return parsed;
+      } catch { return {}; }
+    }
+
+    // Background key unavailable (service-worker restarted, passphrase not cached).
+    // Try to re-derive the key using the cached passphrase.
+    if (_sessionPassphrase) {
+      const identity = await getSessionIdentity();
+      if (identity) {
+        await bgUnlock(identity, _sessionPassphrase);
+        const resp2 = await bgSend({ type: 'DECRYPT_CONTACTS', ciphertextB64: contactsEnc });
+        if (resp2?.ok) {
+          try {
+            const parsed = JSON.parse(resp2.json);
+            await setSessionContacts(parsed);
+            return parsed;
+          } catch { return {}; }
+        }
+      }
+    }
+
+    // Passphrase not available (popup was closed and reopened without re-locking).
+    // Fall back to the decrypted contacts already in session storage — they were
+    // written there when the contacts were last successfully loaded or saved, and
+    // session storage has the same lifetime as the unlock session.
+    try {
+      if (chrome.storage.session) {
+        const s = await new Promise(res => chrome.storage.session.get('age_contacts', res));
+        if (s.age_contacts && typeof s.age_contacts === 'object') {
+          console.info('[age] loadContacts: using session storage fallback');
+          return s.age_contacts;
+        }
+      }
+    } catch {}
+
+    console.error('[age] loadContacts: background decrypt failed and no session fallback:', resp?.error);
+    return {};
+  }
 
   // ─── Background messaging ────────────────────────────────────────────────────
   // All tab-relay operations go through the background service worker.
@@ -38,14 +150,48 @@
     });
   }
 
+  // Relay helpers: always bundle contacts + ageRecipient so content scripts
+  // receive them without needing access to chrome.storage.session.
+  async function bgUnlock(identity, passphrase) {
+    const ageRecipient = await getAgeRecipient();
+    return bgSend({ type: 'UNLOCK', identity, passphrase, contacts: _contacts, ageRecipient });
+  }
+
+  async function bgContactsUpdated() {
+    const ageRecipient = await getAgeRecipient();
+    return bgSend({ type: 'CONTACTS_UPDATED', contacts: _contacts, ageRecipient });
+  }
+
+  // ─── UUID generator ──────────────────────────────────────────────────────────
+
+  function generateUUID() {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
+    return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+  }
+
+  // contactsByChannelId → Map<channelId, entry>, used for duplicate-channelId enforcement.
+  function contactsByChannelId(contacts) {
+    const m = new Map();
+    for (const entry of Object.values(contacts)) {
+      if (entry.channelId) m.set(entry.channelId, entry);
+    }
+    return m;
+  }
+
   // ─── State ──────────────────────────────────────────────────────────────────
-  let _contacts        = {};
+  let _contacts        = {};   // { [uuid]: ContactEntry }
   let _globalOn        = true;
-  let _selectedId      = null;
-  let _editingId       = null;   // channelId currently open in the edit screen
-  let _sessionIdentity = null;  // decrypted two-line identity blob, kept for export
+  let _selectedId      = null; // uuid of the currently open contact sheet
+  let _selectedGroupId = null; // uuid of the currently open group sheet
+  let _selectedServerId= null; // uuid of the currently open server sheet
+  let _editingId       = null; // uuid currently open in the edit screen
+  let _sessionIdentity = null; // decrypted two-line identity blob, kept for export
   // ─── Screen router ──────────────────────────────────────────────────────────
-  const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact', 'my-key', 'about'];
+  const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact',
+                   'edit-group', 'edit-server', 'my-key', 'about'];
   const show = screenId =>
     screens.forEach(id => { document.getElementById(`screen-${id}`).hidden = (id !== screenId); });
 
@@ -68,10 +214,20 @@
     } catch {}
   }
 
+  // Write decrypted contacts to session storage so content scripts can read them
+  // without needing to decrypt from local storage.
+  async function setSessionContacts(contacts) {
+    try {
+      if (chrome.storage.session)
+        await new Promise(res => chrome.storage.session.set({ age_contacts: contacts }, res));
+    } catch {}
+  }
+
   async function clearSession() {
     try {
       if (chrome.storage.session)
-        await new Promise(res => chrome.storage.session.remove(['age_unlocked', 'age_identity'], res));
+        await new Promise(res => chrome.storage.session.remove(
+          ['age_unlocked', 'age_identity', 'age_contacts'], res));
     } catch {}
   }
 
@@ -105,8 +261,7 @@
   // ─── Boot ───────────────────────────────────────────────────────────────────
 
   async function boot() {
-    const data = await store.get(['ageRecipient', 'ageEncryptedIdentity', 'contacts', 'globalOn']);
-    _contacts = data.contacts || {};
+    const data = await store.get(['ageRecipient', 'ageEncryptedIdentity', 'globalOn']);
     _globalOn = data.globalOn !== false;
 
     if (!data.ageRecipient || !data.ageEncryptedIdentity) {
@@ -118,12 +273,13 @@
     const identity = await getSessionIdentity();
     if (identity) {
       _sessionIdentity = identity;
-      // Tell background — it will import the signing key and relay to tabs.
-      await bgSend({ type: 'UNLOCK', identity });
+      await bgUnlock(identity, _sessionPassphrase ?? undefined);
+      _contacts = await loadContacts();
       await showMain();
     } else {
       document.getElementById('btn-goto-setup').hidden = false;
       show('lock');
+      await checkLockdown();
     }
   }
 
@@ -148,10 +304,12 @@
   });
   document.getElementById('btn-reset-confirm').addEventListener('click', async () => {
     document.getElementById('modal-reset-keypair').hidden = true;
-    await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'contacts', 'globalOn']);
+    await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'contactsEnc', 'contactsSalt', 'contacts', 'globalOn',
+                        'unlockAttempts', 'unlockLockedUntil']);
     await clearSession();
-    _contacts = {};
-    _globalOn = true;
+    _contacts          = {};
+    _globalOn          = true;
+    _sessionPassphrase = null;
     await bgSend({ type: 'RELOCK' });
     document.getElementById('btn-goto-setup').hidden = true;
     document.getElementById('passphrase-input').value = '';
@@ -159,7 +317,90 @@
     show('setup');
   });
 
+  // ─── Passphrase lockdown ──────────────────────────────────────────────────────
+  // After 3 consecutive wrong attempts the unlock button is disabled for 10 minutes.
+  // State is persisted in chrome.storage.local so reloading the popup cannot bypass it.
+  // Storage keys: unlockAttempts (int), unlockLockedUntil (ms timestamp or 0).
+
+  const LOCKOUT_MAX_ATTEMPTS = 3;
+  const LOCKOUT_DURATION_MS  = 10 * 60 * 1000; // 10 minutes
+
+  let _lockCountdownInterval = null;
+
+  function fmtCountdown(ms) {
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function setLockdownUI(lockedUntilMs) {
+    const btn    = document.getElementById('btn-unlock');
+    const errEl  = document.getElementById('unlock-error');
+    const inp    = document.getElementById('passphrase-input');
+
+    if (_lockCountdownInterval) { clearInterval(_lockCountdownInterval); _lockCountdownInterval = null; }
+
+    if (!lockedUntilMs || Date.now() >= lockedUntilMs) {
+      btn.disabled = false;
+      inp.disabled = false;
+      errEl.hidden = true;
+      return;
+    }
+
+    btn.disabled = true;
+    inp.disabled = true;
+
+    function tick() {
+      const remaining = lockedUntilMs - Date.now();
+      if (remaining <= 0) {
+        clearInterval(_lockCountdownInterval);
+        _lockCountdownInterval = null;
+        btn.disabled = false;
+        inp.disabled = false;
+        errEl.hidden = true;
+        store.set({ unlockAttempts: 0, unlockLockedUntil: 0 });
+        return;
+      }
+      showErr(errEl, `Too many failed attempts. Try again in ${fmtCountdown(remaining)}.`);
+    }
+    tick();
+    _lockCountdownInterval = setInterval(tick, 1000);
+  }
+
+  async function checkLockdown() {
+    const { unlockLockedUntil = 0 } = await store.get(['unlockLockedUntil']);
+    if (unlockLockedUntil && Date.now() < unlockLockedUntil) {
+      setLockdownUI(unlockLockedUntil);
+      return true;
+    }
+    return false;
+  }
+
+  async function recordFailedAttempt() {
+    const { unlockAttempts = 0 } = await store.get(['unlockAttempts']);
+    const newCount = unlockAttempts + 1;
+    if (newCount >= LOCKOUT_MAX_ATTEMPTS) {
+      const lockedUntil = Date.now() + LOCKOUT_DURATION_MS;
+      await store.set({ unlockAttempts: 0, unlockLockedUntil: lockedUntil });
+      setLockdownUI(lockedUntil);
+    } else {
+      await store.set({ unlockAttempts: newCount, unlockLockedUntil: 0 });
+      const remaining = LOCKOUT_MAX_ATTEMPTS - newCount;
+      showErr(
+        document.getElementById('unlock-error'),
+        `Wrong passphrase. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining before lockout.`
+      );
+    }
+  }
+
+  async function clearFailedAttempts() {
+    await store.set({ unlockAttempts: 0, unlockLockedUntil: 0 });
+  }
+
   async function doUnlock() {
+    if (await checkLockdown()) return;
+
     const passphrase = document.getElementById('passphrase-input').value;
     if (!passphrase) return;
 
@@ -170,7 +411,7 @@
     btn.textContent = 'Unlocking…';
 
     try {
-      const { ageEncryptedIdentity } = await store.get(['ageEncryptedIdentity']);
+      const { ageEncryptedIdentity, ageRecipient } = await store.get(['ageEncryptedIdentity', 'ageRecipient']);
       if (!ageEncryptedIdentity) throw new Error('No keypair found.');
 
       const result = await runScryptWorker({ op: 'DECRYPT', encryptedB64: ageEncryptedIdentity, passphrase });
@@ -182,23 +423,28 @@
       if (!identityLines[1]?.startsWith('ed25519priv:'))
         throw new Error('Keypair missing Ed25519 signing key — please reset and generate a new keypair.');
 
+      await clearFailedAttempts();
       await setSession(identity);
-      _sessionIdentity = identity;
-      await bgSend({ type: 'UNLOCK', identity });
+      _sessionIdentity   = identity;
+      _sessionPassphrase = passphrase;
+      await bgUnlock(identity, passphrase);
       document.getElementById('passphrase-input').value = '';
       await showMain();
 
     } catch (e) {
       const msg = e.message?.toLowerCase() ?? '';
-      showErr(
-        errEl,
-        (msg.includes('bad') || msg.includes('decrypt') || msg.includes('passphrase') || msg.includes('hmac'))
-          ? 'Wrong passphrase. Try again.'
-          : 'Unlock failed: ' + e.message
-      );
+      if (msg.includes('bad') || msg.includes('decrypt') || msg.includes('passphrase') || msg.includes('hmac')) {
+        // Wrong passphrase — record against lockdown counter.
+        await recordFailedAttempt();
+      } else {
+        showErr(errEl, 'Unlock failed: ' + e.message);
+      }
     } finally {
-      btn.disabled = false;
-      btn.textContent = 'Unlock';
+      const { unlockLockedUntil = 0 } = await store.get(['unlockLockedUntil']);
+      if (!unlockLockedUntil || Date.now() >= unlockLockedUntil) {
+        btn.disabled = false;
+        btn.textContent = 'Unlock';
+      }
     }
   }
 
@@ -245,6 +491,7 @@
     if (pass !== pass2) { showErr(errEl, 'Passphrases do not match.'); return; }
 
     document.getElementById('btn-generate').hidden  = true;
+    document.getElementById('btn-show-import').hidden = true;
     document.getElementById('setup-spinner').hidden = false;
 
     try {
@@ -260,16 +507,17 @@
       const identityBlob  = identity + '\ned25519priv:' + sigPrivB64;
       const fullRecipient = recipient + ';ed25519:' + sigPubB64;
 
-      // Encrypt with N=2^18 in the worker.
       const result = await runScryptWorker({ op: 'ENCRYPT', identityBlob, passphrase: pass });
 
-      await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: result.encryptedB64, contacts: {}, globalOn: true });
+      await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: result.encryptedB64, globalOn: true });
       await setSession(identityBlob);
-      _sessionIdentity = identityBlob;
+      _sessionIdentity   = identityBlob;
+      _sessionPassphrase = pass;
       _contacts = {};
       _globalOn = true;
 
-      await bgSend({ type: 'UNLOCK', identity: identityBlob });
+      await bgUnlock(identityBlob, pass);
+      await saveContacts({});
       await bgSend({ type: 'RELOAD_DISCORD_TABS' });
       await showMain();
 
@@ -277,6 +525,7 @@
       showErr(document.getElementById('setup-error'), 'Key generation failed: ' + e.message);
     } finally {
       document.getElementById('btn-generate').hidden  = false;
+      document.getElementById('btn-show-import').hidden = false;
       document.getElementById('setup-spinner').hidden = true;
     }
   });
@@ -284,9 +533,7 @@
   // ─── Import existing keypair ─────────────────────────────────────────────────
 
   const DRAFT_TTL           = 10 * 60 * 1000;
-  const IMPORT_DRAFT_FIELDS = ['import-passphrase', 'import-passphrase2'];
-  // NOTE: 'import-blob' is intentionally excluded — private key material must
-  // never be persisted to session storage, even temporarily.
+  const IMPORT_DRAFT_FIELDS = ['import-blob', 'import-export-passphrase', 'import-passphrase', 'import-passphrase2'];
 
   async function saveImportDraft() {
     const draft = { ts: Date.now() };
@@ -320,63 +567,72 @@
   document.getElementById('btn-back-import').addEventListener('click', () => show('setup'));
 
   document.getElementById('btn-import').addEventListener('click', async () => {
-    const blob  = document.getElementById('import-blob').value.trim();
-    const pass  = document.getElementById('import-passphrase').value;
-    const pass2 = document.getElementById('import-passphrase2').value;
-    const errEl = document.getElementById('import-error');
+    const encryptedBlob  = document.getElementById('import-blob').value.trim();
+    const exportPass     = document.getElementById('import-export-passphrase').value;
+    const newPass        = document.getElementById('import-passphrase').value;
+    const newPass2       = document.getElementById('import-passphrase2').value;
+    const errEl          = document.getElementById('import-error');
     errEl.hidden = true;
 
-    const passErr = validatePassphrase(pass);
-    if (passErr)        { showErr(errEl, passErr); return; }
-    if (pass !== pass2) { showErr(errEl, 'Passphrases do not match.'); return; }
-    if (!blob)          { showErr(errEl, 'Paste your private key blob first.'); return; }
+    if (!encryptedBlob)    { showErr(errEl, 'Paste your encrypted private key blob first.'); return; }
+    if (!exportPass)       { showErr(errEl, 'Enter the export passphrase used when the blob was created.'); return; }
 
-    const lines = blob.split('\n');
-    if (!lines[0].startsWith('AGE-SECRET-KEY-1')) {
-      showErr(errEl, 'Invalid blob — line 1 must be an age secret key (AGE-SECRET-KEY-1…).');
-      return;
-    }
-    if (!lines[1]?.startsWith('ed25519priv:')) {
-      showErr(errEl, 'Invalid blob — line 2 must be an Ed25519 private key (ed25519priv:…).');
-      return;
-    }
+    const passErr = validatePassphrase(newPass);
+    if (passErr)           { showErr(errEl, passErr); return; }
+    if (newPass !== newPass2) { showErr(errEl, 'Passphrases do not match.'); return; }
 
     const btn = document.getElementById('btn-import');
     btn.hidden = true;
     document.getElementById('import-spinner').hidden = false;
 
     try {
+      let decryptResult;
+      try {
+        decryptResult = await runScryptWorker({ op: 'DECRYPT', encryptedB64: encryptedBlob, passphrase: exportPass });
+      } catch (e) {
+        const msg = e.message?.toLowerCase() ?? '';
+        if (msg.includes('bad') || msg.includes('decrypt') || msg.includes('passphrase') || msg.includes('hmac')) {
+          throw new Error('Wrong export passphrase, or the blob is not a valid encrypted key export.');
+        }
+        throw e;
+      }
+
+      const identityBlob = decryptResult.identity;
+      const lines = identityBlob.split('\n');
+      if (!lines[0].startsWith('AGE-SECRET-KEY-1'))
+        throw new Error('Decrypted content is not a valid age identity (expected AGE-SECRET-KEY-1…).');
+      if (!lines[1]?.startsWith('ed25519priv:'))
+        throw new Error('Decrypted identity is missing an Ed25519 signing key (expected ed25519priv:…).');
+
       const identity  = lines[0];
       const recipient = await age.identityToRecipient(identity);
 
       const sigPrivBytes = base64UrlToBytes(lines[1].slice('ed25519priv:'.length));
-      const sigPrivKey   = await crypto.subtle.importKey(
-        'pkcs8', sigPrivBytes, { name: 'Ed25519' }, true, ['sign']
-      );
-      const jwk       = await crypto.subtle.exportKey('jwk', sigPrivKey);
-      const pubJwk    = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, key_ops: ['verify'] };
-      const sigPubKey = await crypto.subtle.importKey('jwk', pubJwk, { name: 'Ed25519' }, true, ['verify']);
-      const sigPubRaw = await crypto.subtle.exportKey('raw', sigPubKey);
-      const sigPubB64 = bytesToBase64Url(new Uint8Array(sigPubRaw));
-
+      const sigPrivKey   = await crypto.subtle.importKey('pkcs8', sigPrivBytes, { name: 'Ed25519' }, true, ['sign']);
+      const jwk          = await crypto.subtle.exportKey('jwk', sigPrivKey);
+      const sigPubKey    = await crypto.subtle.importKey('jwk',
+        { kty: jwk.kty, crv: jwk.crv, x: jwk.x, key_ops: ['verify'] },
+        { name: 'Ed25519' }, true, ['verify']);
+      const sigPubB64    = bytesToBase64Url(new Uint8Array(await crypto.subtle.exportKey('raw', sigPubKey)));
       const fullRecipient = recipient + ';ed25519:' + sigPubB64;
-      const identityBlob  = blob;
 
-      // Encrypt with N=2^18 in the worker.
-      const result = await runScryptWorker({ op: 'ENCRYPT', identityBlob, passphrase: pass });
+      const result = await runScryptWorker({ op: 'ENCRYPT', identityBlob, passphrase: newPass });
 
-      await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: result.encryptedB64, contacts: {}, globalOn: true });
+      await store.set({ ageRecipient: fullRecipient, ageEncryptedIdentity: result.encryptedB64, globalOn: true });
       await setSession(identityBlob);
-      _sessionIdentity = identityBlob;
+      _sessionIdentity   = identityBlob;
+      _sessionPassphrase = newPass;
       _contacts = {};
       _globalOn = true;
 
-      document.getElementById('import-blob').value        = '';
-      document.getElementById('import-passphrase').value  = '';
-      document.getElementById('import-passphrase2').value = '';
+      document.getElementById('import-blob').value              = '';
+      document.getElementById('import-export-passphrase').value = '';
+      document.getElementById('import-passphrase').value        = '';
+      document.getElementById('import-passphrase2').value       = '';
       clearImportDraft();
 
-      await bgSend({ type: 'UNLOCK', identity: identityBlob });
+      await bgUnlock(identityBlob, newPass);
+      await saveContacts({});
       await bgSend({ type: 'RELOAD_DISCORD_TABS' });
       await showMain();
 
@@ -391,10 +647,11 @@
   // ─── Main screen ─────────────────────────────────────────────────────────────
 
   async function showMain() {
-    const data = await store.get(['contacts', 'globalOn']);
-    _contacts = data.contacts || {};
+    const data = await store.get(['globalOn']);
     _globalOn = data.globalOn !== false;
+    _contacts = await loadContacts();
     document.getElementById('global-toggle').checked = _globalOn;
+    document.getElementById('contacts-search').value = '';
     renderContacts();
     show('main');
   }
@@ -402,16 +659,16 @@
   document.getElementById('global-toggle').addEventListener('change', async (e) => {
     _globalOn = e.target.checked;
     await store.set({ globalOn: _globalOn });
-    await bgSend({ type: 'CONTACTS_UPDATED' });
+    await bgContactsUpdated();
   });
 
   document.getElementById('btn-lock').addEventListener('click', async () => {
     await clearSession();
-    _sessionIdentity = null;
+    _sessionIdentity   = null;
+    _sessionPassphrase = null;
     await bgSend({ type: 'RELOCK' });
     document.getElementById('passphrase-input').value = '';
     document.getElementById('unlock-error').hidden = true;
-    // Keep btn-goto-setup visible — user has a stored keypair, they may want to reset.
     document.getElementById('btn-goto-setup').hidden = false;
     show('lock');
   });
@@ -430,7 +687,6 @@
       return 'That is a private key — paste their public key (age1…) instead.';
     if (!/;ed25519:[A-Za-z0-9_-]{40,}$/.test(recipient))
       return 'Public key must include an Ed25519 component (;ed25519:…). Share your full public key with the other party.';
-    // Live test-encrypt to confirm the age1 part is valid.
     try {
       const test = new age.Encrypter();
       test.addRecipient(recipient.split(';')[0]);
@@ -442,9 +698,9 @@
   }
 
   // Validate a contact's fields for add/edit.
-  // editingId: the channelId being edited (null for new contacts) — excluded from
+  // editingUUID: the UUID being edited (null for new contacts) — excluded from
   // duplicate checks so editing without changes doesn't falsely report a conflict.
-  function validateContactFields(channelId, username, recipient, editingId = null) {
+  function validateContactFields(channelId, username, recipient, editingUUID = null) {
     if (!channelId || !username || !recipient)
       return 'All fields are required.';
     if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
@@ -452,9 +708,9 @@
     if (username.length < MIN_USERNAME || username.length > MAX_USERNAME)
       return `Contact name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`;
 
-    for (const [id, c] of Object.entries(_contacts)) {
-      if (id === editingId) continue; // skip the contact being edited
-      if (id === channelId)
+    for (const [uuid, c] of Object.entries(_contacts)) {
+      if (uuid === editingUUID) continue; // skip the contact being edited
+      if (c.channelId === channelId)
         return 'A contact with this Channel ID already exists.';
       if (c.username === username)
         return `The name "${username}" is already used by another contact.`;
@@ -466,39 +722,102 @@
 
   // ─── Contacts list ────────────────────────────────────────────────────────────
 
-  function renderContacts() {
+  function renderContacts(query = '') {
     const list  = document.getElementById('contacts-list');
     const empty = document.getElementById('no-contacts');
     list.querySelectorAll('.contact-card').forEach(el => el.remove());
-    const ids = Object.keys(_contacts);
-    empty.hidden = ids.length > 0;
-    ids.forEach(id => {
-      const c    = _contacts[id];
+
+    const q = query.trim().toLowerCase();
+    const entries = Object.values(_contacts).filter(c => {
+      if (q) {
+        const label = (c.type === 'contact' || !c.type) ? c.username : c.name;
+        return label?.toLowerCase().includes(q);
+      }
+      return true;
+    });
+
+    empty.hidden = entries.length > 0;
+
+    entries.forEach(c => {
+      const uuid = c.id;
       const card = document.createElement('div');
       card.className = 'contact-card';
 
+      const type   = c.type ?? 'contact';
+      const icon   = type === 'group' ? '👥' : type === 'server' ? '🏠' : null;
+      const label  = type === 'contact' ? c.username : c.name;
+      const initLetter = (label?.[0] ?? '?').toUpperCase();
+
       const avatar = Object.assign(document.createElement('div'), {
         className:   'contact-avatar',
-        textContent: (c.username?.[0] ?? '?').toUpperCase(),
+        textContent: icon ?? initLetter,
       });
       const name = Object.assign(document.createElement('div'), {
         className:   'contact-name',
-        textContent: c.username,
+        textContent: label,
       });
+      const chipLabel = c.enabled ? '🔒 Encrypted' : '🔓 Disabled';
       const chip = Object.assign(document.createElement('span'), {
         className:   `contact-chip ${c.enabled ? 'chip-on' : 'chip-off'}`,
-        textContent: c.enabled ? '🔒 Encrypted' : '🔓 Disabled',
+        textContent: chipLabel,
       });
       const info = document.createElement('div');
       info.className = 'contact-info';
       info.append(name, chip);
       card.append(avatar, info);
-      card.addEventListener('click', () => openContactSheet(id));
+
+      card.addEventListener('click', () => {
+        if (type === 'group')  openGroupSheet(uuid);
+        else if (type === 'server') openServerSheet(uuid);
+        else openContactSheet(uuid);
+      });
       list.appendChild(card);
     });
   }
 
-  // ─── Add contact ─────────────────────────────────────────────────────────────
+  document.getElementById('contacts-search').addEventListener('input', e => {
+    renderContacts(e.target.value);
+  });
+
+  // ─── FAB / unified add screen ─────────────────────────────────────────────────
+
+  function resetAddScreen() {
+    document.getElementById('add-type-select').value = 'contact';
+    document.getElementById('add-fields-contact').hidden = false;
+    document.getElementById('add-fields-group').hidden   = true;
+    document.getElementById('add-fields-server').hidden  = true;
+    document.getElementById('add-contact-error').hidden  = true;
+    DRAFT_FIELDS.forEach(id => { document.getElementById(id).value = ''; });
+    resetGroupForm('add');
+    resetServerForm('add');
+  }
+
+  document.getElementById('btn-add-contact').addEventListener('click', async () => {
+    resetAddScreen();
+    const channelId = await inferChannelId();
+    if (channelId) document.getElementById('contact-channel-id').value = channelId;
+    show('add-contact');
+  });
+
+  document.getElementById('add-type-select').addEventListener('change', async (e) => {
+    const type = e.target.value;
+    document.getElementById('add-fields-contact').hidden = type !== 'contact';
+    document.getElementById('add-fields-group').hidden   = type !== 'group';
+    document.getElementById('add-fields-server').hidden  = type !== 'server';
+    document.getElementById('add-contact-error').hidden  = true;
+    if (type === 'contact') {
+      const channelId = await inferChannelId();
+      if (channelId) document.getElementById('contact-channel-id').value = channelId;
+    } else if (type === 'group') {
+      const channelId = await inferChannelId();
+      if (channelId) document.getElementById('group-channel-id').value = channelId;
+    } else if (type === 'server') {
+      const serverId = await inferServerId();
+      if (serverId) document.getElementById('server-id-input').value = serverId;
+    }
+  });
+
+  // ─── Add contact / group / server ─────────────────────────────────────────────
 
   const DRAFT_FIELDS = ['contact-channel-id', 'contact-username', 'contact-key'];
 
@@ -540,51 +859,89 @@
     });
   }
 
-  document.getElementById('btn-add-contact').addEventListener('click', async () => {
-    if (Object.keys(_contacts).length >= MAX_CONTACTS) {
-      alert(`Contact limit reached (${MAX_CONTACTS} max). Remove a contact before adding another.`);
-      return;
-    }
-    const hasDraft = await restoreDraft();
-    if (!hasDraft) {
-      const channelId = await inferChannelId();
-      if (channelId) document.getElementById('contact-channel-id').value = channelId;
-    }
-    show('add-contact');
-  });
+  async function inferServerId() {
+    return new Promise(resolve => {
+      chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+        const m = (tabs[0]?.url ?? '').match(/discord\.com\/channels\/(\d+)\/\d+/);
+        resolve(m ? m[1] : null);
+      });
+    });
+  }
 
   document.getElementById('btn-back-add').addEventListener('click', async () => {
     await clearDraft();
-    DRAFT_FIELDS.forEach(id => { document.getElementById(id).value = ''; });
+    resetAddScreen();
     showMain();
   });
 
   document.getElementById('btn-save-contact').addEventListener('click', async () => {
-    const channelId = document.getElementById('contact-channel-id').value.trim();
-    const username  = document.getElementById('contact-username').value.trim();
-    const recipient = document.getElementById('contact-key').value.trim();
-    const errEl     = document.getElementById('add-contact-error');
-    errEl.hidden    = true;
+    const type  = document.getElementById('add-type-select').value;
+    const errEl = document.getElementById('add-contact-error');
+    errEl.hidden = true;
 
-    const fieldErr = validateContactFields(channelId, username, recipient, null);
-    if (fieldErr) { showErr(errEl, fieldErr); return; }
+    if (type === 'contact') {
+      const channelId = document.getElementById('contact-channel-id').value.trim();
+      const username  = document.getElementById('contact-username').value.trim();
+      const recipient = document.getElementById('contact-key').value.trim();
 
-    const recipErr = await validateRecipient(recipient);
-    if (recipErr)  { showErr(errEl, recipErr); return; }
+      const fieldErr = validateContactFields(channelId, username, recipient, null);
+      if (fieldErr) { showErr(errEl, fieldErr); return; }
+      const recipErr = await validateRecipient(recipient);
+      if (recipErr)  { showErr(errEl, recipErr); return; }
 
-    _contacts[channelId] = { username, ageRecipient: recipient, enabled: true };
-    await store.set({ contacts: _contacts });
-    await bgSend({ type: 'CONTACTS_UPDATED' });
-    DRAFT_FIELDS.forEach(id => { document.getElementById(id).value = ''; });
+      const contactCount = Object.values(_contacts).filter(c => c.type === 'contact' || !c.type).length;
+      if (contactCount >= MAX_CONTACTS) { showErr(errEl, `Contact limit reached (${MAX_CONTACTS} max).`); return; }
+
+      const uuid = generateUUID();
+      _contacts[uuid] = { id: uuid, type: 'contact', channelId, username, ageRecipient: recipient, enabled: true };
+
+    } else if (type === 'group') {
+      const channelId = document.getElementById('group-channel-id').value.trim();
+      const name      = document.getElementById('group-name').value.trim();
+
+      if (!channelId) { showErr(errEl, 'Channel ID is required.'); return; }
+      if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
+        { showErr(errEl, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`); return; }
+      if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
+        { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+      for (const c of Object.values(_contacts)) {
+        if (c.channelId === channelId) { showErr(errEl, 'A contact or group with this Channel ID already exists.'); return; }
+      }
+      if (_groupAddMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+
+      const uuid = generateUUID();
+      _contacts[uuid] = { id: uuid, type: 'group', channelId, name, memberIds: _groupAddMembers, enabled: true };
+
+    } else if (type === 'server') {
+      const serverId = document.getElementById('server-id-input').value.trim();
+      const name     = document.getElementById('server-name').value.trim();
+
+      if (!serverId || !/^\d{1,20}$/.test(serverId)) { showErr(errEl, 'Server ID must be 1–20 digits.'); return; }
+      if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
+        { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+      const serverCount = Object.values(_contacts).filter(c => c.type === 'server').length;
+      if (serverCount >= MAX_SERVERS) { showErr(errEl, `Server limit reached (${MAX_SERVERS} max).`); return; }
+      for (const c of Object.values(_contacts)) {
+        if (c.type === 'server' && c.serverId === serverId) { showErr(errEl, 'A server with this Server ID already exists.'); return; }
+      }
+      if (_serverAddMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+
+      const uuid = generateUUID();
+      _contacts[uuid] = { id: uuid, type: 'server', serverId, name, memberIds: _serverAddMembers, enabled: true };
+    }
+
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
     await clearDraft();
+    resetAddScreen();
     await showMain();
   });
 
   // ─── Contact sheet ───────────────────────────────────────────────────────────
 
-  async function openContactSheet(id) {
-    _selectedId = id;
-    const c    = _contacts[id];
+  async function openContactSheet(uuid) {
+    _selectedId = uuid;
+    const c    = _contacts[uuid];
     const fpEl = document.getElementById('sheet-contact-fp');
     document.getElementById('sheet-contact-name').textContent = c.username;
     document.getElementById('sheet-contact-toggle').checked   = c.enabled;
@@ -595,9 +952,13 @@
   }
 
   function closeSheet() {
-    document.getElementById('sheet-contact').hidden  = true;
+    document.getElementById('sheet-contact').hidden = true;
+    document.getElementById('sheet-group').hidden   = true;
+    document.getElementById('sheet-server').hidden  = true;
     document.getElementById('sheet-backdrop').hidden = true;
-    _selectedId = null;
+    _selectedId       = null;
+    _selectedGroupId  = null;
+    _selectedServerId = null;
   }
 
   document.getElementById('btn-close-sheet').addEventListener('click', closeSheet);
@@ -606,8 +967,8 @@
   document.getElementById('sheet-contact-toggle').addEventListener('change', async (e) => {
     if (!_selectedId) return;
     _contacts[_selectedId].enabled = e.target.checked;
-    await store.set({ contacts: _contacts });
-    await bgSend({ type: 'CONTACTS_UPDATED' });
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
     renderContacts();
   });
 
@@ -626,8 +987,13 @@
     document.getElementById('modal-delete-contact').hidden = true;
     if (!_selectedId) return;
     delete _contacts[_selectedId];
-    await store.set({ contacts: _contacts });
-    await bgSend({ type: 'CONTACTS_UPDATED' });
+    for (const entry of Object.values(_contacts)) {
+      if (Array.isArray(entry.memberIds)) {
+        entry.memberIds = entry.memberIds.filter(id => id !== _selectedId);
+      }
+    }
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
     closeSheet();
     renderContacts();
   });
@@ -635,11 +1001,11 @@
   document.getElementById('btn-edit-contact').addEventListener('click', () => {
     if (!_selectedId) return;
     const c = _contacts[_selectedId];
-    document.getElementById('edit-channel-id').value = _selectedId;
+    document.getElementById('edit-channel-id').value = c.channelId;
     document.getElementById('edit-username').value   = c.username;
     document.getElementById('edit-key').value        = c.ageRecipient;
     document.getElementById('edit-contact-error').hidden = true;
-    _editingId = _selectedId;   // capture before closeSheet() nulls _selectedId
+    _editingId = _selectedId;
     closeSheet();
     show('edit-contact');
   });
@@ -653,38 +1019,376 @@
     const errEl     = document.getElementById('edit-contact-error');
     errEl.hidden    = true;
 
-    // _editingId is set when the edit screen opens and survives closeSheet().
-    // Pass it so the duplicate check skips this contact's own fields.
     const fieldErr = validateContactFields(channelId, username, recipient, _editingId);
     if (fieldErr) { showErr(errEl, fieldErr); return; }
 
     const recipErr = await validateRecipient(recipient);
     if (recipErr)  { showErr(errEl, recipErr); return; }
 
-    // If the channelId changed, remove the old entry.
-    if (_editingId && _editingId !== channelId) delete _contacts[_editingId];
-    _contacts[channelId] = {
-      username,
-      ageRecipient: recipient,
-      enabled: _contacts[channelId]?.enabled ?? _contacts[_editingId]?.enabled ?? true,
-    };
+    if (_editingId && _contacts[_editingId]) {
+      _contacts[_editingId] = {
+        ..._contacts[_editingId],
+        channelId,
+        username,
+        ageRecipient: recipient,
+      };
+    }
     _editingId = null;
-    await store.set({ contacts: _contacts });
-    await bgSend({ type: 'CONTACTS_UPDATED' });
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
     await showMain();
   });
+
+  // ─── Member picker ────────────────────────────────────────────────────────────
+  // Shared bottom-sheet used by both group and server creation/edit screens.
+  // _pickerContext: { mode: 'add-group'|'edit-group'|'add-server'|'edit-server',
+  //                   maxMembers: number, selectedUUIDs: Set<string> }
+
+  let _pickerContext = null;
+
+  function contactsForPicker() {
+    return Object.values(_contacts).filter(c => c.type === 'contact' || !c.type);
+  }
+
+  function renderMemberPicker(query = '') {
+    const list = document.getElementById('member-picker-list');
+    list.innerHTML = '';
+    const q = query.trim().toLowerCase();
+    const contacts = contactsForPicker().filter(c =>
+      !q || c.username.toLowerCase().includes(q)
+    );
+    const maxMembers = _pickerContext?.maxMembers ?? Infinity;
+    contacts.forEach(c => {
+      const checked = _pickerContext?.selectedUUIDs.has(c.id) ?? false;
+      const row = document.createElement('label');
+      row.className = 'member-picker-row';
+      const cb = document.createElement('input');
+      cb.type    = 'checkbox';
+      cb.checked = checked;
+      if (!checked && _pickerContext?.selectedUUIDs.size >= maxMembers) cb.disabled = true;
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          if (_pickerContext.selectedUUIDs.size < maxMembers)
+            _pickerContext.selectedUUIDs.add(c.id);
+          else cb.checked = false;
+        } else {
+          _pickerContext.selectedUUIDs.delete(c.id);
+        }
+        renderMemberPicker(document.getElementById('member-picker-search').value);
+      });
+      const lbl = document.createElement('span');
+      lbl.textContent = c.username;
+      row.append(cb, lbl);
+      list.appendChild(row);
+    });
+    if (!contacts.length) {
+      const msg = document.createElement('p');
+      msg.style.cssText = 'color:var(--md-on-surface-variant);font-size:13px;padding:16px;text-align:center;';
+      msg.textContent = q ? 'No contacts match.' : 'No contacts yet — add contacts first.';
+      list.appendChild(msg);
+    }
+  }
+
+  function openMemberPicker(context) {
+    _pickerContext = context;
+    const maxLabel = context.maxMembers === Infinity ? '' : ` (max ${context.maxMembers})`;
+    document.getElementById('member-picker-title').textContent = `Select members${maxLabel}`;
+    document.getElementById('member-picker-search').value = '';
+    renderMemberPicker('');
+    document.getElementById('sheet-member-picker').hidden          = false;
+    document.getElementById('sheet-member-picker-backdrop').hidden = false;
+  }
+
+  function closeMemberPicker() {
+    document.getElementById('sheet-member-picker').hidden          = true;
+    document.getElementById('sheet-member-picker-backdrop').hidden = true;
+  }
+
+  document.getElementById('member-picker-search').addEventListener('input', e => {
+    renderMemberPicker(e.target.value);
+  });
+  document.getElementById('btn-member-picker-done').addEventListener('click', () => {
+    closeMemberPicker();
+    if (!_pickerContext) return;
+    const uuids = [..._pickerContext.selectedUUIDs];
+    applyMemberSelection(_pickerContext.mode, uuids);
+  });
+  document.getElementById('sheet-member-picker-backdrop').addEventListener('click', closeMemberPicker);
+
+  // ─── Member chip rendering (used by group/server forms) ───────────────────────
+
+  function renderMemberChips(containerEl, countEl, uuids, maxMembers) {
+    containerEl.innerHTML = '';
+    const displayMax = maxMembers === Infinity ? '' : ` / ${maxMembers}`;
+    if (countEl) countEl.textContent = `(${uuids.length}${displayMax})`;
+    uuids.forEach(uuid => {
+      const c = _contacts[uuid];
+      if (!c) return;
+      const chip = document.createElement('span');
+      chip.className   = 'member-chip';
+      chip.textContent = c.username;
+      containerEl.appendChild(chip);
+    });
+  }
+
+  function applyMemberSelection(mode, uuids) {
+    if (mode === 'add-group') {
+      _groupAddMembers = uuids;
+      renderMemberChips(
+        document.getElementById('group-member-list'),
+        document.getElementById('group-member-count'),
+        uuids, MAX_GROUP_MEMBERS
+      );
+    } else if (mode === 'edit-group') {
+      _groupEditMembers = uuids;
+      renderMemberChips(
+        document.getElementById('edit-group-member-list'),
+        document.getElementById('edit-group-member-count'),
+        uuids, MAX_GROUP_MEMBERS
+      );
+    } else if (mode === 'add-server') {
+      _serverAddMembers = uuids;
+      renderMemberChips(
+        document.getElementById('server-member-list'),
+        document.getElementById('server-member-count'),
+        uuids, Infinity
+      );
+    } else if (mode === 'edit-server') {
+      _serverEditMembers = uuids;
+      renderMemberChips(
+        document.getElementById('edit-server-member-list'),
+        document.getElementById('edit-server-member-count'),
+        uuids, Infinity
+      );
+    }
+  }
+
+  // ─── Group form state ─────────────────────────────────────────────────────────
+
+  let _groupAddMembers  = [];   // UUIDs selected in the add-group form
+  let _groupEditMembers = [];   // UUIDs selected in the edit-group form
+  let _editingGroupId   = null; // UUID of the group being edited
+
+  function resetGroupForm(mode) {
+    if (mode === 'add') {
+      _groupAddMembers = [];
+      document.getElementById('group-channel-id').value = '';
+      document.getElementById('group-name').value       = '';
+      document.getElementById('group-member-list').innerHTML = '';
+      document.getElementById('group-member-count').textContent = `(0 / ${MAX_GROUP_MEMBERS})`;
+    } else {
+      _groupEditMembers = [];
+      document.getElementById('edit-group-channel-id').value = '';
+      document.getElementById('edit-group-name').value       = '';
+      document.getElementById('edit-group-member-list').innerHTML = '';
+      document.getElementById('edit-group-member-count').textContent = `(0 / ${MAX_GROUP_MEMBERS})`;
+      document.getElementById('edit-group-error').hidden = true;
+    }
+  }
+
+  document.getElementById('btn-group-pick-members').addEventListener('click', () => {
+    openMemberPicker({ mode: 'add-group', maxMembers: MAX_GROUP_MEMBERS, selectedUUIDs: new Set(_groupAddMembers) });
+  });
+
+  document.getElementById('btn-back-edit-group').addEventListener('click', () => { _editingGroupId = null; showMain(); });
+
+  document.getElementById('btn-edit-group-pick-members').addEventListener('click', () => {
+    openMemberPicker({ mode: 'edit-group', maxMembers: MAX_GROUP_MEMBERS, selectedUUIDs: new Set(_groupEditMembers) });
+  });
+
+  document.getElementById('btn-save-edit-group').addEventListener('click', async () => {
+    const channelId = document.getElementById('edit-group-channel-id').value.trim();
+    const name      = document.getElementById('edit-group-name').value.trim();
+    const errEl     = document.getElementById('edit-group-error');
+    errEl.hidden    = true;
+
+    if (!channelId) { showErr(errEl, 'Channel ID is required.'); return; }
+    if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
+      { showErr(errEl, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`); return; }
+    if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
+      { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+    for (const [uuid, c] of Object.entries(_contacts)) {
+      if (uuid === _editingGroupId) continue;
+      if (c.channelId === channelId) { showErr(errEl, 'A contact or group with this Channel ID already exists.'); return; }
+    }
+    if (_groupEditMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+
+    if (_editingGroupId && _contacts[_editingGroupId]) {
+      _contacts[_editingGroupId] = { ..._contacts[_editingGroupId], channelId, name, memberIds: _groupEditMembers };
+    }
+    _editingGroupId = null;
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
+    await showMain();
+  });
+
+  // ─── Group sheet ──────────────────────────────────────────────────────────────
+
+  async function openGroupSheet(uuid) {
+    _selectedGroupId = uuid;
+    const g = _contacts[uuid];
+    document.getElementById('sheet-group-name').textContent    = g.name;
+    document.getElementById('sheet-group-channel').textContent = g.channelId;
+    document.getElementById('sheet-group-toggle').checked      = g.enabled;
+    document.getElementById('sheet-group').hidden              = false;
+    document.getElementById('sheet-backdrop').hidden           = false;
+  }
+
+  document.getElementById('sheet-group-toggle').addEventListener('change', async e => {
+    if (!_selectedGroupId) return;
+    _contacts[_selectedGroupId].enabled = e.target.checked;
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
+    renderContacts();
+  });
+
+  document.getElementById('btn-edit-group').addEventListener('click', () => {
+    if (!_selectedGroupId) return;
+    const g = _contacts[_selectedGroupId];
+    _editingGroupId   = _selectedGroupId;
+    _groupEditMembers = [...(g.memberIds ?? [])];
+    document.getElementById('edit-group-channel-id').value = g.channelId;
+    document.getElementById('edit-group-name').value       = g.name;
+    document.getElementById('edit-group-error').hidden     = true;
+    renderMemberChips(
+      document.getElementById('edit-group-member-list'),
+      document.getElementById('edit-group-member-count'),
+      _groupEditMembers, MAX_GROUP_MEMBERS
+    );
+    closeSheet();
+    show('edit-group');
+  });
+
+  document.getElementById('btn-delete-group').addEventListener('click', async () => {
+    if (!_selectedGroupId) return;
+    delete _contacts[_selectedGroupId];
+    _selectedGroupId = null;
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
+    closeSheet();
+    renderContacts();
+  });
+
+  document.getElementById('btn-close-group-sheet').addEventListener('click', closeSheet);
+
+  // ─── Server form state ────────────────────────────────────────────────────────
+
+  let _serverAddMembers  = [];
+  let _serverEditMembers = [];
+  let _editingServerId   = null; // UUID of the server entry being edited
+
+  function resetServerForm(mode) {
+    if (mode === 'add') {
+      _serverAddMembers = [];
+      document.getElementById('server-id-input').value = '';
+      document.getElementById('server-name').value     = '';
+      document.getElementById('server-member-list').innerHTML = '';
+      document.getElementById('server-member-count').textContent = '(0)';
+    } else {
+      _serverEditMembers = [];
+      document.getElementById('edit-server-id-input').value = '';
+      document.getElementById('edit-server-name').value     = '';
+      document.getElementById('edit-server-member-list').innerHTML = '';
+      document.getElementById('edit-server-member-count').textContent = '(0)';
+      document.getElementById('edit-server-error').hidden = true;
+    }
+  }
+
+  document.getElementById('btn-server-pick-members').addEventListener('click', () => {
+    openMemberPicker({ mode: 'add-server', maxMembers: Infinity, selectedUUIDs: new Set(_serverAddMembers) });
+  });
+
+  document.getElementById('btn-back-edit-server').addEventListener('click', () => { _editingServerId = null; showMain(); });
+
+  document.getElementById('btn-edit-server-pick-members').addEventListener('click', () => {
+    openMemberPicker({ mode: 'edit-server', maxMembers: Infinity, selectedUUIDs: new Set(_serverEditMembers) });
+  });
+
+  document.getElementById('btn-save-edit-server').addEventListener('click', async () => {
+    const serverId = document.getElementById('edit-server-id-input').value.trim();
+    const name     = document.getElementById('edit-server-name').value.trim();
+    const errEl    = document.getElementById('edit-server-error');
+    errEl.hidden   = true;
+
+    if (!serverId || !/^\d{1,20}$/.test(serverId)) { showErr(errEl, 'Server ID must be 1–20 digits.'); return; }
+    if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
+      { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+    for (const [uuid, c] of Object.entries(_contacts)) {
+      if (uuid === _editingServerId) continue;
+      if (c.type === 'server' && c.serverId === serverId) { showErr(errEl, 'A server with this Server ID already exists.'); return; }
+    }
+    if (_serverEditMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+
+    if (_editingServerId && _contacts[_editingServerId]) {
+      _contacts[_editingServerId] = { ..._contacts[_editingServerId], serverId, name, memberIds: _serverEditMembers };
+    }
+    _editingServerId = null;
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
+    await showMain();
+  });
+
+  // ─── Server sheet ─────────────────────────────────────────────────────────────
+
+  async function openServerSheet(uuid) {
+    _selectedServerId = uuid;
+    const s = _contacts[uuid];
+    document.getElementById('sheet-server-name').textContent       = s.name;
+    document.getElementById('sheet-server-id-display').textContent = s.serverId;
+    document.getElementById('sheet-server-toggle').checked         = s.enabled;
+    document.getElementById('sheet-server').hidden                 = false;
+    document.getElementById('sheet-backdrop').hidden               = false;
+  }
+
+  document.getElementById('sheet-server-toggle').addEventListener('change', async e => {
+    if (!_selectedServerId) return;
+    _contacts[_selectedServerId].enabled = e.target.checked;
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
+    renderContacts();
+  });
+
+  document.getElementById('btn-edit-server').addEventListener('click', () => {
+    if (!_selectedServerId) return;
+    const s = _contacts[_selectedServerId];
+    _editingServerId   = _selectedServerId;
+    _serverEditMembers = [...(s.memberIds ?? [])];
+    document.getElementById('edit-server-id-input').value = s.serverId;
+    document.getElementById('edit-server-name').value     = s.name;
+    document.getElementById('edit-server-error').hidden   = true;
+    renderMemberChips(
+      document.getElementById('edit-server-member-list'),
+      document.getElementById('edit-server-member-count'),
+      _serverEditMembers, Infinity
+    );
+    closeSheet();
+    show('edit-server');
+  });
+
+  document.getElementById('btn-delete-server').addEventListener('click', async () => {
+    if (!_selectedServerId) return;
+    delete _contacts[_selectedServerId];
+    _selectedServerId = null;
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
+    closeSheet();
+    renderContacts();
+  });
+
+  document.getElementById('btn-close-server-sheet').addEventListener('click', closeSheet);
 
   // ─── Export contacts ──────────────────────────────────────────────────────────
 
   document.getElementById('btn-export-contacts').addEventListener('click', () => {
-    const entries = Object.entries(_contacts).map(([channelId, c]) => ({
-      channelId,
-      username:     c.username,
-      ageRecipient: c.ageRecipient,
-      enabled:      c.enabled,
-    }));
+    const entries = Object.values(_contacts).map(c => {
+      if (c.type === 'group')
+        return { id: c.id, type: 'group', enabled: c.enabled, channelId: c.channelId, name: c.name, memberIds: c.memberIds ?? [] };
+      if (c.type === 'server')
+        return { id: c.id, type: 'server', enabled: c.enabled, serverId: c.serverId, name: c.name, memberIds: c.memberIds ?? [] };
+      return { id: c.id, type: 'contact', enabled: c.enabled, channelId: c.channelId, username: c.username, ageRecipient: c.ageRecipient };
+    });
 
-    const json = JSON.stringify({ version: 1, contacts: entries }, null, 2);
+    const json = JSON.stringify({ version: CONTACTS_VERSION, entries }, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
 
@@ -716,91 +1420,142 @@
       return;
     }
 
-    const entries = Array.isArray(parsed) ? parsed : parsed?.contacts;
+    // Reject v1 outright (version !== 2, or bare array without version field).
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== CONTACTS_VERSION) {
+      msgEl.textContent = 'Unsupported format — only v2 exports (version: 2) are accepted. v1 imports are no longer supported.';
+      modal.hidden = false;
+      return;
+    }
+
+    const entries = parsed.entries;
     if (!Array.isArray(entries)) {
-      msgEl.textContent = 'Unrecognised format — expected a contacts export JSON.';
+      msgEl.textContent = 'Unrecognised format — expected a v2 contacts export JSON with an "entries" array.';
       modal.hidden = false;
       return;
     }
 
-    if (entries.length > MAX_IMPORT_ROWS) {
-      msgEl.textContent = `Import file too large — contains ${entries.length} entries (max ${MAX_IMPORT_ROWS}).`;
-      modal.hidden = false;
-      return;
-    }
+    // ── Pass 1: collect file UUIDs for memberIds cross-reference ─────────────────
+    const fileUUIDs = new Set(entries.map(e => e?.id).filter(Boolean));
 
-    // Detect intra-file duplicates: collect channelId, username, ageRecipient seen
-    // within this import. Entries that duplicate a field within the file are
-    // skipped entirely (neither the first nor the later copy is imported).
-    const fileChannelIds   = new Map(); // value → first index seen
-    const fileUsernames    = new Map();
-    const fileRecipients   = new Map();
-    const fileDupIndices   = new Set();
-
+    // ── Pass 2: detect intra-file duplicate UUIDs ─────────────────────────────────
+    const seenUUIDs      = new Map();
+    const dupUUIDIndices = new Set();
     entries.forEach((entry, idx) => {
-      const { channelId, username, ageRecipient } = entry ?? {};
-      if (!channelId || !username || !ageRecipient) return; // will be caught later
-      if (fileChannelIds.has(channelId)) {
-        fileDupIndices.add(idx);
-        fileDupIndices.add(fileChannelIds.get(channelId));
-      } else { fileChannelIds.set(channelId, idx); }
-      if (fileUsernames.has(username)) {
-        fileDupIndices.add(idx);
-        fileDupIndices.add(fileUsernames.get(username));
-      } else { fileUsernames.set(username, idx); }
-      if (fileRecipients.has(ageRecipient)) {
-        fileDupIndices.add(idx);
-        fileDupIndices.add(fileRecipients.get(ageRecipient));
-      } else { fileRecipients.set(ageRecipient, idx); }
+      const id = entry?.id;
+      if (!id) return;
+      if (seenUUIDs.has(id)) { dupUUIDIndices.add(idx); dupUUIDIndices.add(seenUUIDs.get(id)); }
+      else seenUUIDs.set(id, idx);
     });
 
-    let added = 0, updated = 0, skipped = 0, limitSkipped = 0;
+    // ── Pass 3: detect intra-file duplicate channelIds / serverIds ────────────────
+    const fileChannelIds  = new Map();
+    const fileServerIds   = new Map();
+    const dupFieldIndices = new Set();
+    entries.forEach((entry, idx) => {
+      if (!entry) return;
+      if (entry.channelId) {
+        if (fileChannelIds.has(entry.channelId)) { dupFieldIndices.add(idx); dupFieldIndices.add(fileChannelIds.get(entry.channelId)); }
+        else fileChannelIds.set(entry.channelId, idx);
+      }
+      if (entry.serverId) {
+        if (fileServerIds.has(entry.serverId)) { dupFieldIndices.add(idx); dupFieldIndices.add(fileServerIds.get(entry.serverId)); }
+        else fileServerIds.set(entry.serverId, idx);
+      }
+    });
+
+    const existingChannelIds   = contactsByChannelId(_contacts);
+    const existingServerIds    = new Map(Object.values(_contacts).filter(c => c.type === 'server' && c.serverId).map(c => [c.serverId, c]));
+    const existingContactCount = Object.values(_contacts).filter(c => c.type === 'contact' || !c.type).length;
+    const existingServerCount  = Object.values(_contacts).filter(c => c.type === 'server').length;
+
+    let contactsAdded = 0;
+    let serversAdded  = 0, groupsAdded = 0;
+    let skipped = 0, limitSkipped = 0;
 
     for (let idx = 0; idx < entries.length; idx++) {
       const entry = entries[idx] ?? {};
-      const { channelId, username, ageRecipient, enabled } = entry;
 
-      // Silently skip entries with invalid fields.
-      if (!channelId || !username || !ageRecipient)                          { skipped++; continue; }
-      if (!/^\d+$/.test(channelId)
-          || channelId.length < MIN_CHANNEL_ID
-          || channelId.length > MAX_CHANNEL_ID)                              { skipped++; continue; }
-      if (typeof username !== 'string'
-          || username.length < MIN_USERNAME
-          || username.length > MAX_USERNAME)                                  { skipped++; continue; }
-      if (typeof ageRecipient !== 'string'
-          || !ageRecipient.startsWith('age1')
-          || !/;ed25519:[A-Za-z0-9_-]{40,}$/.test(ageRecipient))            { skipped++; continue; }
-      if (fileDupIndices.has(idx))                                           { skipped++; continue; }
+      // Basic: must have a string UUID and known type.
+      if (typeof entry.id !== 'string' || !entry.id)                   { skipped++; continue; }
+      if (dupUUIDIndices.has(idx))                                      { skipped++; continue; }
+      if (dupFieldIndices.has(idx))                                     { skipped++; continue; }
 
-      // Check against existing contacts for cross-file uniqueness.
-      // Channel ID match → overwrite (update). Name or key match on a different
-      // channel → skip.
-      const existingById = Object.prototype.hasOwnProperty.call(_contacts, channelId);
-      let crossConflict = false;
-      for (const [id, c] of Object.entries(_contacts)) {
-        if (id === channelId) continue; // same channel — will overwrite
-        if (c.username === username || c.ageRecipient === ageRecipient) { crossConflict = true; break; }
+      const type = entry.type ?? 'contact';
+
+      // ── Contact ──────────────────────────────────────────────────────────────
+      if (type === 'contact') {
+        const { id, channelId, username, ageRecipient, enabled } = entry;
+
+        if (!channelId || !username || !ageRecipient)                   { skipped++; continue; }
+        if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID) { skipped++; continue; }
+        if (typeof username !== 'string' || username.length < MIN_USERNAME || username.length > MAX_USERNAME)    { skipped++; continue; }
+        if (typeof ageRecipient !== 'string' || !ageRecipient.startsWith('age1') || !/;ed25519:[A-Za-z0-9_-]{40,}$/.test(ageRecipient)) { skipped++; continue; }
+        if (Object.prototype.hasOwnProperty.call(_contacts, id))        { skipped++; continue; }
+
+        const existingForChannel = existingChannelIds.get(channelId);
+        if (existingForChannel && existingForChannel.id !== id)         { skipped++; continue; }
+        if (existingContactCount + contactsAdded >= MAX_CONTACTS)       { limitSkipped++; continue; }
+
+        _contacts[id] = { id, type: 'contact', channelId, username, ageRecipient, enabled: enabled !== false };
+        existingChannelIds.set(channelId, _contacts[id]);
+        contactsAdded++;
+
+      // ── Group ────────────────────────────────────────────────────────────────
+      } else if (type === 'group') {
+        const { id, channelId, name, memberIds, enabled } = entry;
+
+        if (!channelId || !name)                                        { skipped++; continue; }
+        if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID) { skipped++; continue; }
+        if (typeof name !== 'string' || name.length < MIN_USERNAME || name.length > MAX_USERNAME) { skipped++; continue; }
+        if (!Array.isArray(memberIds))                                  { skipped++; continue; }
+        if (Object.prototype.hasOwnProperty.call(_contacts, id))        { skipped++; continue; }
+
+        const existingForChannel = existingChannelIds.get(channelId);
+        if (existingForChannel && existingForChannel.id !== id)         { skipped++; continue; }
+
+        // memberIds must all exist in the same file; cross-extension refs are not accepted.
+        const validMembers = memberIds.filter(mid => fileUUIDs.has(mid));
+        if (validMembers.length !== memberIds.length)                   { skipped++; continue; }
+
+        _contacts[id] = { id, type: 'group', channelId, name, memberIds: validMembers, enabled: enabled !== false };
+        existingChannelIds.set(channelId, _contacts[id]);
+        groupsAdded++;
+
+      // ── Server ───────────────────────────────────────────────────────────────
+      } else if (type === 'server') {
+        const { id, serverId, name, memberIds, enabled } = entry;
+
+        if (!serverId || !name)                                         { skipped++; continue; }
+        if (!/^\d{1,20}$/.test(serverId))                               { skipped++; continue; }
+        if (typeof name !== 'string' || name.length < MIN_USERNAME || name.length > MAX_USERNAME) { skipped++; continue; }
+        if (!Array.isArray(memberIds))                                  { skipped++; continue; }
+        if (Object.prototype.hasOwnProperty.call(_contacts, id))        { skipped++; continue; }
+        if (existingServerIds.has(serverId))                            { skipped++; continue; }
+        if (existingServerCount + serversAdded >= MAX_SERVERS)          { limitSkipped++; continue; }
+
+        const validMembers = memberIds.filter(mid => fileUUIDs.has(mid));
+        if (validMembers.length !== memberIds.length)                   { skipped++; continue; }
+
+        _contacts[id] = { id, type: 'server', serverId, name, memberIds: validMembers, enabled: enabled !== false };
+        existingServerIds.set(serverId, _contacts[id]);
+        serversAdded++;
+
+      } else {
+        skipped++;
       }
-      if (crossConflict) { skipped++; continue; }
-
-      // Respect the 1000-contact cap.
-      if (!existingById && Object.keys(_contacts).length >= MAX_CONTACTS) { limitSkipped++; continue; }
-
-      _contacts[channelId] = { username, ageRecipient, enabled: (enabled !== false) };
-      existingById ? updated++ : added++;
     }
 
-    await store.set({ contacts: _contacts });
-    await bgSend({ type: 'CONTACTS_UPDATED' });
-    if (_sessionIdentity) await bgSend({ type: 'UNLOCK', identity: _sessionIdentity });
+    await saveContacts(_contacts);
+    await bgContactsUpdated();
+    if (_sessionIdentity) await bgUnlock(_sessionIdentity, _sessionPassphrase);
     renderContacts();
 
     const parts = [];
-    if (added)        parts.push(`${added} contact${added   !== 1 ? 's' : ''} added`);
-    if (updated)      parts.push(`${updated} contact${updated !== 1 ? 's' : ''} updated`);
-    if (skipped)      parts.push(`${skipped} skipped (invalid or duplicate)`);
-    if (limitSkipped) parts.push(`${limitSkipped} skipped (contact limit reached)`);
+    if (contactsAdded)  parts.push(`${contactsAdded} contact${contactsAdded !== 1 ? 's' : ''} added`);
+    if (groupsAdded)    parts.push(`${groupsAdded} group${groupsAdded !== 1 ? 's' : ''} added`);
+    if (serversAdded)   parts.push(`${serversAdded} server${serversAdded !== 1 ? 's' : ''} added`);
+    if (skipped)        parts.push(`${skipped} skipped (invalid or duplicate)`);
+    if (limitSkipped)   parts.push(`${limitSkipped} skipped (limit reached)`);
     msgEl.textContent = 'Import complete — ' + (parts.join(', ') || 'nothing changed') + '.';
     modal.hidden = false;
   }
@@ -846,7 +1601,7 @@
   document.getElementById('btn-back-key').addEventListener('click', showMain);
 
   async function showMyKey() {
-    const { ageRecipient } = await store.get(['ageRecipient']);
+    const ageRecipient = await getAgeRecipient();
     if (!ageRecipient) return;
     document.getElementById('my-key-box').textContent = ageRecipient;
     document.getElementById('my-key-fp').textContent = 'Computing fingerprint…';
@@ -855,7 +1610,7 @@
   }
 
   document.getElementById('btn-copy-key').addEventListener('click', async () => {
-    const { ageRecipient } = await store.get(['ageRecipient']);
+    const ageRecipient = await getAgeRecipient();
     if (!ageRecipient) return;
     try {
       await navigator.clipboard.writeText(ageRecipient);
@@ -866,60 +1621,107 @@
       document.execCommand('copy');
       ta.remove();
     }
-    const btn  = document.getElementById('btn-copy-key');
-    const orig = btn.textContent;
-    btn.textContent = '✓ Copied!';
-    setTimeout(() => { btn.textContent = orig; }, 1800);
+    const btn   = document.getElementById('btn-copy-key');
+    const label = document.getElementById('btn-copy-key-label');
+    btn.classList.add('copied');
+    label.textContent = '✓ Copied!';
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      label.textContent = 'Copy';
+    }, 1800);
   });
+
+  // ─── Manage keypair sheet ─────────────────────────────────────────────────────
+
+  function openManageKeypairSheet() {
+    document.getElementById('sheet-manage-keypair').hidden          = false;
+    document.getElementById('sheet-manage-keypair-backdrop').hidden = false;
+  }
+
+  function closeManageKeypairSheet() {
+    document.getElementById('sheet-manage-keypair').hidden          = true;
+    document.getElementById('sheet-manage-keypair-backdrop').hidden = true;
+  }
+
+  document.getElementById('btn-manage-keypair').addEventListener('click', openManageKeypairSheet);
+  document.getElementById('btn-close-manage-keypair').addEventListener('click', closeManageKeypairSheet);
+  document.getElementById('sheet-manage-keypair-backdrop').addEventListener('click', closeManageKeypairSheet);
 
   // ─── Export private key ───────────────────────────────────────────────────────
 
-  document.getElementById('btn-export-key').addEventListener('click', () => {
-    document.getElementById('export-passphrase-input').value = '';
+  function resetExportModal() {
+    document.getElementById('export-passphrase-input').value  = '';
+    document.getElementById('export-new-passphrase').value    = '';
+    document.getElementById('export-new-passphrase2').value   = '';
     document.getElementById('export-passphrase-error').hidden = true;
+    document.getElementById('export-spinner').hidden          = true;
+    document.getElementById('btn-export-confirm').disabled    = false;
+    document.getElementById('btn-export-confirm').textContent = 'Encrypt & show';
+    document.getElementById('modal-export-key').hidden        = true;
+  }
+
+  document.getElementById('btn-export-key').addEventListener('click', () => {
+    closeManageKeypairSheet();
+    resetExportModal();
     document.getElementById('modal-export-key').hidden = false;
   });
-  document.getElementById('btn-export-cancel').addEventListener('click', () => {
-    document.getElementById('export-passphrase-input').value = '';
-    document.getElementById('modal-export-key').hidden = true;
-  });
-  document.getElementById('export-passphrase-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('btn-export-confirm').click();
-  });
-  document.getElementById('btn-export-confirm').addEventListener('click', async () => {
-    const passphrase = document.getElementById('export-passphrase-input').value;
-    const errEl      = document.getElementById('export-passphrase-error');
-    const btn        = document.getElementById('btn-export-confirm');
-    errEl.hidden     = true;
-    if (!passphrase) { showErr(errEl, 'Enter your passphrase.'); return; }
 
-    btn.disabled = true;
+  document.getElementById('btn-export-cancel').addEventListener('click', resetExportModal);
+
+  ['export-passphrase-input', 'export-new-passphrase', 'export-new-passphrase2'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('btn-export-confirm').click();
+    });
+  });
+
+  document.getElementById('btn-export-confirm').addEventListener('click', async () => {
+    const unlockPass  = document.getElementById('export-passphrase-input').value;
+    const exportPass  = document.getElementById('export-new-passphrase').value;
+    const exportPass2 = document.getElementById('export-new-passphrase2').value;
+    const errEl       = document.getElementById('export-passphrase-error');
+    const btn         = document.getElementById('btn-export-confirm');
+    const spinner     = document.getElementById('export-spinner');
+
+    errEl.hidden = true;
+    if (!unlockPass) { showErr(errEl, 'Enter your unlock passphrase.'); return; }
+
+    const exportPassErr = validatePassphrase(exportPass);
+    if (exportPassErr)              { showErr(errEl, 'Export passphrase: ' + exportPassErr); return; }
+    if (exportPass !== exportPass2) { showErr(errEl, 'Export passphrases do not match.'); return; }
+
+    btn.disabled    = true;
     btn.textContent = 'Verifying…';
+    spinner.hidden  = false;
+
     try {
       const { ageEncryptedIdentity } = await store.get(['ageEncryptedIdentity']);
-      const result = await runScryptWorker({ op: 'DECRYPT', encryptedB64: ageEncryptedIdentity, passphrase });
+      if (!ageEncryptedIdentity) throw new Error('No keypair found.');
+      const result = await runScryptWorker({ op: 'DECRYPT', encryptedB64: ageEncryptedIdentity, passphrase: unlockPass });
       const identity = result.identity;
 
-      document.getElementById('export-passphrase-input').value = '';
-      document.getElementById('modal-export-key').hidden = true;
-      document.getElementById('export-key-blob').value = identity;
+      btn.textContent = 'Encrypting…';
+      const encResult = await runScryptWorker({ op: 'ENCRYPT', identityBlob: identity, passphrase: exportPass });
+
+      resetExportModal();
+      document.getElementById('export-key-blob').value       = encResult.encryptedB64;
       document.getElementById('modal-export-display').hidden = false;
+
     } catch (e) {
       const msg = e.message?.toLowerCase() ?? '';
       showErr(errEl,
         (msg.includes('bad') || msg.includes('decrypt') || msg.includes('passphrase') || msg.includes('hmac'))
-          ? 'Wrong passphrase.'
-          : 'Verification failed: ' + e.message
+          ? 'Wrong unlock passphrase.'
+          : 'Export failed: ' + e.message
       );
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Reveal key';
+      btn.disabled    = false;
+      btn.textContent = 'Encrypt & show';
+      spinner.hidden  = true;
     }
   });
 
   function closeExportDisplay() {
-    document.getElementById('export-key-blob').value = '';
-    document.getElementById('modal-export-display').hidden = true;
+    document.getElementById('export-key-blob').value          = '';
+    document.getElementById('modal-export-display').hidden     = true;
   }
   document.getElementById('btn-export-copy').addEventListener('click', async () => {
     const blob = document.getElementById('export-key-blob').value;
@@ -931,6 +1733,7 @@
   // ─── Keypair regeneration ─────────────────────────────────────────────────────
 
   document.getElementById('btn-regen').addEventListener('click', () => {
+    closeManageKeypairSheet();
     document.getElementById('regen-confirm-input').value   = '';
     document.getElementById('btn-regen-confirm').disabled  = true;
     document.getElementById('modal-regen').hidden          = false;
@@ -943,11 +1746,14 @@
   });
   document.getElementById('btn-regen-confirm').addEventListener('click', async () => {
     document.getElementById('modal-regen').hidden = true;
-    Object.keys(_contacts).forEach(id => { _contacts[id].enabled = false; });
-    await store.remove(['ageRecipient', 'ageEncryptedIdentity']);
+    Object.values(_contacts).forEach(c => { c.enabled = false; });
+    // Contacts are stored plaintext temporarily until the new passphrase is set
+    // at next setup — boot() migration re-encrypts them on first unlock.
+    await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'contactsSalt', 'contactsEnc']);
     await store.set({ contacts: _contacts });
     await clearSession();
-    _sessionIdentity = null;
+    _sessionIdentity   = null;
+    _sessionPassphrase = null;
     await bgSend({ type: 'RELOCK' });
     await bgSend({ type: 'RELOAD_DISCORD_TABS' });
     document.getElementById('setup-passphrase').value  = '';
@@ -956,10 +1762,116 @@
     show('setup');
   });
 
-  // ─── Change passphrase (placeholder) ─────────────────────────────────────────
+  // ─── Clear all data (from My Key screen) ─────────────────────────────────────
+
+  document.getElementById('btn-clear-data').addEventListener('click', () => {
+    document.getElementById('clear-data-confirm-input').value  = '';
+    document.getElementById('btn-clear-data-confirm').disabled = true;
+    document.getElementById('modal-clear-data').hidden         = false;
+  });
+  document.getElementById('btn-clear-data-cancel').addEventListener('click', () => {
+    document.getElementById('clear-data-confirm-input').value = '';
+    document.getElementById('modal-clear-data').hidden        = true;
+  });
+  document.getElementById('clear-data-confirm-input').addEventListener('input', e => {
+    document.getElementById('btn-clear-data-confirm').disabled = (e.target.value !== 'CONFIRM');
+  });
+  document.getElementById('btn-clear-data-confirm').addEventListener('click', async () => {
+    document.getElementById('modal-clear-data').hidden = true;
+    await store.remove(['ageRecipient', 'ageEncryptedIdentity', 'contactsEnc', 'contactsSalt',
+                        'contacts', 'globalOn', 'unlockAttempts', 'unlockLockedUntil']);
+    await clearSession();
+    _contacts          = {};
+    _globalOn          = true;
+    _sessionIdentity   = null;
+    _sessionPassphrase = null;
+    await bgSend({ type: 'RELOCK' });
+    document.getElementById('passphrase-input').value = '';
+    document.getElementById('unlock-error').hidden    = true;
+    document.getElementById('btn-goto-setup').hidden  = true;
+    show('setup');
+  });
+
+  // ─── Change passphrase ────────────────────────────────────────────────────────
+
+  function resetChangePassModal() {
+    document.getElementById('change-pass-current').value  = '';
+    document.getElementById('change-pass-new').value      = '';
+    document.getElementById('change-pass-new2').value     = '';
+    document.getElementById('change-pass-error').hidden   = true;
+    document.getElementById('change-pass-spinner').hidden = true;
+    const btn = document.getElementById('btn-change-pass-confirm');
+    btn.disabled    = false;
+    btn.textContent = 'Change passphrase';
+    document.getElementById('modal-change-passphrase').hidden = true;
+  }
 
   document.getElementById('btn-change-passphrase').addEventListener('click', () => {
-    // TODO: future release — re-encrypt stored key with new passphrase.
+    resetChangePassModal();
+    document.getElementById('modal-change-passphrase').hidden = false;
+  });
+
+  document.getElementById('btn-change-pass-cancel').addEventListener('click', resetChangePassModal);
+
+  ['change-pass-current', 'change-pass-new', 'change-pass-new2'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('btn-change-pass-confirm').click();
+    });
+  });
+
+  document.getElementById('btn-change-pass-confirm').addEventListener('click', async () => {
+    const currentPass = document.getElementById('change-pass-current').value;
+    const newPass     = document.getElementById('change-pass-new').value;
+    const newPass2    = document.getElementById('change-pass-new2').value;
+    const errEl       = document.getElementById('change-pass-error');
+    const btn         = document.getElementById('btn-change-pass-confirm');
+    const spinner     = document.getElementById('change-pass-spinner');
+    errEl.hidden = true;
+
+    if (!currentPass) { showErr(errEl, 'Enter your current passphrase.'); return; }
+    const newPassErr = validatePassphrase(newPass);
+    if (newPassErr)              { showErr(errEl, newPassErr); return; }
+    if (newPass !== newPass2)    { showErr(errEl, 'New passphrases do not match.'); return; }
+    if (newPass === currentPass) { showErr(errEl, 'New passphrase must differ from current.'); return; }
+
+    btn.disabled    = true;
+    btn.textContent = 'Verifying…';
+    spinner.hidden  = false;
+
+    try {
+      const { ageEncryptedIdentity } = await store.get(['ageEncryptedIdentity']);
+      if (!ageEncryptedIdentity) throw new Error('No keypair found.');
+      const decResult = await runScryptWorker({ op: 'DECRYPT', encryptedB64: ageEncryptedIdentity, passphrase: currentPass });
+      const identity  = decResult.identity;
+
+      btn.textContent = 'Re-encrypting…';
+      const encResult = await runScryptWorker({ op: 'ENCRYPT', identityBlob: identity, passphrase: newPass });
+      await store.set({ ageEncryptedIdentity: encResult.encryptedB64 });
+
+      // Update cached passphrase and re-derive the contacts key under the new passphrase.
+      // Remove the old contactsSalt so a fresh one is generated for the new derivation.
+      _sessionPassphrase = newPass;
+      await bgUnlock(identity, newPass);
+      await store.remove(['contactsSalt', 'contactsEnc']);
+      await saveContacts(_contacts);
+
+      resetChangePassModal();
+      const origText = 'Change passphrase';
+      btn.textContent = '✓ Done';
+      btn.disabled    = false;
+      setTimeout(() => { btn.textContent = origText; }, 1500);
+
+    } catch (e) {
+      const msg = e.message?.toLowerCase() ?? '';
+      showErr(errEl,
+        (msg.includes('bad') || msg.includes('decrypt') || msg.includes('passphrase') || msg.includes('hmac'))
+          ? 'Wrong current passphrase.'
+          : 'Change failed: ' + e.message
+      );
+      btn.disabled    = false;
+      btn.textContent = 'Change passphrase';
+      spinner.hidden  = true;
+    }
   });
 
   // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -969,7 +1881,7 @@
   async function keyFingerprint(recipient) {
     if (!recipient) return '(no key)';
     try {
-      const bytes = nobleHashes.blake3(new TextEncoder().encode(recipient), { dkLen: 64 });
+      const bytes = nobleHashes.blake3(new TextEncoder().encode(recipient), { dkLen: 128 });
       const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
       return hex.match(/.{1,4}/g).reduce((lines, chunk, i) => {
         if (i % 8 === 0) lines.push('');
@@ -1025,10 +1937,8 @@
 
   async function bootWithDraftCheck() {
     await boot();
-    if (!document.getElementById('screen-main').hidden) {
-      if (await restoreDraft()) show('add-contact');
-      else await checkPendingImport();
-    }
+    if (!document.getElementById('screen-main').hidden)
+      await checkPendingImport();
   }
 
   bootWithDraftCheck().catch(e => console.error('[age] popup boot error:', e));
