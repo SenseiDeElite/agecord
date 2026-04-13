@@ -59,21 +59,25 @@
   <div id="screen-import" class="screen screen-form" hidden>
     <div class="topbar">
       <button id="btn-back-import" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Import Keypair</span>
+      <span class="topbar-title">Import keypair</span>
     </div>
 
-    <p class="hint" style="padding: 8px 16px 4px">Paste your exported private key blob, then choose a passphrase to protect it on this device.</p>
+    <p class="hint" style="padding: 8px 16px 4px">Paste your encrypted private key blob, enter the export passphrase used when it was created, then choose a new passphrase to protect it on this device.</p>
 
     <div class="form-group">
-      <label for="import-blob">Private key blob</label>
-      <textarea id="import-blob" rows="4" placeholder="Paste your exported private key blob here…" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
+      <label for="import-blob">Encrypted private key blob</label>
+      <textarea id="import-blob" rows="4" placeholder="Paste your encrypted private key blob here…" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
     </div>
     <div class="form-group">
-      <label for="import-passphrase">New passphrase</label>
+      <label for="import-export-passphrase">Export passphrase</label>
+      <input id="import-export-passphrase" type="password" placeholder="Passphrase used when the blob was exported" autocomplete="current-password">
+    </div>
+    <div class="form-group">
+      <label for="import-passphrase">New unlock passphrase</label>
       <input id="import-passphrase" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password">
     </div>
     <div class="form-group">
-      <label for="import-passphrase2">Confirm passphrase</label>
+      <label for="import-passphrase2">Confirm new passphrase</label>
       <input id="import-passphrase2" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
     </div>
     <div id="import-error" class="error-msg" hidden></div>
@@ -113,11 +117,13 @@
       </div>
     </div>
 
+    <input id="contacts-search" type="search" placeholder="Search…" autocomplete="off">
+
     <div id="contacts-list" class="contacts-list">
       <div id="no-contacts" class="empty-state">No contacts yet.<br>Add one below.</div>
     </div>
 
-    <button id="btn-add-contact" class="fab">Add contact</button>
+    <button id="btn-add-contact" class="fab">+ Add</button>
   </div>
 
   <!-- ── MODAL: IMPORT CONTACTS RESULT ─────────────────────────────────── -->
@@ -131,29 +137,77 @@
     </div>
   </div>
 
-  <!-- ── SCREEN: ADD CONTACT ───────────────────────────────────────────── -->
+  <!-- ── SCREEN: ADD ENTRY ─────────────────────────────────────────────── -->
   <div id="screen-add-contact" class="screen screen-form" hidden>
     <div class="topbar">
       <button id="btn-back-add" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Add Contact</span>
+      <span class="topbar-title">Add</span>
     </div>
 
     <div class="form-group">
-      <label for="contact-channel-id">Channel ID</label>
-      <input id="contact-channel-id" type="text" placeholder="Numbers only">
-      <span class="hint">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+      <label for="add-type-select">Type</label>
+      <select id="add-type-select" class="md-select">
+        <option value="contact">Contact</option>
+        <option value="group">Group DM</option>
+        <option value="server">Server</option>
+      </select>
     </div>
-    <div class="form-group">
-      <label for="contact-username">Contact name</label>
-      <input id="contact-username" type="text" placeholder="e.g. Alice">
+
+    <!-- Contact fields -->
+    <div id="add-fields-contact">
+      <div class="form-group">
+        <label for="contact-channel-id">Channel ID</label>
+        <input id="contact-channel-id" type="text" placeholder="Numbers only">
+        <span class="hint">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+      </div>
+      <div class="form-group">
+        <label for="contact-username">Name</label>
+        <input id="contact-username" type="text" placeholder="e.g. Alice">
+      </div>
+      <div class="form-group">
+        <label for="contact-key">Public key</label>
+        <textarea id="contact-key" rows="4" placeholder="age1… (full key with ;ed25519: suffix)"></textarea>
+      </div>
     </div>
-    <div class="form-group">
-      <label for="contact-key">Public key</label>
-      <textarea id="contact-key" rows="5" placeholder="age1… (must include the full key with ;ed25519: suffix)"></textarea>
+
+    <!-- Group fields -->
+    <div id="add-fields-group" hidden>
+      <div class="form-group">
+        <label for="group-channel-id">Channel ID</label>
+        <input id="group-channel-id" type="text" placeholder="Numbers only">
+        <span class="hint">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+      </div>
+      <div class="form-group">
+        <label for="group-name">Name</label>
+        <input id="group-name" type="text" placeholder="e.g. Team Alpha">
+      </div>
+      <div class="form-group">
+        <label>Members <span id="group-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0 / 10)</span></label>
+        <div id="group-member-list" class="member-chip-list"></div>
+        <button id="btn-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+      </div>
     </div>
+
+    <!-- Server fields -->
+    <div id="add-fields-server" hidden>
+      <div class="form-group">
+        <label for="server-id-input">Server ID</label>
+        <input id="server-id-input" type="text" placeholder="Numbers only">
+        <span class="hint">discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
+      </div>
+      <div class="form-group">
+        <label for="server-name">Name</label>
+        <input id="server-name" type="text" placeholder="e.g. My Server">
+      </div>
+      <div class="form-group">
+        <label>Members <span id="server-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0)</span></label>
+        <div id="server-member-list" class="member-chip-list"></div>
+        <button id="btn-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+      </div>
+    </div>
+
     <div id="add-contact-error" class="error-msg" hidden></div>
-
-    <button id="btn-save-contact" class="btn btn-primary btn-full">Save contact</button>
+    <button id="btn-save-contact" class="btn btn-primary btn-full">Save</button>
   </div>
 
   <!-- ── SCREEN: EDIT CONTACT ──────────────────────────────────────────── -->
@@ -181,7 +235,101 @@
     <button id="btn-save-edit" class="btn btn-primary btn-full">Save changes</button>
   </div>
 
-  <!-- ── SCREEN: MY KEY ────────────────────────────────────────────────── -->
+  <!-- ── SCREEN: EDIT GROUP ────────────────────────────────────────────── -->
+  <div id="screen-edit-group" class="screen screen-form" hidden>
+    <div class="topbar">
+      <button id="btn-back-edit-group" class="icon-btn" aria-label="Back">←</button>
+      <span class="topbar-title">Edit Group DM</span>
+    </div>
+    <div class="form-group">
+      <label for="edit-group-channel-id">Channel ID</label>
+      <input id="edit-group-channel-id" type="text" placeholder="Numbers only">
+      <span class="hint">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+    </div>
+    <div class="form-group">
+      <label for="edit-group-name">Group name</label>
+      <input id="edit-group-name" type="text" placeholder="e.g. Team Alpha">
+    </div>
+    <div class="form-group">
+      <label>Members <span id="edit-group-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0 / 10)</span></label>
+      <div id="edit-group-member-list" class="member-chip-list"></div>
+      <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+    </div>
+    <div id="edit-group-error" class="error-msg" hidden></div>
+    <button id="btn-save-edit-group" class="btn btn-primary btn-full">Save changes</button>
+  </div>
+
+  <!-- ── SCREEN: EDIT SERVER ───────────────────────────────────────────── -->
+  <div id="screen-edit-server" class="screen screen-form" hidden>
+    <div class="topbar">
+      <button id="btn-back-edit-server" class="icon-btn" aria-label="Back">←</button>
+      <span class="topbar-title">Edit Server</span>
+    </div>
+    <div class="form-group">
+      <label for="edit-server-id-input">Server ID</label>
+      <input id="edit-server-id-input" type="text" placeholder="Numbers only">
+      <span class="hint">https://discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
+    </div>
+    <div class="form-group">
+      <label for="edit-server-name">Server name</label>
+      <input id="edit-server-name" type="text" placeholder="e.g. My Server">
+    </div>
+    <div class="form-group">
+      <label>Members <span id="edit-server-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0)</span></label>
+      <div id="edit-server-member-list" class="member-chip-list"></div>
+      <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+    </div>
+    <div id="edit-server-error" class="error-msg" hidden></div>
+    <button id="btn-save-edit-server" class="btn btn-primary btn-full">Save changes</button>
+  </div>
+
+  <!-- ── SHEET: MEMBER PICKER ──────────────────────────────────────────── -->
+  <div id="sheet-member-picker" class="bottom-sheet bottom-sheet-tall" hidden>
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="member-picker-title">Select members</div>
+    <input id="member-picker-search" type="search" placeholder="Search contacts…">
+    <div id="member-picker-list"></div>
+    <div class="sheet-actions" style="padding: 8px 16px 16px;">
+      <button id="btn-member-picker-done" class="btn btn-primary btn-full">Done</button>
+    </div>
+  </div>
+  <div id="sheet-member-picker-backdrop" class="sheet-backdrop" hidden></div>
+
+  <!-- ── SHEET: GROUP DETAIL ───────────────────────────────────────────── -->
+  <div id="sheet-group" class="bottom-sheet" hidden>
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="sheet-group-name"></div>
+    <div class="sheet-fp-label">Channel ID</div>
+    <div class="sheet-fingerprint" id="sheet-group-channel" style="font-family:monospace;"></div>
+    <div class="sheet-row">
+      <span>Encrypt in this group</span>
+      <label class="switch">
+        <input id="sheet-group-toggle" type="checkbox">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <button id="btn-edit-group"   class="btn btn-primary btn-full">Edit group</button>
+    <button id="btn-delete-group" class="btn btn-outlined-error btn-full">Delete group</button>
+    <button id="btn-close-group-sheet" class="btn btn-text btn-full">Close</button>
+  </div>
+
+  <!-- ── SHEET: SERVER DETAIL ──────────────────────────────────────────── -->
+  <div id="sheet-server" class="bottom-sheet" hidden>
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="sheet-server-name"></div>
+    <div class="sheet-fp-label">Server ID</div>
+    <div class="sheet-fingerprint" id="sheet-server-id-display" style="font-family:monospace;"></div>
+    <div class="sheet-row">
+      <span>Encrypt in this server</span>
+      <label class="switch">
+        <input id="sheet-server-toggle" type="checkbox">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <button id="btn-edit-server"   class="btn btn-primary btn-full">Edit server</button>
+    <button id="btn-delete-server" class="btn btn-outlined-error btn-full">Delete server</button>
+    <button id="btn-close-server-sheet" class="btn btn-text btn-full">Close</button>
+  </div>
   <div id="screen-my-key" class="screen" hidden>
     <div class="topbar">
       <button id="btn-back-key" class="icon-btn" aria-label="Back">←</button>
@@ -189,9 +337,16 @@
     </div>
 
     <p class="hint" style="padding: 8px 16px 0">Share this with contacts so they can encrypt messages to you.</p>
-    <div class="key-box" id="my-key-box"></div>
-
-    <button id="btn-copy-key" class="btn btn-primary btn-full">Copy to clipboard</button>
+    <div class="key-box-wrap">
+      <div class="key-box-header">
+        <span class="key-box-label">Public key</span>
+        <button id="btn-copy-key" class="key-copy-btn" title="Copy to clipboard" aria-label="Copy public key">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span id="btn-copy-key-label">Copy</span>
+        </button>
+      </div>
+      <div class="key-box" id="my-key-box"></div>
+    </div>
 
     <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">BLAKE3 Fingerprint</div>
     <div class="sheet-fingerprint" id="my-key-fp" style="padding: 4px 16px 8px; text-align: center;">Computing fingerprint…</div>
@@ -199,8 +354,8 @@
     <div class="danger-zone">
       <div class="section-label" style="color: var(--md-error)">Advanced</div>
       <button id="btn-change-passphrase" class="btn btn-outlined-error btn-full">Change passphrase</button>
-      <button id="btn-export-key"        class="btn btn-outlined-error btn-full">Export private key</button>
-      <button id="btn-regen"             class="btn btn-outlined-error btn-full">Regenerate keypair</button>
+      <button id="btn-manage-keypair"    class="btn btn-outlined-error btn-full">Manage keypair</button>
+      <button id="btn-clear-data"        class="btn btn-outlined-error btn-full">Clear storage</button>
     </div>
   </div>
 
@@ -294,31 +449,84 @@
   </div>
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
 
+  <!-- ── SHEET: MANAGE KEYPAIR ─────────────────────────────────────────── -->
+  <div id="sheet-manage-keypair" class="bottom-sheet" hidden>
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Manage keypair</div>
+    <button id="btn-export-key" class="btn btn-outlined btn-full">Export private key</button>
+    <button id="btn-regen"      class="btn btn-outlined-error btn-full" style="margin-top:8px;">Regenerate keypair</button>
+    <button id="btn-close-manage-keypair" class="btn btn-text btn-full">Cancel</button>
+  </div>
+
   <!-- ── MODAL: EXPORT PRIVATE KEY ────────────────────────────────────── -->
   <div id="modal-export-key" class="modal-overlay" hidden>
     <div class="modal">
-      <h3>⚠️ Export private key</h3>
-      <p>Your private key decrypts all your messages. <strong>Anyone who obtains it can read every encrypted message and impersonate you.</strong></p>
-      <p>Store the exported blob in a password manager or encrypted vault. Never share it.</p>
-      <label for="export-passphrase-input" style="font-size:13px; font-weight:500;">Enter your passphrase to confirm:</label>
-      <input id="export-passphrase-input" type="password" placeholder="Your passphrase…" autocomplete="current-password" style="margin-top:8px;">
+      <h3>Export private key</h3>
+      <p style="font-size:12px; color:var(--md-on-surface-variant);">The exported blob is age-encrypted with a separate export passphrase. Store both in a password manager.</p>
+      <label for="export-passphrase-input" style="font-size:13px; font-weight:500; margin-top:8px; display:block;">Unlock passphrase</label>
+      <input id="export-passphrase-input" type="password" placeholder="Your current unlock passphrase…" autocomplete="current-password" style="margin-top:6px;">
+      <label for="export-new-passphrase" style="font-size:13px; font-weight:500; margin-top:12px; display:block;">Export passphrase</label>
+      <input id="export-new-passphrase" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password" style="margin-top:6px;">
+      <label for="export-new-passphrase2" style="font-size:13px; font-weight:500; margin-top:12px; display:block;">Confirm export passphrase</label>
+      <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password" style="margin-top:6px;">
       <div id="export-passphrase-error" class="error-msg" hidden></div>
+      <div id="export-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
+        <div class="spinner"></div><span>Encrypting… do not close this window.</span>
+      </div>
       <div class="modal-actions">
         <button id="btn-export-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-export-confirm" class="btn btn-error">Reveal key</button>
+        <button id="btn-export-confirm" class="btn btn-error">Encrypt &amp; show</button>
       </div>
     </div>
   </div>
 
+  <div id="sheet-manage-keypair-backdrop" class="sheet-backdrop" hidden></div>
+
   <!-- ── MODAL: EXPORT KEY DISPLAY ────────────────────────────────────── -->
   <div id="modal-export-display" class="modal-overlay" hidden>
     <div class="modal">
-      <h3>🔑 Private key blob</h3>
-      <p style="color: var(--md-error); font-size: 12px;">⚠️ Keep this secret. Do not share it with anyone.</p>
-      <textarea id="export-key-blob" rows="6" readonly spellcheck="false" style="width:100%; font-family: monospace; font-size: 10px; background: var(--md-surface-container); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 8px; box-sizing: border-box; resize: none;"></textarea>
+      <h3>🔑 Encrypted private key blob</h3>
+      <p style="font-size: 12px; color: var(--md-on-surface-variant);">This blob is age-encrypted with your export passphrase. Copy it and store it alongside the export passphrase in a trusted password manager. Anyone with both can fully restore your keypair.</p>
+      <textarea id="export-key-blob" rows="6" readonly spellcheck="false" style="width:100%; font-family: monospace; font-size: 10px; background: var(--md-surface-container); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 8px; box-sizing: border-box; resize: none; margin-top:8px;"></textarea>
       <div class="modal-actions">
-        <button id="btn-export-copy"  class="btn btn-primary">Copy</button>
+        <button id="btn-export-copy"  class="btn btn-primary">Copy &amp; close</button>
         <button id="btn-export-close" class="btn btn-text">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MODAL: CHANGE PASSPHRASE ─────────────────────────────────────── -->
+  <div id="modal-change-passphrase" class="modal-overlay" hidden>
+    <div class="modal">
+      <h3>Change passphrase</h3>
+      <p style="font-size:12px; color:var(--md-on-surface-variant);">Your private key will be re-encrypted with the new passphrase. Contacts are also re-encrypted.</p>
+      <label for="change-pass-current" style="font-size:13px;font-weight:500;margin-top:8px;display:block;">Current passphrase</label>
+      <input id="change-pass-current" type="password" placeholder="Your current passphrase…" autocomplete="current-password" style="margin-top:6px;">
+      <label for="change-pass-new" style="font-size:13px;font-weight:500;margin-top:12px;display:block;">New passphrase</label>
+      <input id="change-pass-new" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password" style="margin-top:6px;">
+      <label for="change-pass-new2" style="font-size:13px;font-weight:500;margin-top:12px;display:block;">Confirm new passphrase</label>
+      <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password" style="margin-top:6px;">
+      <div id="change-pass-error" class="error-msg" hidden></div>
+      <div id="change-pass-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
+        <div class="spinner"></div><span>Re-encrypting… do not close this window.</span>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-change-pass-cancel"  class="btn btn-text">Cancel</button>
+        <button id="btn-change-pass-confirm" class="btn btn-primary">Change passphrase</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MODAL: CLEAR ALL DATA ─────────────────────────────────────────── -->
+  <div id="modal-clear-data" class="modal-overlay" hidden>
+    <div class="modal">
+      <h3>⚠️ Clear all data?</h3>
+      <p>This will <strong>permanently delete your keypair and all contacts</strong>. Encrypted messages will be unreadable forever — there is no recovery.</p>
+      <p>Type <strong>CONFIRM</strong> to proceed:</p>
+      <input id="clear-data-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
+      <div class="modal-actions">
+        <button id="btn-clear-data-cancel"  class="btn btn-text">Cancel</button>
+        <button id="btn-clear-data-confirm" class="btn btn-error" disabled>Erase &amp; start over</button>
       </div>
     </div>
   </div>
