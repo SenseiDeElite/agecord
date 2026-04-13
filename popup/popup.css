@@ -671,19 +671,66 @@ html, body {
 .fab:active { transform: scale(0.97); }
 
 /* ── Key display box ─────────────────────────────────────────────────────── */
-.key-box {
+.key-box-wrap {
   margin: 6px 16px;
-  padding: 12px;
   background: var(--md-surface-container-highest);
   border: 1px solid var(--md-outline-variant);
   border-radius: var(--shape-md);
+  overflow: hidden;
+}
+
+.key-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--md-outline-variant);
+  background: color-mix(in srgb, var(--md-surface-container-highest) 60%, var(--md-surface-container));
+}
+
+.key-box-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--md-on-surface-variant);
+}
+
+.key-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--shape-full);
+  border: 1px solid color-mix(in srgb, var(--md-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--md-primary) 10%, transparent);
+  color: var(--md-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms var(--motion-standard),
+              border-color 150ms var(--motion-standard);
+  white-space: nowrap;
+}
+
+.key-copy-btn:hover  { background: color-mix(in srgb, var(--md-primary) 18%, transparent); }
+.key-copy-btn:active { background: color-mix(in srgb, var(--md-primary) 24%, transparent); transform: scale(0.97); }
+.key-copy-btn.copied {
+  border-color: color-mix(in srgb, #57f287 35%, transparent);
+  background:   color-mix(in srgb, #57f287 12%, transparent);
+  color: #57f287;
+}
+
+.key-box {
+  padding: 10px 12px;
   font-family: 'Roboto Mono', 'Consolas', monospace;
   font-size: 11px;
   line-height: 1.6;
   color: var(--md-on-surface);
   word-break: break-all;
   white-space: pre-wrap;
-  max-height: 120px;
+  max-height: 110px;
   overflow-y: auto;
 }
 
@@ -938,4 +985,145 @@ html, body {
   text-align: center;
   line-height: 1.6;
   padding: 0 8px 8px;
+}
+
+/* ── Select (type picker) ────────────────────────────────────────────────── */
+.md-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--md-surface-container-high)
+              url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23a8b8cc' d='M6 8L0 0h12z'/%3E%3C/svg%3E")
+              no-repeat right 12px center;
+  border: 1.5px solid var(--md-outline-variant);
+  border-radius: var(--shape-xs);
+  color: var(--md-on-surface);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 36px 10px 12px;
+  outline: none;
+  width: 100%;
+  cursor: pointer;
+  transition: border-color 180ms var(--motion-standard),
+              background-color 180ms var(--motion-standard);
+}
+
+.md-select:focus {
+  border-color: var(--md-primary);
+  background-color: var(--md-surface-container-highest);
+  box-shadow: 0 0 0 1px var(--md-primary);
+}
+
+.md-select option {
+  background: var(--md-surface-container);
+  color: var(--md-on-surface);
+}
+
+/* ── Contacts search input ───────────────────────────────────────────────── */
+#contacts-search {
+  display: block;
+  margin: 4px 16px 8px;
+  width: calc(100% - 32px);
+  box-sizing: border-box;
+  background: var(--md-surface-container-high);
+  border: 1.5px solid var(--md-outline-variant);
+  border-radius: var(--shape-full);
+  color: var(--md-on-surface);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  outline: none;
+  transition: border-color 180ms var(--motion-standard),
+              background   180ms var(--motion-standard);
+}
+
+#contacts-search::placeholder { color: var(--md-outline); }
+
+#contacts-search:focus {
+  border-color: var(--md-primary);
+  background: var(--md-surface-container-highest);
+  box-shadow: 0 0 0 1px var(--md-primary);
+}
+
+/* ── Member chips ────────────────────────────────────────────────────────── */
+.member-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.member-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--shape-full);
+  background: var(--md-primary-container);
+  color: var(--md-on-primary-container);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ── Member picker sheet ─────────────────────────────────────────────────── */
+.bottom-sheet-tall {
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#member-picker-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 0 8px;
+}
+
+.member-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: var(--shape-sm);
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--md-on-surface);
+  transition: background 120ms;
+}
+
+.member-picker-row:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
+
+.member-picker-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--md-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#member-picker-search {
+  display: block;
+  margin: 8px 16px;
+  width: calc(100% - 32px);
+  box-sizing: border-box;
+  background: var(--md-surface-container-high);
+  border: 1.5px solid var(--md-outline-variant);
+  border-radius: var(--shape-full);
+  color: var(--md-on-surface);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 14px;
+  outline: none;
+}
+
+#member-picker-search:focus {
+  border-color: var(--md-primary);
+  box-shadow: 0 0 0 1px var(--md-primary);
+}
+
+/* ── Manage keypair sheet ────────────────────────────────────────────────── */
+#sheet-manage-keypair {
+  padding-bottom: 20px;
+}
+
+#sheet-manage-keypair .btn {
+  margin: 4px 16px 0;
+  width: calc(100% - 32px);
 }
