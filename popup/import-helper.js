@@ -15,9 +15,13 @@ document.getElementById('f').addEventListener('change', async (e) => {
   try {
     const text = await file.text();
 
-    const parsed = JSON.parse(text);
-    const entries = Array.isArray(parsed) ? parsed : parsed && parsed.contacts;
-    if (!Array.isArray(entries)) throw new Error('Not a valid contacts export.');
+    // Minimal sanity check: must be parseable JSON with an object at root.
+    // Full v2 validation happens in the popup's doImportContacts().
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { throw new Error('Not valid JSON.'); }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Not a valid contacts export.');
+    }
 
     setStatus('Saving\u2026');
 
@@ -34,10 +38,6 @@ document.getElementById('f').addEventListener('change', async (e) => {
       });
     });
 
-    // Chrome 127+ supports openPopup() from a tab page (user gesture context).
-    // Firefox does not support it. In both cases we leave the tab open — the
-    // popup will close it automatically when the user clicks OK in the result
-    // modal, or when the popup is dismissed.
     try {
       await chrome.action.openPopup();
       setStatus('Done. The extension has reopened.', 'ok');
