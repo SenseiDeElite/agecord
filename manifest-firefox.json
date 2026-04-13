@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Discord Age Encryption",
   "version": "0.4.0",
-  "description": "End-to-end age encryption for Discord DMs.",
+  "description": "End-to-end age encryption for Discord.",
   "browser_specific_settings": {
     "gecko": {
       "id": "{19e0c78a-600a-4739-8977-56ca5741df7e}",
