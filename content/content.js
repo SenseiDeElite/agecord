@@ -3,8 +3,9 @@
 // Wire format : [age]:<base64disc_payload>:<base64disc_ed25519_sig>
 // Crypto      : age-encryption (X25519 + ChaCha20-Poly1305) + Ed25519 signatures
 // Compression : deflate-raw applied to plaintext before encryption
-// Sig input   : UTF-8("<channelId>:<cipher>") — channel ID binds sig to channel,
-//               preventing cross-channel replay without using wire-format space.
+// Sig input   : UTF-8("<bindingId>:<cipher>")
+//   Contact / Group : bindingId = channelId
+//   Server          : bindingId = serverId  (binds to server, not per-channel)
 // Encoding    : both cipher and sig use the "disc" base64 alphabet (+ → -  / → .)
 //               so that neither field ever contains _ which Discord renders as
 //               underline markup and strips from the DOM.
@@ -13,6 +14,10 @@
 //
 // Decryption is delegated to the background service worker so the raw age
 // identity never enters the content script's memory.
+//
+// Contacts shape (v2): { [uuid]: { id, type, channelId?, serverId?, username?,
+//                                  name?, ageRecipient?, memberIds?, enabled } }
+// Contacts and groups looked up by channelId field; servers by serverId.
 
 (() => {
   'use strict';
@@ -29,10 +34,11 @@
   // without a background decrypt round-trip. TTL: 8 s.
   const _outgoingCache = new Map();
 
-  let _signingKey  = null;   // non-extractable CryptoKey (Ed25519 private), from background
-  let _contacts    = {};
-  let _globalOn    = true;
-  let _msgObserver = null;
+  let _signingKey   = null;
+  let _selfRecipient = null;  // own age public key, received at UNLOCK time
+  let _contacts     = {};
+  let _globalOn     = true;
+  let _msgObserver  = null;
 
   const sleep    = ms => new Promise(r => setTimeout(r, ms));
   const localGet = keys => new Promise(r => chrome.storage.local.get(keys, r));
@@ -47,16 +53,41 @@
     return m ? m[1] : null;
   }
 
-  function getContact() {
-    const id = getCurrentChannelId();
-    return id ? (_contacts[id] ?? null) : null;
+  function getCurrentServerId() {
+    const m = location.pathname.match(/\/channels\/(\d+)\/\d+/);
+    return m ? m[1] : null;
+  }
+
+  // Returns { entry, bindingId } for the current URL, or null if none matches or
+  // the matching entry is disabled. bindingId drives the Ed25519 signature input:
+  // channelId for contacts/groups, serverId for servers (server-wide replay prevention).
+  function getActiveEntry() {
+    const channelId = getCurrentChannelId();
+    const serverId  = getCurrentServerId();
+
+    if (serverId) {
+      for (const entry of Object.values(_contacts)) {
+        if (entry.type === 'server' && entry.serverId === serverId && entry.enabled)
+          return { entry, bindingId: serverId };
+      }
+    }
+
+    if (channelId) {
+      for (const entry of Object.values(_contacts)) {
+        if ((entry.type === 'contact' || !entry.type) && entry.channelId === channelId && entry.enabled)
+          return { entry, bindingId: channelId };
+        if (entry.type === 'group' && entry.channelId === channelId && entry.enabled)
+          return { entry, bindingId: channelId };
+      }
+    }
+    return null;
+  }
+
+  function isEncryptionActive() {
+    return !!(_signingKey && getActiveEntry() && _globalOn);
   }
 
   // ─── Enter key interception ───────────────────────────────────────────────────
-
-  function isEncryptionActive() {
-    return !!(_signingKey && getContact()?.enabled && _globalOn);
-  }
 
   function attachEnterHook() {
     const tb = getTextbox();
@@ -83,8 +114,7 @@
     }
   }
 
-  // ─── Crypto helpers (content-side) ────────────────────────────────────────────
-  // Only public-key operations live here; decryption is handled by the background.
+  // ─── Crypto helpers ───────────────────────────────────────────────────────────
 
   async function importVerifyKey(contactKeyString) {
     const m = contactKeyString.match(/;ed25519:([A-Za-z0-9_-]+)$/);
@@ -95,11 +125,17 @@
 
   // ─── Encryption (outgoing) ────────────────────────────────────────────────────
 
-  async function encryptMessage(plaintext, contact) {
+  async function encryptMessage(plaintext, entry) {
     const enc = new age.Encrypter();
-    enc.addRecipient(contact.ageRecipient.split(';')[0]);
-    const self = await localGet(['ageRecipient']);
-    if (self.ageRecipient) enc.addRecipient(self.ageRecipient.split(';')[0]);
+    if (entry.type === 'contact' || !entry.type) {
+      enc.addRecipient(entry.ageRecipient.split(';')[0]);
+    } else {
+      for (const memberUUID of (entry.memberIds ?? [])) {
+        const member = _contacts[memberUUID];
+        if (member?.ageRecipient) enc.addRecipient(member.ageRecipient.split(';')[0]);
+      }
+    }
+    if (_selfRecipient) enc.addRecipient(_selfRecipient.split(';')[0]);
     return bytesToBase64Disc(await enc.encrypt(await compress(plaintext)));
   }
 
@@ -184,16 +220,15 @@
   async function handleEncryptClick() {
     if (_sending) return;
     if (!isEncryptionActive()) return;
-    const contact   = getContact();
-    const channelId = getCurrentChannelId();
-    const plain     = getTextbox()?.innerText?.trim();
-    if (!plain || !contact || !channelId) return;
+    const active = getActiveEntry();
+    const plain  = getTextbox()?.innerText?.trim();
+    if (!plain || !active) return;
+    const { entry, bindingId } = active;
     _sending = true;
     try {
-      const cipher = await encryptMessage(plain, contact);
+      const cipher = await encryptMessage(plain, entry);
 
-      // Signature input binds to channel ID (replay prevention) + ciphertext.
-      const sigInput = new TextEncoder().encode(`${channelId}:${cipher}`);
+      const sigInput = new TextEncoder().encode(`${bindingId}:${cipher}`);
       const sigBytes = await crypto.subtle.sign('Ed25519', _signingKey, sigInput);
       // Clamp to 64 bytes — some Chromium builds return 65 bytes from Ed25519 sign.
       const sig = bytesToBase64Disc(new Uint8Array(sigBytes).slice(0, 64));
@@ -287,21 +322,21 @@
       return;
     }
 
+    // Read text before any async work. If already stashed, use that.
     const text = el.dataset.ageRaw ?? directTextContent(el).trim();
     if (!text.startsWith(PREFIX)) return;
 
-    // New wire format: [age]:<cipher>:<sig>
     const m = text.match(/^\[age\]:([A-Za-z0-9\-.]+):([A-Za-z0-9\-.]+)$/);
     if (!m) return;
 
+    // Stash raw wire text and immediately show a pending state synchronously —
+    // this prevents the ciphertext from ever being visible to the user.
     el.dataset.ageRaw = text;
-
     if (!_signingKey || !_globalOn) {
       markMessage(el, !_signingKey ? '🔒 Unlock extension to decrypt.' : '🔒 Decryption disabled.', 'pending');
       return;
     }
 
-    // Own outgoing message: render from cache without background round-trip.
     const cipher = m[1];
     const outgoingPlain = _outgoingCache.get(cipher);
     if (outgoingPlain !== undefined) {
@@ -311,25 +346,56 @@
       return;
     }
 
+    // Mark pending immediately (synchronous) — no await before this point.
     markMessage(el, '🔒 Decrypting…', 'pending');
 
     (async () => {
-      const channelId   = getCurrentChannelId();
-      const sig         = m[2];
-      const sigInput    = new TextEncoder().encode(`${channelId}:${cipher}`);
-      const sigBytes    = base64DiscToBytes(sig).slice(0, 64); // clamp for Chromium
+      const active = getActiveEntry();
 
-      const contact    = getContact();
-      const contactKey = contact ? await importVerifyKey(contact.ageRecipient).catch(() => null) : null;
-
-      if (!contactKey) {
-        // No contact configured for this channel — cannot verify sender.
-        console.info('[age] no contact key for channel', channelId, '— msgId', msgId);
-        markMessage(el, '⚠️ No contact configured for this channel.', 'warn');
+      if (!active) {
+        markMessage(el, '⚠️ No entry configured for this channel.', 'warn');
         return;
       }
 
-      const sigValid = await crypto.subtle.verify('Ed25519', contactKey, sigBytes, sigInput);
+      const { entry, bindingId } = active;
+      const sig      = m[2];
+      const sigInput = new TextEncoder().encode(`${bindingId}:${cipher}`);
+      const sigBytes = base64DiscToBytes(sig).slice(0, 64); // clamp for Chromium
+
+      // Build the list of candidate verify keys depending on entry type.
+      // Contact: single key. Group/server: all member keys — try each in turn.
+      let candidateKeys; // Array<CryptoKey>
+
+      if (entry.type === 'contact' || !entry.type) {
+        const key = await importVerifyKey(entry.ageRecipient).catch(() => null);
+        candidateKeys = key ? [key] : [];
+      } else {
+        // Group or server: collect Ed25519 verify keys from all members.
+        const keyPromises = (entry.memberIds ?? []).map(uuid => {
+          const member = _contacts[uuid];
+          return member?.ageRecipient
+            ? importVerifyKey(member.ageRecipient).catch(() => null)
+            : Promise.resolve(null);
+        });
+        candidateKeys = (await Promise.all(keyPromises)).filter(Boolean);
+      }
+
+      if (candidateKeys.length === 0) {
+        markMessage(el, '⚠️ No member keys available to verify signature.', 'warn');
+        return;
+      }
+
+      // Try each candidate key. First verification success = valid signature.
+      let sigValid = false;
+      for (const key of candidateKeys) {
+        try {
+          if (await crypto.subtle.verify('Ed25519', key, sigBytes, sigInput)) {
+            sigValid = true;
+            break;
+          }
+        } catch { /* key format mismatch — continue */ }
+      }
+
       if (!sigValid) {
         console.info('[age] signature mismatch — msgId', msgId);
         markMessage(el, '🔴 Signature invalid — possible tampering.', 'error');
@@ -487,13 +553,11 @@
     chrome.runtime.onMessage.addListener(async (msg) => {
 
       if (msg.type === 'UNLOCK') {
-        // Background sends signingKeyB64 — the PKCS8 private key as base64url.
-        // CryptoKey objects cannot survive chrome.tabs.sendMessage (JSON IPC
-        // silently drops them), so we import the raw bytes locally instead.
         try {
-          const data  = await localGet(['contacts', 'globalOn']);
-          _contacts   = data.contacts || {};
-          _globalOn   = data.globalOn !== false;
+          const localData = await localGet(['globalOn']);
+          _contacts      = msg.contacts || {};
+          _selfRecipient = msg.ageRecipient || null;
+          _globalOn      = localData.globalOn !== false;
           const pkcs8 = base64UrlToBytes(msg.signingKeyB64);
           _signingKey = await crypto.subtle.importKey(
             'pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']
@@ -508,10 +572,10 @@
       }
 
       if (msg.type === 'CONTACTS_UPDATED') {
-        const prevOn = _globalOn;
-        const data   = await localGet(['contacts', 'globalOn']);
-        _contacts = data.contacts || {};
-        _globalOn = data.globalOn !== false;
+        const prevOn   = _globalOn;
+        const localData = await localGet(['globalOn']);
+        _contacts = msg.contacts || _contacts;
+        _globalOn = localData.globalOn !== false;
         if (_globalOn && !prevOn) {
           _processedIds.clear();
           _decryptedCache.clear();
@@ -528,7 +592,8 @@
       }
 
       if (msg.type === 'RELOCK') {
-        _signingKey = null;
+        _signingKey    = null;
+        _selfRecipient = null;
         _processedIds.clear();
         _decryptedCache.clear();
         _outgoingCache.clear();
@@ -561,9 +626,8 @@
   async function init() {
     listenForMessages();
     startNavObserver();
-    const data = await localGet(['contacts', 'globalOn']);
-    _contacts = data.contacts || {};
-    _globalOn = data.globalOn !== false;
+    const localData = await localGet(['globalOn']);
+    _globalOn = localData.globalOn !== false;
     waitForMessageList();
   }
 
