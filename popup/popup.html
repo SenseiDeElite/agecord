@@ -48,7 +48,7 @@
 
     <button id="btn-generate" class="btn btn-primary btn-full">Generate keypair</button>
     <div id="setup-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Generating keypair… this may take a few seconds.</span>
+      <div class="spinner"></div><span>Generating keypair… this may take a moment.</span>
     </div>
 
     <button id="btn-show-import" class="btn btn-outlined btn-full">Import existing keypair</button>
@@ -83,7 +83,7 @@
     <div id="import-error" class="error-msg" hidden></div>
     <button id="btn-import" class="btn btn-primary btn-full">Import &amp; unlock</button>
     <div id="import-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Importing… this may take a few seconds.</span>
+      <div class="spinner"></div><span>Importing… deriving key, please wait.</span>
     </div>
   </div>
 
@@ -336,20 +336,20 @@
       <span class="topbar-title">My public key</span>
     </div>
 
-    <p class="hint" style="padding: 8px 16px 0">Share this with contacts so they can encrypt messages to you.</p>
+    <p class="hint" style="padding: 4px 16px 0">Share this with contacts so they can encrypt messages to you.</p>
     <div class="key-box-wrap">
       <div class="key-box-header">
         <span class="key-box-label">Public key</span>
         <button id="btn-copy-key" class="key-copy-btn" title="Copy to clipboard" aria-label="Copy public key">
-          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           <span id="btn-copy-key-label">Copy</span>
         </button>
       </div>
       <div class="key-box" id="my-key-box"></div>
     </div>
 
-    <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">BLAKE3 Fingerprint</div>
-    <div class="sheet-fingerprint" id="my-key-fp" style="padding: 4px 16px 8px; text-align: center;">Computing fingerprint…</div>
+    <div class="sheet-fp-label" style="text-align: center; padding-top: 6px;">BLAKE3 Fingerprint</div>
+    <div class="sheet-fingerprint" id="my-key-fp" style="text-align: center;">Computing fingerprint…</div>
 
     <div class="danger-zone">
       <div class="section-label" style="color: var(--md-error)">Advanced</div>
@@ -404,6 +404,14 @@
             <span class="about-row-text">
               <div class="about-row-label">noble-hashes</div>
               <div class="about-row-sub">MIT · Copyright (c) 2022 Paul Miller (https://paulmillr.com)</div>
+            </span>
+            <span class="about-row-badge">↗</span>
+          </button>
+          <button class="about-row" id="about-noble-ciphers-link">
+            <span class="about-row-icon">🔒</span>
+            <span class="about-row-text">
+              <div class="about-row-label">noble-ciphers</div>
+              <div class="about-row-sub">MIT · Copyright (c) 2022 Paul Miller (https://paulmillr.com), Copyright (c) 2016 Thomas Pornin</div>
             </span>
             <span class="about-row-badge">↗</span>
           </button>
@@ -574,6 +582,7 @@
 
   <script src="../lib/age.min.js"></script>
   <script src="../lib/noble-hashes.min.js"></script>
+  <script src="../lib/noble-ciphers.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
