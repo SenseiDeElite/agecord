@@ -28,6 +28,10 @@
   // Keyed on stable li.id so React DOM reconciliation can re-render instantly.
   const _processedIds   = new Set();
   const _decryptedCache = new Map();
+  // _inFlight: Set<msgId> — prevents two concurrent async decrypt IIFEs for the
+  // same message when the MutationObserver fires multiple times before the first
+  // IIFE completes (e.g. React reconciliation re-adding the same node).
+  const _inFlight = new Set();
 
   // _outgoingCache: Map<cipherBase64disc, plaintext>
   // Populated when we send a message; lets us render our own message immediately
@@ -39,6 +43,10 @@
   let _contacts     = {};
   let _globalOn     = true;
   let _msgObserver  = null;
+  // _generation: incremented on every RELOCK and UNLOCK so that async IIFEs
+  // spawned under a previous lock state silently no-op when they complete
+  // rather than overwriting DOM that a newer cycle has already written.
+  let _generation   = 0;
 
   const sleep    = ms => new Promise(r => setTimeout(r, ms));
   const localGet = keys => new Promise(r => chrome.storage.local.get(keys, r));
@@ -318,7 +326,11 @@
 
     if (_processedIds.has(msgId)) {
       const cached = _decryptedCache.get(msgId);
-      if (cached && el.dataset.ageState !== 'ok') renderDecrypted(el, cached);
+      // Always re-render from cache even if ageState is already 'ok': Discord's
+      // React renderer can replace the message-content element with a fresh node
+      // that shares the same li.id but has no ageState or content yet.  The check
+      // against 'ok' would pass on the OLD node and leave the NEW node blank.
+      if (cached) renderDecrypted(el, cached);
       return;
     }
 
@@ -329,9 +341,12 @@
     const m = text.match(/^\[age\]:([A-Za-z0-9\-.]+):([A-Za-z0-9\-.]+)$/);
     if (!m) return;
 
-    // Stash raw wire text and immediately show a pending state synchronously —
-    // this prevents the ciphertext from ever being visible to the user.
+    // Stash raw wire text and IMMEDIATELY blank the element so raw ciphertext
+    // is never visible — all paths below replace it with a proper status string
+    // or decrypted content before any async work yields the thread.
     el.dataset.ageRaw = text;
+    el.textContent = '';
+
     if (!_signingKey || !_globalOn) {
       markMessage(el, !_signingKey ? '🔒 Unlock extension to decrypt.' : '🔒 Decryption disabled.', 'pending');
       return;
@@ -346,11 +361,34 @@
       return;
     }
 
-    // Mark pending immediately (synchronous) — no await before this point.
-    markMessage(el, '🔒 Decrypting…', 'pending');
+    // Guard against concurrent async IIFEs for the same message.
+    // React reconciliation can fire the MutationObserver multiple times for the
+    // same li before the first decrypt round-trip completes, which would cause
+    // a second IIFE to race to getActiveEntry() and potentially read a stale URL.
+    if (_inFlight.has(msgId)) return;
+    _inFlight.add(msgId);
+
+    // Capture the active entry SYNCHRONOUSLY before yielding the thread.
+    // Inside an async IIFE, location.pathname may have changed due to SPA
+    // navigation — capturing here guarantees we use the URL that was current
+    // when this message node was observed.
+    const capturedActive = getActiveEntry();
+
+    // Capture the current generation so this IIFE can detect if a RELOCK or
+    // UNLOCK has occurred while it was awaiting crypto/IPC work.  If the
+    // generation changes, our results are stale and must not touch the DOM.
+    const capturedGeneration = _generation;
+
+    // Leave element blank while decryption is in-flight — the raw ciphertext
+    // was already cleared above and showing "Decrypting…" is unreliable.
+    el.textContent = '';
 
     (async () => {
-      const active = getActiveEntry();
+      try {
+      // Bail out if a RELOCK/UNLOCK cycle invalidated this IIFE's context.
+      if (_generation !== capturedGeneration) return;
+
+      const active = capturedActive;
 
       if (!active) {
         markMessage(el, '⚠️ No entry configured for this channel.', 'warn');
@@ -380,6 +418,9 @@
         candidateKeys = (await Promise.all(keyPromises)).filter(Boolean);
       }
 
+      // Re-check generation after the first set of async calls (importKey).
+      if (_generation !== capturedGeneration) return;
+
       if (candidateKeys.length === 0) {
         markMessage(el, '⚠️ No member keys available to verify signature.', 'warn');
         return;
@@ -396,6 +437,9 @@
         } catch { /* key format mismatch — continue */ }
       }
 
+      // Re-check generation after verify (another async boundary).
+      if (_generation !== capturedGeneration) return;
+
       if (!sigValid) {
         console.info('[age] signature mismatch — msgId', msgId);
         markMessage(el, '🔴 Signature invalid — possible tampering.', 'error');
@@ -405,6 +449,8 @@
       // Signature is valid — delegate decryption to the background.
       try {
         const resp = await chrome.runtime.sendMessage({ type: 'DECRYPT_MSG', cipher });
+        // Final generation check — RELOCK may have arrived while we awaited IPC.
+        if (_generation !== capturedGeneration) return;
         if (!resp?.ok) {
           if (resp?.error === 'locked') {
             markMessage(el, '🔒 Unlock extension to decrypt.', 'pending');
@@ -420,6 +466,9 @@
       } catch (err) {
         console.info('[age] decrypt IPC error — msgId', msgId, err?.message);
         markMessage(el, '🔓 Could not decrypt.', 'error');
+      }
+      } finally {
+        _inFlight.delete(msgId);
       }
     })();
   }
@@ -562,7 +611,30 @@
           _signingKey = await crypto.subtle.importKey(
             'pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']
           );
+          // Advance the generation BEFORE touching caches or the DOM so any
+          // IIFEs still in-flight from a previous lock cycle see the new
+          // generation and no-op rather than writing stale status strings.
+          _generation++;
+          _inFlight.clear();
+
+          // Surgical cache reset: evict only messages that are NOT yet
+          // successfully decrypted.  Messages with state='ok' stay in both
+          // caches; processMessageNode will re-render them synchronously from
+          // _decryptedCache so they never flash blank.
+          // Non-ok entries (pending/warn/error/'') are evicted so they retry.
+          for (const msgId of [..._processedIds]) {
+            const li = document.getElementById(msgId);
+            const el = li && [...li.querySelectorAll('[id^="message-content-"]')]
+              .find(e => !e.closest('[class*="repliedText"]') && !e.closest('[class*="replyPreview"]'));
+            if (el?.dataset.ageState !== 'ok') {
+              _processedIds.delete(msgId);
+              _decryptedCache.delete(msgId);
+            }
+          }
+
           attachEnterHook();
+          // processMessageNode re-renders ok messages from cache synchronously;
+          // pending/warn/error messages start fresh decrypt round-trips.
           scanExisting();
           rescanPending();
         } catch (e) {
@@ -576,29 +648,49 @@
         const localData = await localGet(['globalOn']);
         _contacts = msg.contacts || _contacts;
         _globalOn = localData.globalOn !== false;
-        if (_globalOn && !prevOn) {
-          _processedIds.clear();
-          _decryptedCache.clear();
-          rescanPending();
-        } else if (!_globalOn && prevOn) {
+        if (!_globalOn && prevOn) {
+          // Encryption just disabled — mark all ok messages as disabled without
+          // clearing the cache, so re-enabling restores them from cache instantly.
           _processedIds.clear();
           _decryptedCache.clear();
           document.querySelectorAll('[id^="message-content-"][data-age-state="ok"]').forEach(el => {
             el.dataset.ageState = '';
             markMessage(el, '🔒 Decryption disabled.', 'pending');
           });
+        } else if (_globalOn) {
+          // Contacts changed or globalOn just became true.  Evict only non-ok
+          // entries so already-decrypted messages stay put; messages that were
+          // pending/warn/error (e.g. "No entry") are retried with the updated
+          // contacts list.  This also means popup-open no longer flashes every
+          // already-decrypted message: the CONTACTS_UPDATED that follows UNLOCK
+          // only touches messages that weren't successfully decrypted yet.
+          for (const msgId of [..._processedIds]) {
+            const li = document.getElementById(msgId);
+            const el = li && [...li.querySelectorAll('[id^="message-content-"]')]
+              .find(e => !e.closest('[class*="repliedText"]') && !e.closest('[class*="replyPreview"]'));
+            if (el?.dataset.ageState !== 'ok') {
+              _processedIds.delete(msgId);
+              _decryptedCache.delete(msgId);
+            }
+          }
+          if (_signingKey) { scanExisting(); rescanPending(); }
         }
         return;
       }
 
       if (msg.type === 'RELOCK') {
+        _generation++;
         _signingKey    = null;
         _selfRecipient = null;
         _processedIds.clear();
         _decryptedCache.clear();
         _outgoingCache.clear();
+        _inFlight.clear();
         detachEnterHook();
-        document.querySelectorAll('[id^="message-content-"][data-age-state="ok"]').forEach(el => {
+        // Reset every message element that has a stashed raw cipher — this
+        // covers not only already-decrypted (state='ok') messages but also any
+        // that were pending/warn/error, ensuring a full re-scan on next UNLOCK.
+        document.querySelectorAll('[id^="message-content-"][data-age-raw]').forEach(el => {
           el.dataset.ageState = '';
           markMessage(el, LOCKED_MSG, 'pending');
         });
@@ -613,11 +705,38 @@
     new MutationObserver(() => {
       if (location.href === lastUrl) return;
       lastUrl = location.href;
-      setTimeout(() => {
-        if (_signingKey) attachEnterHook();
-        _msgObserver?.disconnect();
-        waitForMessageList();
-      }, 800);
+
+      // In-flight guards belong to the previous channel — always clear them so
+      // the new channel's messages aren't skipped by a stale _inFlight entry.
+      _inFlight.clear();
+
+      // Keep _decryptedCache across navigation: if Discord re-uses the same
+      // li.id for the same message (it does — message IDs are stable), we can
+      // re-render from cache synchronously without a background round-trip,
+      // eliminating the blank-then-decrypt flash on channel re-visit.
+      //
+      // Only evict processed entries whose DOM node is now gone or not yet 'ok',
+      // so that messages which haven't decrypted yet are retried on the new channel.
+      for (const msgId of [..._processedIds]) {
+        const li = document.getElementById(msgId);
+        const el = li && [...li.querySelectorAll('[id^="message-content-"]')]
+          .find(e => !e.closest('[class*="repliedText"]') && !e.closest('[class*="replyPreview"]'));
+        if (!el || el.dataset.ageState !== 'ok') {
+          _processedIds.delete(msgId);
+          _decryptedCache.delete(msgId);
+        }
+      }
+
+      _msgObserver?.disconnect();
+      waitForMessageList();
+      if (_signingKey) attachEnterHook();
+
+      // Discord's SPA commits the URL change before finishing rendering, so
+      // getActiveEntry() called immediately may read a transitional URL.
+      // Schedule a rescan after the new channel's list has had time to settle,
+      // so messages that landed in warn/error state ("No entry configured") due
+      // to that race are retried with the correct URL in place.
+      setTimeout(() => { if (_signingKey) rescanPending(); }, 350);
     }).observe(document.body, { subtree: true, childList: true });
   }
 
