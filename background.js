@@ -1,18 +1,17 @@
 // background.js — Discord Age Encryption service worker
 //
 // Key material flow:
-//   popup      → UNLOCK           → background : identity blob + passphrase
+//   popup      → UNLOCK           → background : identity blob + raw contacts key bytes
 //   background → UNLOCK           → content    : signingKeyB64 (PKCS8 base64url)
 //   content    → DECRYPT_MSG      → background : ciphertext → plaintext
 //   popup      → ENCRYPT_CONTACTS → background : contacts JSON → ciphertextB64
 //   popup      → DECRYPT_CONTACTS → background : ciphertextB64 → contacts JSON
 //
-// Contacts are encrypted at rest with AES-GCM-256.  The key is derived via
-// PBKDF2 (SHA-256, 200 000 iterations) from the passphrase at unlock time,
-// held in memory as a non-extractable CryptoKey, and cleared on lock/restart.
-// A dedicated salt ("contactsSalt") is stored in chrome.storage.local —
-// distinct from the age-scrypt identity salt — so the two blobs cannot
-// cross-attack each other.
+// Contacts are encrypted at rest with XChaCha20-Poly1305.  The key is derived
+// in the popup via Argon2id (noble-hashes) in crypto-worker.js and sent to the
+// background as raw bytes in the UNLOCK message.  The background holds it as a
+// plain Uint8Array (_contactsKeyBytes) — noble-ciphers does not use CryptoKey.
+// The key is cleared on lock/restart.
 //
 // CryptoKey objects silently become {} when sent via chrome.tabs.sendMessage
 // (Chrome JSON IPC drops them).  We send raw base64url PKCS8 bytes instead;
@@ -21,11 +20,42 @@
 'use strict';
 
 importScripts('lib/age.min.js');
+importScripts('lib/noble-ciphers.min.js');
 
-let _identity      = null;
-let _contactsKey   = null;
-let _contacts      = {};   // latest decrypted contacts object, relayed to content scripts
-let _ageRecipient  = null; // own public key string, relayed to content scripts
+let _identity          = null;
+let _contactsKeyBytes  = null; // raw Uint8Array from Argon2id derivation in popup
+let _contacts          = {};   // latest decrypted contacts object, relayed to content scripts
+let _ageRecipient      = null; // own public key string, relayed to content scripts
+
+// noble-ciphers: xchacha20poly1305 used directly with an explicit nonce.
+// We do NOT use managedNonce to avoid depending on it being present in the bundle.
+// Contacts envelope format: [ 0x01 version ][ 24-byte nonce ][ ct + 16-byte tag ]
+// (No salt — the Argon2id key is derived by the popup and sent in UNLOCK.)
+function _xchacha_encrypt(key, plaintext) {
+  const nc = (typeof nobleCiphers !== 'undefined') ? nobleCiphers
+           : (typeof globalThis.nobleCiphers !== 'undefined') ? globalThis.nobleCiphers
+           : null;
+  if (!nc?.xchacha20poly1305)
+    throw new Error('noble-ciphers not loaded in background service worker.');
+  const nonce = crypto.getRandomValues(new Uint8Array(24));
+  const ct    = nc.xchacha20poly1305(key, nonce).encrypt(plaintext);
+  // Prepend nonce to ciphertext so decrypt can recover it
+  const out = new Uint8Array(24 + ct.length);
+  out.set(nonce, 0);
+  out.set(ct, 24);
+  return out;
+}
+
+function _xchacha_decrypt(key, noncePlusCt) {
+  const nc = (typeof nobleCiphers !== 'undefined') ? nobleCiphers
+           : (typeof globalThis.nobleCiphers !== 'undefined') ? globalThis.nobleCiphers
+           : null;
+  if (!nc?.xchacha20poly1305)
+    throw new Error('noble-ciphers not loaded in background service worker.');
+  const nonce = noncePlusCt.slice(0, 24);
+  const ct    = noncePlusCt.slice(24);
+  return nc.xchacha20poly1305(key, nonce).decrypt(ct);
+}
 
 // ─── Base64 helpers ───────────────────────────────────────────────────────────
 
@@ -73,46 +103,68 @@ async function decompress(bytes) {
   return new TextDecoder().decode(out);
 }
 
-// ─── Contacts key derivation and encryption ───────────────────────────────────
-// PBKDF2 chosen over raw HKDF-on-scrypt because typage's scrypt output is
-// opaque — we cannot extract raw bytes from it.  PBKDF2 at 200k iterations
-// provides comparable protection for this secondary key derivation.
+// ─── Contacts b64 helpers ────────────────────────────────────────────────────
 
-async function deriveContactsKey(passphraseBytes, saltBytes) {
-  const km = await crypto.subtle.importKey('raw', passphraseBytes, { name: 'PBKDF2' }, false, ['deriveKey']);
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: 200_000 },
-    km,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
+function _b64ToBytes(b64) {
+  let std = b64.replace(/-/g, '+').replace(/\./g, '/').replace(/_/g, '/');
+  while (std.length % 4) std += '=';
+  const bin = atob(std);
+  const out  = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
-// Wire format: 12-byte random IV prepended to AES-GCM ciphertext, base64-encoded.
-async function encryptContacts(jsonStr) {
-  if (!_contactsKey) throw new Error('Contacts key not available — extension locked.');
-  const iv  = crypto.getRandomValues(new Uint8Array(12));
-  const ct  = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, _contactsKey,
-    new TextEncoder().encode(jsonStr));
-  const out = new Uint8Array(12 + ct.byteLength);
-  out.set(iv, 0);
-  out.set(new Uint8Array(ct), 12);
-  return bytesToB64(out);
+function _bytesToB64(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
 }
 
-async function decryptContacts(b64) {
-  if (!_contactsKey) throw new Error('Contacts key not available — extension locked.');
-  const raw = b64ToBytes(b64);
-  const pt  = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12) },
-    _contactsKey, raw.slice(12));
-  return new TextDecoder().decode(pt);
+// ─── Contacts encryption (XChaCha20-Poly1305) ────────────────────────────────
+// Envelope format (version 0x01):
+//   [ 1 byte version = 0x01 ][ 24-byte nonce ][ ct + 16-byte Poly1305 tag ]
+//
+// The Argon2id key is derived by the popup (crypto-worker.js) and sent here as
+// raw bytes in the UNLOCK message.  The key is independent of the envelope —
+// there is no salt embedded here.  If the key ever changes (passphrase change,
+// fresh salt), saveContacts() re-encrypts with the new key and the old
+// ciphertext is replaced atomically.
+
+const ENVELOPE_VER      = 0x01;
+const ENVELOPE_NONCE_LEN = 24;
+const ENVELOPE_HDR_LEN  = 1; // just the version byte
+
+function encryptContacts(jsonStr) {
+  if (!_contactsKeyBytes) throw new Error('Contacts key not available — extension locked.');
+  const plaintext   = new TextEncoder().encode(jsonStr);
+  const noncePlusCt = _xchacha_encrypt(_contactsKeyBytes, plaintext); // 24-byte nonce + ct
+
+  const envelope = new Uint8Array(ENVELOPE_HDR_LEN + noncePlusCt.length);
+  envelope[0] = ENVELOPE_VER;
+  envelope.set(noncePlusCt, ENVELOPE_HDR_LEN);
+  return _bytesToB64(envelope);
+}
+
+function decryptContacts(b64) {
+  if (!_contactsKeyBytes) throw new Error('Contacts key not available — extension locked.');
+  const envelope = _b64ToBytes(b64);
+  if (envelope[0] !== ENVELOPE_VER)
+    throw new Error(`Unknown contacts envelope version 0x${envelope[0].toString(16)}.`);
+
+  // Minimum viable length: version(1) + nonce(24) + tag(16) = 41 bytes.
+  if (envelope.length < 41)
+    throw new Error('Contacts envelope too short — data may be corrupt.');
+
+  const noncePlusCt = envelope.slice(ENVELOPE_HDR_LEN);
+  const plaintext   = _xchacha_decrypt(_contactsKeyBytes, noncePlusCt);
+  return new TextDecoder().decode(plaintext);
 }
 
 // ─── Identity state ───────────────────────────────────────────────────────────
 // Reconstructed from session storage if the service worker is killed and
-// restarted mid-session.  _contactsKey cannot be reconstructed this way —
-// the popup must re-send UNLOCK with the passphrase to re-derive it.
+// restarted mid-session.  _contactsKeyBytes cannot be reconstructed this way —
+// the popup must re-send UNLOCK (with the Argon2id-derived contactsKeyB64) to
+// restore it.
 
 async function ensureIdentity() {
   if (_identity) return true;
@@ -168,14 +220,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             ageRecipient:  _ageRecipient,
           }, () => void chrome.runtime.lastError);
 
-        if (msg.passphrase) {
-          let saltB64 = (await chrome.storage.local.get('contactsSalt')).contactsSalt;
-          if (!saltB64) {
-            saltB64 = bytesToB64(crypto.getRandomValues(new Uint8Array(32)));
-            await chrome.storage.local.set({ contactsSalt: saltB64 });
-          }
-          _contactsKey = await deriveContactsKey(
-            new TextEncoder().encode(msg.passphrase), b64ToBytes(saltB64));
+        // Receive pre-derived Argon2id key bytes from popup's crypto-worker.
+        // The key is passed as a base64 string and stored as a Uint8Array.
+        if (msg.contactsKeyB64) {
+          _contactsKeyBytes = _b64ToBytes(msg.contactsKeyB64);
         }
       } catch (e) { console.info('[age] UNLOCK error:', e?.message); }
       sendResponse({ ok: true });
@@ -184,10 +232,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === 'RELOCK') {
-    _identity     = null;
-    _contactsKey  = null;
-    _contacts     = {};
-    _ageRecipient = null;
+    _identity         = null;
+    _contactsKeyBytes = null;
+    _contacts         = {};
+    _ageRecipient     = null;
     chrome.tabs.query({ url: 'https://discord.com/*' }, tabs => {
       for (const tab of tabs)
         chrome.tabs.sendMessage(tab.id, { type: 'RELOCK' }, () => void chrome.runtime.lastError);
@@ -230,18 +278,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === 'ENCRYPT_CONTACTS') {
-    (async () => {
-      try { sendResponse({ ok: true, ciphertextB64: await encryptContacts(msg.json) }); }
-      catch (e) { sendResponse({ ok: false, error: e?.message ?? String(e) }); }
-    })();
-    return true;
+    try {
+      sendResponse({ ok: true, ciphertextB64: encryptContacts(msg.json) });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message ?? String(e) });
+    }
+    return false;
   }
 
   if (msg.type === 'DECRYPT_CONTACTS') {
-    (async () => {
-      try { sendResponse({ ok: true, json: await decryptContacts(msg.ciphertextB64) }); }
-      catch (e) { sendResponse({ ok: false, error: e?.message ?? String(e) }); }
-    })();
-    return true;
+    try {
+      sendResponse({ ok: true, json: decryptContacts(msg.ciphertextB64) });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message ?? String(e) });
+    }
+    return false;
   }
 });
