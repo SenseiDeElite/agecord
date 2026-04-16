@@ -672,7 +672,7 @@ html, body {
 
 /* ── Key display box ─────────────────────────────────────────────────────── */
 .key-box-wrap {
-  margin: 6px 16px;
+  margin: 4px 16px;
   background: var(--md-surface-container-highest);
   border: 1px solid var(--md-outline-variant);
   border-radius: var(--shape-md);
@@ -683,13 +683,13 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px 6px 12px;
+  padding: 4px 6px 4px 10px;
   border-bottom: 1px solid var(--md-outline-variant);
   background: color-mix(in srgb, var(--md-surface-container-highest) 60%, var(--md-surface-container));
 }
 
 .key-box-label {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.6px;
   text-transform: uppercase;
@@ -699,14 +699,14 @@ html, body {
 .key-copy-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
+  gap: 4px;
+  padding: 3px 8px;
   border-radius: var(--shape-full);
   border: 1px solid color-mix(in srgb, var(--md-primary) 35%, transparent);
   background: color-mix(in srgb, var(--md-primary) 10%, transparent);
   color: var(--md-primary);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   transition: background 150ms var(--motion-standard),
@@ -722,16 +722,16 @@ html, body {
   color: #57f287;
 }
 
+.key-copy-btn svg { flex-shrink: 0; }
+
 .key-box {
-  padding: 10px 12px;
+  padding: 8px 10px;
   font-family: 'Roboto Mono', 'Consolas', monospace;
-  font-size: 11px;
-  line-height: 1.6;
+  font-size: 10px;
+  line-height: 1.55;
   color: var(--md-on-surface);
   word-break: break-all;
   white-space: pre-wrap;
-  max-height: 110px;
-  overflow-y: auto;
 }
 
 /* ── Danger zone ─────────────────────────────────────────────────────────── */
@@ -796,12 +796,21 @@ html, body {
 
 .sheet-fingerprint {
   font-family: 'Roboto Mono', 'Consolas', monospace;
-  font-size: 10.5px;
+  font-size: 8.5px;
   color: var(--md-on-surface-variant);
   padding: 4px 16px 12px;
-  letter-spacing: 0.4px;
-  line-height: 1.7;
+  letter-spacing: 0.3px;
+  line-height: 1.6;
   white-space: pre;
+}
+
+/* My Key screen fingerprint — 128-byte BLAKE3 output is 8 lines; use a
+   slightly smaller font and tighter padding so it fits in the 560px popup. */
+#my-key-fp {
+  font-size: 9.5px;
+  line-height: 1.6;
+  letter-spacing: 0.3px;
+  padding: 2px 16px 6px;
 }
 
 .sheet-row {
