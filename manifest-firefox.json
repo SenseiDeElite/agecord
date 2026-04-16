@@ -30,6 +30,8 @@
   "background": {
     "scripts": [
       "lib/age.min.js",
+      "lib/noble-hashes.min.js",
+      "lib/noble-ciphers.min.js",
       "background.js"
     ]
   },
