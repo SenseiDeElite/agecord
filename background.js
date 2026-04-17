@@ -169,9 +169,17 @@ function decryptContacts(b64) {
 async function ensureIdentity() {
   if (_identity) return true;
   try {
-    const d = await chrome.storage.session.get(['age_unlocked', 'age_identity']);
+    const d = await chrome.storage.session.get(['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient']);
     if (!d.age_unlocked || !d.age_identity) return false;
     _identity = d.age_identity;
+    // Restore contacts and recipient so sendUnlockToTab does not broadcast an
+    // empty contacts object after a service-worker restart.  Without this,
+    // every Discord tab would receive UNLOCK with contacts:{} and show
+    // "No entry configured" until the popup is manually reopened.
+    if (d.age_contacts && typeof d.age_contacts === 'object')
+      _contacts = d.age_contacts;
+    if (d.age_recipient)
+      _ageRecipient = d.age_recipient;
     return true;
   } catch { return false; }
 }
