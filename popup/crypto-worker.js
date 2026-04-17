@@ -56,26 +56,17 @@ try {
 
 if (!_initError) {
   try {
-    importScripts('../lib/noble-hashes.min.js');
-    // noble-hashes exposes a global; try common bundle export names.
-    _nobleHashes = (typeof nobleHashes !== 'undefined') ? nobleHashes
-                 : (typeof globalThis.nobleHashes !== 'undefined') ? globalThis.nobleHashes
+    importScripts('../lib/awasm-noble.min.js');
+    // awasm-noble exposes a global; try common bundle export names.
+    const _awasm = (typeof awasmNoble !== 'undefined') ? awasmNoble
+                 : (typeof globalThis.awasmNoble !== 'undefined') ? globalThis.awasmNoble
                  : null;
-    if (!_nobleHashes?.argon2id) throw new Error('argon2id not found in noble-hashes bundle');
+    if (!_awasm?.argon2id) throw new Error('argon2id not found in awasm-noble bundle');
+    if (!_awasm?.xchacha20poly1305) throw new Error('xchacha20poly1305 not found in awasm-noble bundle');
+    _nobleHashes  = _awasm;
+    _nobleCiphers = _awasm;
   } catch (e) {
-    _initError = 'Worker init failed (noble-hashes): ' + (e?.message ?? String(e));
-  }
-}
-
-if (!_initError) {
-  try {
-    importScripts('../lib/noble-ciphers.min.js');
-    _nobleCiphers = (typeof nobleCiphers !== 'undefined') ? nobleCiphers
-                  : (typeof globalThis.nobleCiphers !== 'undefined') ? globalThis.nobleCiphers
-                  : null;
-    if (!_nobleCiphers?.xchacha20poly1305) throw new Error('xchacha20poly1305 not found in noble-ciphers bundle');
-  } catch (e) {
-    _initError = 'Worker init failed (noble-ciphers): ' + (e?.message ?? String(e));
+    _initError = 'Worker init failed (awasm-noble): ' + (e?.message ?? String(e));
   }
 }
 
