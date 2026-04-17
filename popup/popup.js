@@ -154,15 +154,10 @@
 
   // Relay helpers: always bundle contacts + ageRecipient so content scripts
   // receive them without needing access to chrome.storage.session.
-  //
-  // contactsKeyB64Opt: if the caller already holds a freshly-derived contacts
-  // key (e.g. doUnlock, which derived it in parallel with the identity key),
-  // pass it here to skip a redundant Argon2id run.  If omitted and a passphrase
-  // is supplied, the key is derived here (e.g. after a service-worker restart).
-  async function bgUnlock(identity, passphrase, contactsKeyB64Opt) {
+  async function bgUnlock(identity, passphrase) {
     const ageRecipient = await getAgeRecipient();
-    let contactsKeyB64 = contactsKeyB64Opt ?? null;
-    if (!contactsKeyB64 && passphrase) {
+    let contactsKeyB64 = null;
+    if (passphrase) {
       try {
         const { contactsSalt } = await store.get(['contactsSalt']);
         const { keyB64 } = await deriveContactsKey(passphrase, contactsSalt ?? null);
@@ -231,8 +226,17 @@
     } catch {}
   }
 
-  // Write decrypted contacts to session storage so content scripts can read them
-  // without needing to decrypt from local storage.
+  // Persist the public recipient string so the background can recover it after
+  // a service-worker restart without waiting for the popup to re-send UNLOCK.
+  async function setSessionRecipient(recipient) {
+    try {
+      if (recipient && chrome.storage.session)
+        await new Promise(res => chrome.storage.session.set({ age_recipient: recipient }, res));
+    } catch {}
+  }
+
+  // Write decrypted contacts to session storage so the background service worker
+  // can recover them after a restart without waiting for the popup.
   async function setSessionContacts(contacts) {
     try {
       if (chrome.storage.session)
@@ -244,7 +248,7 @@
     try {
       if (chrome.storage.session)
         await new Promise(res => chrome.storage.session.remove(
-          ['age_unlocked', 'age_identity', 'age_contacts'], res));
+          ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient'], res));
     } catch {}
   }
 
@@ -567,24 +571,9 @@
         throw new Error('OUTDATED_FORMAT');
       }
 
-      // Derive the identity key and the contacts key in parallel — both are
-      // independent Argon2id invocations (different salts) so they can run
-      // concurrently in separate workers, halving the wall-clock wait time.
-      const { contactsSalt } = await store.get(['contactsSalt']);
-
-      let identity, contactsKeyB64;
+      let identity;
       try {
-        [{ identity }, { contactsKeyB64 }] = await Promise.all([
-          decryptIdentityBlob(blobB64, passphrase).then(id => ({ identity: id })),
-          // contactsSalt may be null on first unlock — deriveContactsKey will
-          // generate and persist a fresh salt before returning.
-          deriveContactsKey(passphrase, contactsSalt ?? null)
-            .then(({ keyB64 }) => ({ contactsKeyB64: keyB64 }))
-            .catch(e => {
-              console.warn('[age] doUnlock: contacts key derivation failed:', e?.message);
-              return { contactsKeyB64: null };
-            }),
-        ]);
+        identity = await decryptIdentityBlob(blobB64, passphrase);
       } catch (workerErr) {
         if (workerErr.message === 'OUTDATED_FORMAT') throw workerErr;
         // Any other decryption failure → wrong passphrase.
@@ -604,12 +593,11 @@
 
       await clearFailedAttempts();
       await setSession(identity);
+      await setSessionRecipient(await getAgeRecipient());
       _sessionIdentity   = identity;
       _sessionPassphrase = passphrase;
       await store.set({ format_version: 2 });
-      // Pass the already-derived contacts key so bgUnlock does not run Argon2id
-      // a third time.
-      await bgUnlock(identity, passphrase, contactsKeyB64);
+      await bgUnlock(identity, passphrase);
       document.getElementById('passphrase-input').value = '';
       await showMain();
 
@@ -696,6 +684,7 @@
 
       await store.set({ ageRecipient: fullRecipient, identity_blob: envelopeB64, globalOn: true, format_version: 2 });
       await setSession(identityBlob);
+      await setSessionRecipient(fullRecipient);
       _sessionIdentity   = identityBlob;
       _sessionPassphrase = pass;
       _contacts = {};
@@ -807,6 +796,7 @@
 
       await store.set({ ageRecipient: fullRecipient, identity_blob: envelopeB64, globalOn: true, format_version: 2 });
       await setSession(identityBlob);
+      await setSessionRecipient(fullRecipient);
       _sessionIdentity   = identityBlob;
       _sessionPassphrase = newPass;
       _contacts = {};
