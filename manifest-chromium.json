@@ -34,8 +34,8 @@
     "default_popup": "popup/popup.html",
     "default_title": "Discord Age Encryption"
   },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none';"
-  },
+"content_security_policy": {
+  "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none';"
+},
   "web_accessible_resources": []
 }
