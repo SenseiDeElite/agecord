@@ -2089,12 +2089,12 @@
   async function keyFingerprint(recipient) {
     if (!recipient) return '(no key)';
     try {
-      // nobleHashes is a global injected by noble-hashes.min.js, which must be
+      // awasmNoble is a global injected by awasm-noble.min.js, which must be
       // loaded before popup.js in popup.html.  If it is missing, fall through
       // to the truncation fallback rather than throwing an unhandled error.
-      if (typeof nobleHashes === 'undefined' || !nobleHashes?.blake3)
-        throw new Error('nobleHashes not loaded');
-      const bytes = nobleHashes.blake3(new TextEncoder().encode(recipient), { dkLen: 128 });
+      if (typeof awasmNoble === 'undefined' || !awasmNoble?.blake3)
+        throw new Error('awasmNoble not loaded');
+      const bytes = awasmNoble.blake3(new TextEncoder().encode(recipient), { dkLen: 128 });
       const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
       return hex.match(/.{1,4}/g).reduce((lines, chunk, i) => {
         if (i % 8 === 0) lines.push('');
@@ -2133,8 +2133,7 @@
   const _aboutLinks = {
     'about-repo-link':          'https://github.com/SenseiDeElite/discord-age-encryption',
     'about-typage-link':        'https://github.com/FiloSottile/typage/blob/main/LICENSE',
-    'about-noble-link':         'https://github.com/paulmillr/noble-hashes/blob/main/LICENSE',
-    'about-noble-ciphers-link': 'https://github.com/paulmillr/noble-ciphers/blob/main/LICENSE',
+    'about-awasm-noble-link':   'https://github.com/paulmillr/awasm-noble/blob/main/LICENSE',
     'about-license-link':       'https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE',
   };
   Object.entries(_aboutLinks).forEach(([id, url]) => {
