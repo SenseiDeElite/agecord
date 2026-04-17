@@ -166,7 +166,7 @@
       </div>
       <div class="form-group">
         <label for="contact-key">Public key</label>
-        <textarea id="contact-key" rows="4" placeholder="age1… (full key with ;ed25519: suffix)"></textarea>
+        <textarea id="contact-key" rows="4" placeholder="age1...;ed25519:..."></textarea>
       </div>
     </div>
 
@@ -179,7 +179,7 @@
       </div>
       <div class="form-group">
         <label for="group-name">Name</label>
-        <input id="group-name" type="text" placeholder="e.g. Team Alpha">
+        <input id="group-name" type="text" placeholder="e.g. My Group">
       </div>
       <div class="form-group">
         <label>Members <span id="group-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0 / 10)</span></label>
@@ -193,7 +193,7 @@
       <div class="form-group">
         <label for="server-id-input">Server ID</label>
         <input id="server-id-input" type="text" placeholder="Numbers only">
-        <span class="hint">discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
+        <span class="hint">discord.com/channels/<strong>SERVER_ID</strong>/CHANNEL_ID</span>
       </div>
       <div class="form-group">
         <label for="server-name">Name</label>
@@ -522,7 +522,7 @@
   <div id="modal-clear-data" class="modal-overlay" hidden>
     <div class="modal">
       <h3>⚠️ Clear all data?</h3>
-      <p>This will <strong>permanently delete your keypair and all contacts</strong>. Encrypted messages will be unreadable forever — there is no recovery.</p>
+      <p>This will <strong>permanently delete your keypair and all contacts</strong>. Encrypted messages will be unreadable forever — there is no recovery without a backup.</p>
       <p>Type <strong>CONFIRM</strong> to proceed:</p>
       <input id="clear-data-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
       <div class="modal-actions">
@@ -536,7 +536,7 @@
   <div id="modal-regen" class="modal-overlay" hidden>
     <div class="modal">
       <h3>Regenerate keypair?</h3>
-      <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> All contacts will be disabled.</p>
+      <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> Contacts will be disabled.</p>
       <p>Type <strong>CONFIRM</strong> to proceed:</p>
       <input id="regen-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
       <div class="modal-actions">
