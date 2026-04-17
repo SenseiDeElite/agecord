@@ -30,8 +30,7 @@
   "background": {
     "scripts": [
       "lib/age.min.js",
-      "lib/noble-hashes.min.js",
-      "lib/noble-ciphers.min.js",
+      "lib/awasm-noble.min.js",
       "background.js"
     ]
   },
@@ -53,7 +52,7 @@
     "default_title": "Discord Age Encryption"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none';"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none';"
   },
   "web_accessible_resources": []
 }
