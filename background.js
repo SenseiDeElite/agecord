@@ -20,7 +20,7 @@
 'use strict';
 
 importScripts('lib/age.min.js');
-importScripts('lib/noble-ciphers.min.js');
+importScripts('lib/awasm-noble.min.js');
 
 let _identity          = null;
 let _contactsKeyBytes  = null; // raw Uint8Array from Argon2id derivation in popup
@@ -32,11 +32,11 @@ let _ageRecipient      = null; // own public key string, relayed to content scri
 // Contacts envelope format: [ 0x01 version ][ 24-byte nonce ][ ct + 16-byte tag ]
 // (No salt — the Argon2id key is derived by the popup and sent in UNLOCK.)
 function _xchacha_encrypt(key, plaintext) {
-  const nc = (typeof nobleCiphers !== 'undefined') ? nobleCiphers
-           : (typeof globalThis.nobleCiphers !== 'undefined') ? globalThis.nobleCiphers
+  const nc = (typeof awasmNoble !== 'undefined') ? awasmNoble
+           : (typeof globalThis.awasmNoble !== 'undefined') ? globalThis.awasmNoble
            : null;
   if (!nc?.xchacha20poly1305)
-    throw new Error('noble-ciphers not loaded in background service worker.');
+    throw new Error('awasm-noble not loaded in background service worker.');
   const nonce = crypto.getRandomValues(new Uint8Array(24));
   const ct    = nc.xchacha20poly1305(key, nonce).encrypt(plaintext);
   // Prepend nonce to ciphertext so decrypt can recover it
@@ -47,11 +47,11 @@ function _xchacha_encrypt(key, plaintext) {
 }
 
 function _xchacha_decrypt(key, noncePlusCt) {
-  const nc = (typeof nobleCiphers !== 'undefined') ? nobleCiphers
-           : (typeof globalThis.nobleCiphers !== 'undefined') ? globalThis.nobleCiphers
+  const nc = (typeof awasmNoble !== 'undefined') ? awasmNoble
+           : (typeof globalThis.awasmNoble !== 'undefined') ? globalThis.awasmNoble
            : null;
   if (!nc?.xchacha20poly1305)
-    throw new Error('noble-ciphers not loaded in background service worker.');
+    throw new Error('awasm-noble not loaded in background service worker.');
   const nonce = noncePlusCt.slice(0, 24);
   const ct    = noncePlusCt.slice(24);
   return nc.xchacha20poly1305(key, nonce).decrypt(ct);
