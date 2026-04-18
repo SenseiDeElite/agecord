@@ -88,9 +88,12 @@ function base64ToBytes(b64) {
   return out;
 }
 
-// Argon2id parameters — OWASP interactive minimum.
-// t=2, m=65536 (64 MB), p=1, dkLen=32
-const ARGON2ID_PARAMS = { t: 2, m: 65536, p: 1, dkLen: 32 };
+// Argon2id parameters — RFC 9106 §4 second recommended option (memory-constrained).
+// t=3, m=65536 (64 MiB), p=1, dkLen=32
+// RFC 9106 §4 specifies p=4, but noble-hashes/awasm-noble run single-threaded in JS;
+// p>1 would just run lanes sequentially with no memory benefit, so p=1 is kept.
+// t is raised from 2 to 3 to exactly match the RFC's iteration-count recommendation.
+const ARGON2ID_PARAMS = { t: 3, m: 65536, p: 1, dkLen: 32 };
 
 // Envelope version byte.
 const ENVELOPE_VERSION = 0x01;
