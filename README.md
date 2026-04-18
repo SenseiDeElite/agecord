@@ -11,7 +11,7 @@ A browser extension that adds end-to-end encrypted messaging to Discord. Message
 - 🔑 **Your keys, your device —** private keys never leave your browser;
 - 🔐 **Passphrase protected —** your data is encrypted at rest, unlocked per session.
 - 🤫 **Modern cryptography —** Utilizes Argon2id, XChaCha20-Poly1305, BLAKE3 through [awasm-noble](https://github.com/paulmillr/awasm-noble) where appropriate.
-- ⚡ **Lightning fast —** Messages are encrypted and decrypted almost instantly. WebCrypto API, hardware acceleration and WebAssembly are combined to deliver you a near-native experience.
+- ⚡ **Lightning fast —** Messages are encrypted and decrypted almost instantly. WebCrypto API, hardware acceleration and WebAssembly are leveraged to deliver you a smooth experience.
 
 ---
 
