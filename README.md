@@ -8,8 +8,10 @@ A browser extension that adds end-to-end encrypted messaging to Discord. Message
 
 - 🔒 **End-to-end encrypted —** only you and your contacts can read messages;
 - ✍️ **Signed messages —** every message is cryptographically signed, preventing tampering;
-- 🔑 **Your keys, your device —** private keys never leave your machine;
+- 🔑 **Your keys, your device —** private keys never leave your browser;
 - 🔐 **Passphrase protected —** your private key is encrypted at rest, unlocked per session.
+- 🤫 **Modern cryptography —** Utilizes Argon2id, XChaCha20-Poly1305, BLAKE3 through [awasm-noble](https://github.com/paulmillr/awasm-noble) where appropriate.
+- ⚡ **Lightning fast —** Messages are encrypted and decrypted almost instantly. WebCrypto API, hardware acceleration and WebAssembly are combined to deliver you a near-native experience.
 
 ---
 
@@ -17,15 +19,13 @@ A browser extension that adds end-to-end encrypted messaging to Discord. Message
 
 Encryption uses [age](https://github.com/FiloSottile/typage) (X25519 key agreement + ChaCha20-Poly1305), a modern and well-audited encryption format. Each message is also signed with an Ed25519 signature, which guarantees that a message could only have been sent by the person who owns that keypair — any tampering or forgery is flagged immediately.
 
-Your private key is stored encrypted on your device using [Argon2id + XChaCha20-Poly1305](https://github.com/paulmillr/awasm-noble). It is never uploaded anywhere.
-
-Cryptographic operations utilize WebAssembly and follow RFCs whenever possible, making them secure and fast.
+Your private key is stored encrypted at rest on your device using Argon2id + XChaCha20-Poly1305. It is never uploaded anywhere.
 
 **Wire format**
 
 Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a bindingId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to both the recipients and the sender, so both parties can read the conversation.
 
-**Key fingerprints**
+**🫆 Key fingerprints**
 
 Each contact's public key is displayed as a BLAKE3 (128-byte output) fingerprint. You can verify a contact's key out-of-band by comparing fingerprints with them directly.
 
@@ -49,6 +49,8 @@ Editing encrypted messages does not update the decrypted view. If you edit an al
 
 See the latest [release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest). Only Firefox supports auto update for the time being.
 
+**Troubleshooting**
+
 v0.4.0+ requires WebAssembly. Make sure you didn't disable it through browser hardening.
 
 Chromium: `DefaultJavaScriptJitSetting` policy.
@@ -66,18 +68,22 @@ Firefox: `javascript.options.wasm` preference. (about:config)
 3. Click **Generate keypair** — your keys are created and stored locally;
 4. Click **My public key** and copy it to share with your contact.
 
-**Adding a contact**
+**Adding a recipient**
 
 1. Open a contact, group or server in Discord;
 2. Click **+ Add** in the extension;
-3. Follow on-screen instructions;
-4. Click **Save contact**.
+3. Fill required information;
+4. Click **Save** once done.
 
-Both sides need to have added each other before encrypted messaging works correctly.
+All sides need to have added each other before encrypted messaging works correctly.
 
 **Sending messages**
 
-Once a contact is added and enabled, just type and press **Enter** — the extension intercepts the message and encrypts it. Received encrypted messages are decrypted and shown inline with a lock badge.
+Once a given recipient is added and enabled, just type your message and press **Enter** — the extension intercepts and encrypts it before sending. Hit enter again to confirm.
+
+If Discord warns you that the message you are about to send might contain a Discord token secret, this is a side effect of the characters present in the message. You can safely ignore it and hit enter again — the extension never sends secrets anywhere.
+
+Received encrypted messages are decrypted and shown inline with a lock badge.
 
 ---
 
