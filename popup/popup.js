@@ -248,7 +248,21 @@
     try {
       if (chrome.storage.session)
         await new Promise(res => chrome.storage.session.remove(
-          ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient'], res));
+          ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient',
+           'pending_unlock'], res));
+    } catch {}
+  }
+
+  // Marks that an unlock is in progress so boot() can detect a mid-unlock
+  // dismissal and show a clean lock screen rather than the broken half-unlocked
+  // state that would result from the racing doUnlock() completing in a closed
+  // popup document.
+  async function setPendingUnlock(val) {
+    try {
+      if (chrome.storage.session)
+        await new Promise(res =>
+          val ? chrome.storage.session.set({ pending_unlock: true }, res)
+              : chrome.storage.session.remove('pending_unlock', res));
     } catch {}
   }
 
@@ -371,6 +385,17 @@
       await bgUnlock(identity, _sessionPassphrase ?? undefined);
       await showMain();
     } else {
+      // If the popup was dismissed mid-unlock, a stale doUnlock() may still be
+      // racing in the background. Clear any partial session data it may have
+      // written before we booted, then show a clean lock screen.
+      // The user just needs to enter their passphrase once more (~1.6 s with Argon2id).
+      try {
+        if (chrome.storage.session) {
+          const s = await new Promise(res =>
+            chrome.storage.session.get('pending_unlock', res));
+          if (s.pending_unlock) await clearSession();
+        }
+      } catch {}
       document.getElementById('btn-goto-setup').hidden = false;
       await showLockScreen();
     }
@@ -561,6 +586,11 @@
     let _decryptFailed = false;
 
     try {
+      // Signal that an unlock is in progress. If the popup is dismissed before
+      // we reach setSession() below, boot() on the next open will find this
+      // flag, wipe any partial session data, and show a clean lock screen.
+      await setPendingUnlock(true);
+
       const stored = await store.get(['identity_blob', 'ageEncryptedIdentity']);
       const blobB64 = stored.identity_blob || stored.ageEncryptedIdentity;
       if (!blobB64) throw new Error('No keypair found.');
@@ -592,6 +622,7 @@
       }
 
       await clearFailedAttempts();
+      await setPendingUnlock(false); // unlock succeeded — clear the in-progress marker
       await setSession(identity);
       await setSessionRecipient(await getAgeRecipient());
       _sessionIdentity   = identity;
