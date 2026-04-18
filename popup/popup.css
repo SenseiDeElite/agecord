@@ -95,6 +95,8 @@ html, body {
 .screen-main {
   overflow: hidden;
   padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes screen-enter {
@@ -390,6 +392,7 @@ html, body {
   border-bottom: 1px solid var(--md-outline-variant);
   position: relative;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 /* Radial primary glow — same as screen-header::after and about-hero::after */
@@ -471,6 +474,7 @@ html, body {
   text-transform: uppercase;
   color: var(--md-on-surface-variant);
   padding: 12px 16px 6px;
+  flex-shrink: 0;
 }
 
 .section-label-actions {
@@ -561,15 +565,13 @@ html, body {
   flex-direction: column;
   gap: 1px;
   padding: 0 8px 4px;
-  /* Grow to fill available space but scroll when many contacts */
-  flex: 1 1 auto;
+  /* Grow to fill remaining space after header and FAB; scroll when many contacts */
+  flex: 1 1 0;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--md-outline-variant) transparent;
   min-height: 0;
-  /* Scrolls within the fixed popup height */
-  max-height: 360px;
 }
 
 .contacts-list::-webkit-scrollbar       { width: 4px; }
@@ -601,8 +603,8 @@ html, body {
   width: 38px;
   height: 38px;
   border-radius: var(--shape-full);
-  background: var(--md-primary-container);
-  color: var(--md-on-primary-container);
+  background: #003559;
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -662,6 +664,7 @@ html, body {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
+  flex-shrink: 0;
   transition: background 160ms var(--motion-standard),
               box-shadow  160ms var(--motion-standard);
   width: calc(100% - 32px);
@@ -671,21 +674,31 @@ html, body {
 .fab:active { transform: scale(0.97); }
 
 /* ── Key display box ─────────────────────────────────────────────────────── */
-.key-box-wrap {
-  margin: 4px 16px;
-  background: var(--md-surface-container-highest);
+.my-key-card {
+  margin: 4px 16px 8px;
   border: 1px solid var(--md-outline-variant);
   border-radius: var(--shape-md);
-  overflow: hidden;
+  background: var(--md-surface-container-highest);
 }
 
-.key-box-header {
+.my-key-card-toprow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 4px 6px 4px 10px;
   border-bottom: 1px solid var(--md-outline-variant);
+  border-radius: var(--shape-md) var(--shape-md) 0 0;
   background: color-mix(in srgb, var(--md-surface-container-highest) 60%, var(--md-surface-container));
+}
+
+.my-key-card-text {
+  padding: 8px 10px;
+  font-family: 'Roboto Mono', 'Consolas', monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  color: var(--md-on-surface);
+  word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .key-box-label {
@@ -724,15 +737,6 @@ html, body {
 
 .key-copy-btn svg { flex-shrink: 0; }
 
-.key-box {
-  padding: 8px 10px;
-  font-family: 'Roboto Mono', 'Consolas', monospace;
-  font-size: 10px;
-  line-height: 1.55;
-  color: var(--md-on-surface);
-  word-break: break-all;
-  white-space: pre-wrap;
-}
 
 /* ── Danger zone ─────────────────────────────────────────────────────────── */
 .danger-zone {
@@ -1041,6 +1045,7 @@ html, body {
   font-size: 13px;
   padding: 8px 14px;
   outline: none;
+  flex-shrink: 0;
   transition: border-color 180ms var(--motion-standard),
               background   180ms var(--motion-standard);
 }
@@ -1066,8 +1071,8 @@ html, body {
   align-items: center;
   padding: 3px 10px;
   border-radius: var(--shape-full);
-  background: var(--md-primary-container);
-  color: var(--md-on-primary-container);
+  background: #003559;
+  color: #ffffff;
   font-size: 12px;
   font-weight: 500;
 }
