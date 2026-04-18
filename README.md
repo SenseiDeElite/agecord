@@ -1,39 +1,39 @@
-## Discord Age Encryption
+## 🏛️ Discord Age Encryption
 
 A browser extension that adds end-to-end encrypted messaging to Discord. Messages are encrypted on your device before being sent — Discord's servers only see ciphertext.
 
 ---
 
-### Features
+### ⚙️ Features
 
-- 🔒 **End-to-end encrypted —** only you and your contacts can read messages;
-- ✍️ **Signed messages —** every message is cryptographically signed, preventing tampering;
+- 🔒 **End-to-end encrypted —** only you and your recipients can read messages;
+- ✍️ **Signed messages —** every message is cryptographically signed, proving authenticity;
 - 🔑 **Your keys, your device —** private keys never leave your browser;
-- 🔐 **Passphrase protected —** your private key is encrypted at rest, unlocked per session.
+- 🔐 **Passphrase protected —** your data is encrypted at rest, unlocked per session.
 - 🤫 **Modern cryptography —** Utilizes Argon2id, XChaCha20-Poly1305, BLAKE3 through [awasm-noble](https://github.com/paulmillr/awasm-noble) where appropriate.
 - ⚡ **Lightning fast —** Messages are encrypted and decrypted almost instantly. WebCrypto API, hardware acceleration and WebAssembly are combined to deliver you a near-native experience.
 
 ---
 
-### Cryptography
+### 🔐 Cryptography
 
 Encryption uses [age](https://github.com/FiloSottile/typage) (X25519 key agreement + ChaCha20-Poly1305), a modern and well-audited encryption format. Each message is also signed with an Ed25519 signature, which guarantees that a message could only have been sent by the person who owns that keypair — any tampering or forgery is flagged immediately.
 
-Your private key is stored encrypted at rest on your device using Argon2id + XChaCha20-Poly1305. It is never uploaded anywhere.
+Your data is stored encrypted at rest on your device using Argon2id + XChaCha20-Poly1305. It is never uploaded anywhere.
 
-**Wire format**
+**🪡 Wire format**
 
-Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a bindingId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to both the recipients and the sender, so both parties can read the conversation.
+Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a bindingId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to all recipients and the sender, so the relevant parties can read the conversation.
 
 **🫆 Key fingerprints**
 
-Each contact's public key is displayed as a BLAKE3 (128-byte output) fingerprint. You can verify a contact's key out-of-band by comparing fingerprints with them directly.
+Each contact's public key is displayed as a BLAKE3 (128-byte output) fingerprint. You can verify a contact's key out-of-band by comparing fingerprints with them directly if you wish.
 
 **Limitations**
 
-> ⚠️ **No forward secrecy.** If your private key is ever compromised, past messages encrypted to it could be read. Keep your passphrase strong and your private key safe.
+> ❌ **No forward secrecy.** If your private key is ever compromised, past messages encrypted to it could be read. Keep your passphrase strong and your private key safe.
 
-> ⚠️ **Not post-quantum secure.** The algorithms used (X25519, Ed25519, ChaCha20-Poly1305) are not resistant to attacks from a sufficiently powerful quantum computer. A future quantum adversary that recorded your encrypted messages today could potentially decrypt them later. age does support post-quantum algorithms, but the resulting ciphertext is too long for Discord, making it impractical for this use case.
+> 🔓 **Not post-quantum secure.** The majority of the algorithms used are not resistant to harvest now, decrypt later (HNDL) attacks. A future quantum adversary that recorded your encrypted messages today could potentially decrypt them later. age does support post-quantum algorithms, but the resulting ciphertext is too long for Discord, making it impractical for this use case.
 
 ---
 
@@ -72,7 +72,7 @@ Firefox: `javascript.options.wasm` preference. (about:config)
 
 1. Open a contact, group or server in Discord;
 2. Click **+ Add** in the extension;
-3. Fill required information;
+3. Fill required details;
 4. Click **Save** once done.
 
 All sides need to have added each other before encrypted messaging works correctly.
@@ -81,7 +81,7 @@ All sides need to have added each other before encrypted messaging works correct
 
 Once a given recipient is added and enabled, just type your message and press **Enter** — the extension intercepts and encrypts it before sending. Hit enter again to confirm.
 
-If Discord warns you that the message you are about to send might contain a Discord token secret, this is a side effect of the characters present in the message. You can safely ignore it and hit enter again — the extension never sends secrets anywhere.
+If Discord warns you that the message you are about to send might contain a Discord token, this is a side effect of the characters present in the message. You can safely ignore it and hit enter again — the extension never sends any secrets anywhere.
 
 Received encrypted messages are decrypted and shown inline with a lock badge.
 
