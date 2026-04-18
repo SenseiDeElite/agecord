@@ -19,9 +19,11 @@ Encryption uses [age](https://github.com/FiloSottile/typage) (X25519 key agreeme
 
 Your private key is stored encrypted on your device using [Argon2id + XChaCha20-Poly1305](https://github.com/paulmillr/awasm-noble). It is never uploaded anywhere.
 
+Cryptographic operations utilize WebAssembly and follow RFCs whenever possible, making them secure and fast.
+
 **Wire format**
 
-Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a bindingId, the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to both the recipients and the sender, so both parties can read the conversation.
+Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a bindingId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to both the recipients and the sender, so both parties can read the conversation.
 
 **Key fingerprints**
 
@@ -37,7 +39,7 @@ Each contact's public key is displayed as a BLAKE3 (128-byte output) fingerprint
 
 ### 🐛 Known Issues
 
-Editing encrypted messages does not update the decrypted view. If you edit an already sent encrypted message, it'll continue to show the old decrypted content until you do a full page reload (`Ctrl+R`/`Cmd+R`). This is a limitation of how the extension hooks into Discord's React-based DOM and does not have a simple fix at this time. Contributions are welcome.
+Editing encrypted messages does not update the decrypted view. If you edit an already sent encrypted message, it'll continue to show the old decrypted content until you switch channels or reload the page. This is a limitation of how the extension hooks into Discord's React-based DOM and does not have a simple fix at this time. Contributions are welcome.
 
 ---
 
@@ -47,11 +49,11 @@ Editing encrypted messages does not update the decrypted view. If you edit an al
 
 See the latest [release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest). Only Firefox supports auto update for the time being.
 
-WebAssembly support is required. Make sure you didn't disable it through browser hardening.
-
-Firefox: `javascript.options.wasm` preference.
+v0.4.0+ requires WebAssembly. Make sure you didn't disable it through browser hardening.
 
 Chromium: `DefaultJavaScriptJitSetting` policy.
+
+Firefox: `javascript.options.wasm` preference. (about:config)
 
 ---
 
@@ -66,9 +68,9 @@ Chromium: `DefaultJavaScriptJitSetting` policy.
 
 **Adding a contact**
 
-1. Open your contact DM in Discord;
-2. Click **Add contact** in the extension;
-3. Paste their public key and give them a identifiable name — the channel ID fills in automatically if you're already in their DM;
+1. Open a contact, group or server in Discord;
+2. Click **+ Add** in the extension;
+3. Follow on-screen instructions;
 4. Click **Save contact**.
 
 Both sides need to have added each other before encrypted messaging works correctly.
@@ -79,17 +81,10 @@ Once a contact is added and enabled, just type and press **Enter** — the exten
 
 ---
 
-### Key management
-
-- **Export private key —** requires passphrase re-entry. Save the exported blob somewhere safe (a password manager or encrypted vault). Anyone who has it can read and write encrypted messages on your behalf.
-- **Regenerate keypair —** creates a new keypair. All previous encrypted messages become permanently unreadable and all contacts are disabled. Use only if your key is compromised.
-
----
-
 ### Licenses
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE)
 
 See [THIRD_PARTY_NOTICES.txt](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
 
-This extension is not affiliated with or endorsed by Discord Inc. or any of the projects mentioned.
+This extension is not affiliated with nor endorsed by Discord Inc.
