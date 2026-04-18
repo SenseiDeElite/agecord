@@ -680,7 +680,7 @@
     if (!/[A-Z]/.test(p))        errs.push('an uppercase letter (A–Z)');
     if (!/[a-z]/.test(p))        errs.push('a lowercase letter (a–z)');
     if (!/[0-9]/.test(p))        errs.push('a number (0–9)');
-    if (!/[^A-Za-z0-9]/.test(p)) errs.push('a special character (e.g. ! & *)');
+    if (!/[^A-Za-z0-9]/.test(p)) errs.push('a special character (e.g. !&*)');
     return errs.length ? 'Passphrase must include: ' + errs.join(', ') + '.' : null;
   }
 
@@ -1314,8 +1314,6 @@
 
   function openMemberPicker(context) {
     _pickerContext = context;
-    const maxLabel = context.maxMembers === Infinity ? '' : ` (max ${context.maxMembers})`;
-    document.getElementById('member-picker-title').textContent = `Select members${maxLabel}`;
     document.getElementById('member-picker-search').value = '';
     renderMemberPicker('');
     document.getElementById('sheet-member-picker').hidden          = false;
