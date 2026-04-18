@@ -330,22 +330,22 @@
     <button id="btn-delete-server" class="btn btn-outlined-error btn-full">Delete server</button>
     <button id="btn-close-server-sheet" class="btn btn-text btn-full">Close</button>
   </div>
-  <div id="screen-my-key" class="screen" hidden>
+  <div id="screen-my-key" class="screen screen-form" hidden>
     <div class="topbar">
       <button id="btn-back-key" class="icon-btn" aria-label="Back">←</button>
       <span class="topbar-title">My public key</span>
     </div>
 
     <p class="hint" style="font-size:13px; padding: 10px 16px 6px; line-height:1.5;">Share this with contacts so they can encrypt messages to you.</p>
-    <div class="key-box-wrap" style="margin-top: 4px; margin-bottom: 4px;">
-      <div class="key-box-header">
+    <div class="my-key-card">
+      <div class="my-key-card-toprow">
         <span class="key-box-label">Public key</span>
         <button id="btn-copy-key" class="key-copy-btn" title="Copy to clipboard" aria-label="Copy public key">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           <span id="btn-copy-key-label">Copy</span>
         </button>
       </div>
-      <div class="key-box" id="my-key-box"></div>
+      <div class="my-key-card-text" id="my-key-box"></div>
     </div>
 
     <div style="margin: 8px 16px 0; border-top: 1px solid var(--md-outline-variant);"></div>
@@ -355,8 +355,9 @@
     <div class="danger-zone">
       <div class="section-label" style="color: var(--md-error)">Advanced</div>
       <button id="btn-change-passphrase" class="btn btn-outlined-error btn-full">Change passphrase</button>
-      <button id="btn-manage-keypair"    class="btn btn-outlined-error btn-full">Manage keypair</button>
-      <button id="btn-clear-data"        class="btn btn-outlined-error btn-full">Clear storage</button>
+      <button id="btn-export-key"        class="btn btn-outlined-error btn-full" style="margin-top:8px;">Export private key</button>
+      <button id="btn-regen"             class="btn btn-outlined-error btn-full" style="margin-top:8px;">Regenerate keypair</button>
+      <button id="btn-clear-data"        class="btn btn-outlined-error btn-full" style="margin-top:8px;">Clear storage</button>
     </div>
   </div>
 
