@@ -105,19 +105,12 @@ async function decompress(bytes) {
 
 // ─── Contacts b64 helpers ────────────────────────────────────────────────────
 
-function _b64ToBytes(b64) {
-  let std = b64.replace(/-/g, '+').replace(/\./g, '/').replace(/_/g, '/');
-  while (std.length % 4) std += '=';
-  const bin = atob(std);
-  const out  = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function _bytesToB64(bytes) {
-  let s = '';
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s);
+// Base64url alphabet (RFC 4648 §5: + → -  / → _) — used for the contacts key
+// (contactsKeyB64) which is sent from the popup as a base64url-encoded string.
+function b64urlToBytes(str) {
+  let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';
+  return b64ToBytes(b64);
 }
 
 // ─── Contacts encryption (XChaCha20-Poly1305) ────────────────────────────────
@@ -142,12 +135,12 @@ function encryptContacts(jsonStr) {
   const envelope = new Uint8Array(ENVELOPE_HDR_LEN + noncePlusCt.length);
   envelope[0] = ENVELOPE_VER;
   envelope.set(noncePlusCt, ENVELOPE_HDR_LEN);
-  return _bytesToB64(envelope);
+  return bytesToB64(envelope);
 }
 
 function decryptContacts(b64) {
   if (!_contactsKeyBytes) throw new Error('Contacts key not available — extension locked.');
-  const envelope = _b64ToBytes(b64);
+  const envelope = b64ToBytes(b64);
   if (envelope[0] !== ENVELOPE_VER)
     throw new Error(`Unknown contacts envelope version 0x${envelope[0].toString(16)}.`);
 
@@ -231,12 +224,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Receive pre-derived Argon2id key bytes from popup's crypto-worker.
         // The key is passed as a base64 string and stored as a Uint8Array.
         if (msg.contactsKeyB64) {
-          _contactsKeyBytes = _b64ToBytes(msg.contactsKeyB64);
+          _contactsKeyBytes = b64ToBytes(msg.contactsKeyB64);
         }
       } catch (e) { console.info('[age] UNLOCK error:', e?.message); }
       sendResponse({ ok: true });
     })();
     return true;
+  }
+
+
+  if (msg.type === 'PING') {
+    sendResponse({ ok: true, hasContactsKey: _contactsKeyBytes !== null });
+    return false;
   }
 
   if (msg.type === 'RELOCK') {
