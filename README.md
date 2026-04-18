@@ -1,12 +1,12 @@
 ## Discord Age Encryption
 
-A browser extension that adds end-to-end encrypted messaging to Discord DMs. Messages are encrypted on your device before being sent — Discord's servers only see ciphertext.
+A browser extension that adds end-to-end encrypted messaging to Discord. Messages are encrypted on your device before being sent — Discord's servers only see ciphertext.
 
 ---
 
 ### Features
 
-- 🔒 **End-to-end encrypted —** only you and your contact can read messages;
+- 🔒 **End-to-end encrypted —** only you and your contacts can read messages;
 - ✍️ **Signed messages —** every message is cryptographically signed, preventing tampering;
 - 🔑 **Your keys, your device —** private keys never leave your machine;
 - 🔐 **Passphrase protected —** your private key is encrypted at rest, unlocked per session.
@@ -17,47 +17,15 @@ A browser extension that adds end-to-end encrypted messaging to Discord DMs. Mes
 
 Encryption uses [age](https://github.com/FiloSottile/typage) (X25519 key agreement + ChaCha20-Poly1305), a modern and well-audited encryption format. Each message is also signed with an Ed25519 signature, which guarantees that a message could only have been sent by the person who owns that keypair — any tampering or forgery is flagged immediately.
 
-Your private key is stored encrypted on your device using age's scrypt passphrase protection. It is never uploaded anywhere.
+Your private key is stored encrypted on your device using [Argon2id + XChaCha20-Poly1305](https://github.com/paulmillr/awasm-noble). It is never uploaded anywhere.
 
 **Wire format**
 
-Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a short random ID, the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to both the recipient and the sender, so both parties can read the conversation.
+Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a bindingId, the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to both the recipients and the sender, so both parties can read the conversation.
 
 **Key fingerprints**
 
-Each contact's public key is displayed as a [BLAKE3](https://github.com/paulmillr/noble-hashes) (64-byte output) fingerprint. You can verify a contact's key out-of-band by comparing fingerprints with them directly, or by computing the checksum yourself. This is optional.
-
-First, install b3sum according to your operating system. Commands assume b3sum is added to PATH.
-
-**Arch Linux**
-
-```bash
-run0 pacman -Syu b3sum
-```
-
-**Cargo (cross-platform)**
-
-```sh
-cargo install b3sum
-```
-
-**BLAKE3 binaries**
-
-See [BLAKE3-team/BLAKE3](https://github.com/BLAKE3-team/BLAKE3/releases/latest).
-
-Then, replace "age1..." with the actual age public key that you want to verify.
-
-**Linux & macOS**
-
-```sh
-printf '%s' "age1..." | b3sum --length 64 | awk '{s=toupper($1); for(i=1;i<=length(s);i+=4) printf "%s%s", substr(s,i,4), (i+3)%32==0 ? "\n" : " "; print ""}'
-```
-
-**Windows**
-
-```powershell
-"age1..." | Out-File -Encoding utf8NoBOM tmp_key.txt; b3sum --length 64 --no-names tmp_key.txt | ForEach-Object { $h = $_.ToUpper(); 0..3 | ForEach-Object { $h.Substring($_*32,32) -replace '(.{4})(?!$)','$1 ' } | Write-Host }; Remove-Item tmp_key.txt
-```
+Each contact's public key is displayed as a BLAKE3 (128-byte output) fingerprint. You can verify a contact's key out-of-band by comparing fingerprints with them directly.
 
 **Limitations**
 
@@ -78,6 +46,12 @@ Editing encrypted messages does not update the decrypted view. If you edit an al
 #### Chromium & Firefox
 
 See the latest [release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest). Only Firefox supports auto update for the time being.
+
+WebAssembly support is required. Make sure you didn't disable it through browser hardening.
+
+Firefox: `javascript.options.wasm` preference.
+
+Chromium: `DefaultJavaScriptJitSetting` policy.
 
 ---
 
