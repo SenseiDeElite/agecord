@@ -33,9 +33,11 @@
   // IIFE completes (e.g. React reconciliation re-adding the same node).
   const _inFlight = new Set();
 
-  // _outgoingCache: Map<cipherBase64disc, plaintext>
+  // _outgoingCache: Map<cipherBase64disc, { plaintext, bindingId }>
   // Populated when we send a message; lets us render our own message immediately
-  // without a background decrypt round-trip. TTL: 8 s.
+  // without a background decrypt round-trip. bindingId is stored so the lookup
+  // can verify the cipher belongs to the same channel before skipping sig-verify.
+  // TTL: 8 s.
   const _outgoingCache = new Map();
 
   let _signingKey   = null;
@@ -243,7 +245,9 @@
 
       // Cache own outgoing message by cipher so we can render it immediately
       // when it echoes back in the message list, without a background decrypt.
-      _outgoingCache.set(cipher, plain);
+      // bindingId is stored alongside so the cache lookup can verify the message
+      // belongs to the same channel before bypassing signature verification.
+      _outgoingCache.set(cipher, { plaintext: plain, bindingId });
       setTimeout(() => _outgoingCache.delete(cipher), 8000);
 
       await pasteIntoEditor(`${PREFIX}:${cipher}:${sig}`);
@@ -353,12 +357,19 @@
     }
 
     const cipher = m[1];
-    const outgoingPlain = _outgoingCache.get(cipher);
-    if (outgoingPlain !== undefined) {
-      _processedIds.add(msgId);
-      _decryptedCache.set(msgId, outgoingPlain);
-      renderDecrypted(el, outgoingPlain);
-      return;
+    const outgoingEntry = _outgoingCache.get(cipher);
+    if (outgoingEntry !== undefined) {
+      // Only render from cache if this message appeared in the same channel it
+      // was sent in — a replayed cipher in a different channel must not bypass
+      // the signature check via the outgoing cache short-circuit.
+      const activeForCache = getActiveEntry();
+      if (activeForCache && outgoingEntry.bindingId === activeForCache.bindingId) {
+        _processedIds.add(msgId);
+        _decryptedCache.set(msgId, outgoingEntry.plaintext);
+        renderDecrypted(el, outgoingEntry.plaintext);
+        return;
+      }
+    // bindingId mismatch — fall through to normal sig-verify + decrypt path.
     }
 
     // Guard against concurrent async IIFEs for the same message.
@@ -401,20 +412,27 @@
       const sigBytes = base64DiscToBytes(sig).slice(0, 64); // clamp for Chromium
 
       // Build the list of candidate verify keys depending on entry type.
-      // Contact: single key. Group/server: all member keys — try each in turn.
+      // Contact: single key. Group/server: all member keys + own key — try each in turn.
       let candidateKeys; // Array<CryptoKey>
-
       if (entry.type === 'contact' || !entry.type) {
         const key = await importVerifyKey(entry.ageRecipient).catch(() => null);
         candidateKeys = key ? [key] : [];
       } else {
-        // Group or server: collect Ed25519 verify keys from all members.
-        const keyPromises = (entry.memberIds ?? []).map(uuid => {
+        // Group or server: collect Ed25519 verify keys from all members,
+        // plus our own public key so our own outgoing messages verify correctly
+        // even after the outgoing cache has expired (e.g. after a channel switch).
+        const memberIds = entry.memberIds ?? [];
+        const keyPromises = memberIds.map(uuid => {
           const member = _contacts[uuid];
           return member?.ageRecipient
             ? importVerifyKey(member.ageRecipient).catch(() => null)
             : Promise.resolve(null);
         });
+        // Add own key if available — stored in _selfRecipient as the full
+      // recipient string (age1…;ed25519:…), same format as contact keys.
+      if (_selfRecipient) {
+         keyPromises.push(importVerifyKey(_selfRecipient).catch(() => null));
+      }
         candidateKeys = (await Promise.all(keyPromises)).filter(Boolean);
       }
 
