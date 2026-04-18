@@ -27,6 +27,7 @@
   const MIN_USERNAME    = 1;
   const MAX_GROUP_MEMBERS  = 10;
   const CONTACTS_VERSION   = 2;
+  const IMPORT_SIZE_LIMIT  = 1_048_576; // 1 MiB — well above the ~420 KB worst-case maximum
 
   // ─── Storage helpers ────────────────────────────────────────────────────────
   const store = {
@@ -154,6 +155,9 @@
 
   // Relay helpers: always bundle contacts + ageRecipient so content scripts
   // receive them without needing access to chrome.storage.session.
+  // bgUnlock: full unlock — derives the Argon2id contacts key from passphrase
+  // and sends it to the background along with the identity and contacts.
+  // Used on first unlock, keygen, import, and passphrase change.
   async function bgUnlock(identity, passphrase) {
     const ageRecipient = await getAgeRecipient();
     let contactsKeyB64 = null;
@@ -167,6 +171,42 @@
       }
     }
     return bgSend({ type: 'UNLOCK', identity, contactsKeyB64, contacts: _contacts, ageRecipient });
+  }
+
+  // bgUnlockResume: reopen path — resyncs identity + contacts with the background
+  // without any key derivation.  The contacts key is derived lazily on first save
+  // via ensureContactsKey(), so popup reopen is always instant.
+  async function bgUnlockResume(identity) {
+    const ageRecipient = await getAgeRecipient();
+    return bgSend({ type: 'UNLOCK', identity, contactsKeyB64: null, contacts: _contacts, ageRecipient });
+  }
+
+  // Ensures the background holds the Argon2id contacts key, deriving it on demand.
+  // Called once before any saveContacts() write — a no-op if the key is already live.
+  async function ensureContactsKey() {
+    const ping = await bgSend({ type: 'PING' });
+    if (ping?.hasContactsKey) return; // already live — nothing to do
+    // Key is gone (service-worker restart or first save after reopen) — derive now.
+    const passphrase = _sessionPassphrase ?? await getSessionPassphrase();
+    if (!passphrase) throw new Error('Session passphrase unavailable — please lock and unlock again.');
+    const identity = _sessionIdentity ?? await getSessionIdentity();
+    if (!identity)  throw new Error('Session identity unavailable — please lock and unlock again.');
+    await bgUnlock(identity, passphrase);
+  }
+
+  // Runs an async save operation with button feedback: disables the button,
+  // updates its label, awaits the operation, then restores the original state.
+  async function withSaveButton(btn, savingLabel, fn) {
+    const originalText    = btn.textContent;
+    const originalDisabled = btn.disabled;
+    btn.disabled    = true;
+    btn.textContent = savingLabel;
+    try {
+      await fn();
+    } finally {
+      btn.disabled    = originalDisabled;
+      btn.textContent = originalText;
+    }
   }
 
   async function bgContactsUpdated() {
@@ -249,8 +289,28 @@
       if (chrome.storage.session)
         await new Promise(res => chrome.storage.session.remove(
           ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient',
-           'pending_unlock'], res));
+           'age_passphrase', 'pending_unlock'], res));
     } catch {}
+  }
+
+  // Cache the session passphrase so saveContacts/loadContacts can re-derive the
+  // contacts key after a service-worker restart without re-prompting the user.
+  // Session storage is cleared on lock and on browser restart, so this is safe.
+  async function setSessionPassphrase(passphrase) {
+    try {
+      if (passphrase && chrome.storage.session)
+        await new Promise(res => chrome.storage.session.set({ age_passphrase: passphrase }, res));
+    } catch {}
+  }
+
+  async function getSessionPassphrase() {
+    try {
+      if (chrome.storage.session) {
+        const r = await new Promise(res => chrome.storage.session.get('age_passphrase', res));
+        return r.age_passphrase ?? null;
+      }
+    } catch {}
+    return null;
   }
 
   // Marks that an unlock is in progress so boot() can detect a mid-unlock
@@ -381,9 +441,23 @@
 
     const identity = await getSessionIdentity();
     if (identity) {
-      _sessionIdentity = identity;
-      await bgUnlock(identity, _sessionPassphrase ?? undefined);
-      await showMain();
+      _sessionIdentity   = identity;
+      _sessionPassphrase = await getSessionPassphrase();
+
+      // Seed contacts from session storage so the list renders instantly on reopen,
+      // before the background has re-established the contacts key.
+      try {
+        const s = await new Promise(res => chrome.storage.session.get('age_contacts', res));
+        if (s.age_contacts && typeof s.age_contacts === 'object')
+          _contacts = s.age_contacts;
+      } catch {}
+
+      showMain(); // show immediately with cached contacts
+
+      // Re-sync with the background in parallel; showMain's own loadContacts()
+      // call will refresh the list once the key is available.
+      bgUnlockResume(identity).catch(e =>
+        console.warn('[age] bgUnlockResume failed:', e?.message));
     } else {
       // If the popup was dismissed mid-unlock, a stale doUnlock() may still be
       // racing in the background. Clear any partial session data it may have
@@ -433,6 +507,9 @@
     document.getElementById('btn-goto-setup').hidden = true;
     document.getElementById('passphrase-input').value = '';
     document.getElementById('unlock-error').hidden = true;
+    document.getElementById('setup-passphrase').value  = '';
+    document.getElementById('setup-passphrase2').value = '';
+    document.getElementById('setup-error').hidden      = true;
     show('setup');
   });
 
@@ -567,19 +644,27 @@
   }
 
   async function doUnlock() {
+    // Synchronous re-entrance guard — must be the very first operation so that a
+    // double-click cannot queue two concurrent Argon2id derivations before the
+    // button has had a chance to disable itself.
+    const btn = document.getElementById('btn-unlock');
+    if (btn.disabled) return;
+    btn.disabled    = true;
+    btn.textContent = 'Unlocking…';
+
     // Always re-check persistent lockout state first — this prevents any bypass
     // by reloading the extension, since the lockout is stored in local storage.
-    if (await checkLockdown()) return;
+    if (await checkLockdown()) {
+      if (!_isLockedOut) { btn.disabled = false; btn.textContent = 'Unlock'; }
+      return;
+    }
     if (_isLockedOut) return;
 
     const passphrase = document.getElementById('passphrase-input').value;
-    if (!passphrase) return;
+    if (!passphrase) { btn.disabled = false; btn.textContent = 'Unlock'; return; }
 
     const errEl = document.getElementById('unlock-error');
-    const btn   = document.getElementById('btn-unlock');
     errEl.hidden = true;
-    btn.disabled = true;
-    btn.textContent = 'Unlocking…';
 
     // _decryptFailed: set to true if we should count the attempt as a wrong
     // passphrase. ANY decryption failure means wrong passphrase or corrupt blob.
@@ -627,6 +712,7 @@
       await setSessionRecipient(await getAgeRecipient());
       _sessionIdentity   = identity;
       _sessionPassphrase = passphrase;
+      await setSessionPassphrase(passphrase);
       await store.set({ format_version: 2 });
       await bgUnlock(identity, passphrase);
       document.getElementById('passphrase-input').value = '';
@@ -674,6 +760,13 @@
     strengthLbl.textContent      = p.length ? ['Too short','Weak','Weak','Fair','Good','Strong','Very strong'][score] : '';
   });
 
+  // Returns true if every character in s is printable ASCII (U+0020–U+007E).
+  // Excludes control characters and non-ASCII Unicode that could interfere with
+  // JSON serialisation, storage round-trips, or future protocol fields.
+  function isPrintableAscii(s) {
+    return /^[\x20-\x7E]+$/.test(s);
+  }
+
   function validatePassphrase(p) {
     const errs = [];
     if (p.length < 20)           errs.push('at least 20 characters');
@@ -718,6 +811,7 @@
       await setSessionRecipient(fullRecipient);
       _sessionIdentity   = identityBlob;
       _sessionPassphrase = pass;
+      await setSessionPassphrase(pass);
       _contacts = {};
       _globalOn = true;
 
@@ -830,6 +924,7 @@
       await setSessionRecipient(fullRecipient);
       _sessionIdentity   = identityBlob;
       _sessionPassphrase = newPass;
+      await setSessionPassphrase(newPass);
       _contacts = {};
       _globalOn = true;
 
@@ -909,7 +1004,7 @@
     if (recipient.startsWith('AGE-SECRET-KEY-'))
       return 'That is a private key — paste their public key (age1…) instead.';
     if (!/;ed25519:[A-Za-z0-9_-]{40,}$/.test(recipient))
-      return 'Public key must include an Ed25519 component (;ed25519:…). Share your full public key with the other party.';
+      return 'Public key must be the full key including the Ed25519 component (age1…;ed25519:…).';
     try {
       const test = new age.Encrypter();
       test.addRecipient(recipient.split(';')[0]);
@@ -926,10 +1021,14 @@
   function validateContactFields(channelId, username, recipient, editingUUID = null) {
     if (!channelId || !username || !recipient)
       return 'All fields are required.';
-    if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
+    if (!/^\d+$/.test(channelId))
+      return 'Channel ID must contain digits only.';
+    if (channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
       return `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`;
     if (username.length < MIN_USERNAME || username.length > MAX_USERNAME)
       return `Contact name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`;
+    if (!isPrintableAscii(username))
+      return 'Contact name must contain printable ASCII characters only.';
 
     for (const [uuid, c] of Object.entries(_contacts)) {
       if (uuid === editingUUID) continue; // skip the contact being edited
@@ -967,13 +1066,12 @@
       card.className = 'contact-card';
 
       const type   = c.type ?? 'contact';
-      const icon   = type === 'group' ? '👥' : type === 'server' ? '🏠' : null;
+      const icon   = type === 'group' ? '👥' : type === 'server' ? '🏠' : '👤';
       const label  = type === 'contact' ? c.username : c.name;
-      const initLetter = (label?.[0] ?? '?').toUpperCase();
 
       const avatar = Object.assign(document.createElement('div'), {
         className:   'contact-avatar',
-        textContent: icon ?? initLetter,
+        textContent: icon,
       });
       const name = Object.assign(document.createElement('div'), {
         className:   'contact-name',
@@ -1127,6 +1225,8 @@
         { showErr(errEl, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`); return; }
       if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
         { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+      if (!isPrintableAscii(name))
+        { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
       for (const c of Object.values(_contacts)) {
         if (c.channelId === channelId) { showErr(errEl, 'A contact or group with this Channel ID already exists.'); return; }
       }
@@ -1142,6 +1242,8 @@
       if (!serverId || !/^\d{1,20}$/.test(serverId)) { showErr(errEl, 'Server ID must be 1–20 digits.'); return; }
       if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
         { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+      if (!isPrintableAscii(name))
+        { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
       const serverCount = Object.values(_contacts).filter(c => c.type === 'server').length;
       if (serverCount >= MAX_SERVERS) { showErr(errEl, `Server limit reached (${MAX_SERVERS} max).`); return; }
       for (const c of Object.values(_contacts)) {
@@ -1153,11 +1255,15 @@
       _contacts[uuid] = { id: uuid, type: 'server', serverId, name, memberIds: _serverAddMembers, enabled: true };
     }
 
-    await saveContacts(_contacts);
-    await bgContactsUpdated();
-    await clearDraft();
-    resetAddScreen();
-    await showMain();
+    const saveBtn = document.getElementById('btn-save-contact');
+    await withSaveButton(saveBtn, 'Saving…', async () => {
+      await ensureContactsKey();
+      await saveContacts(_contacts);
+      await bgContactsUpdated();
+      await clearDraft();
+      resetAddScreen();
+      await showMain();
+    });
   });
 
   // ─── Contact sheet ───────────────────────────────────────────────────────────
@@ -1257,9 +1363,13 @@
       };
     }
     _editingId = null;
-    await saveContacts(_contacts);
-    await bgContactsUpdated();
-    await showMain();
+    const saveEditBtn = document.getElementById('btn-save-edit');
+    await withSaveButton(saveEditBtn, 'Saving changes…', async () => {
+      await ensureContactsKey();
+      await saveContacts(_contacts);
+      await bgContactsUpdated();
+      await showMain();
+    });
   });
 
   // ─── Member picker ────────────────────────────────────────────────────────────
@@ -1428,6 +1538,8 @@
       { showErr(errEl, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`); return; }
     if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
       { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+    if (!isPrintableAscii(name))
+      { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
     for (const [uuid, c] of Object.entries(_contacts)) {
       if (uuid === _editingGroupId) continue;
       if (c.channelId === channelId) { showErr(errEl, 'A contact or group with this Channel ID already exists.'); return; }
@@ -1438,9 +1550,13 @@
       _contacts[_editingGroupId] = { ..._contacts[_editingGroupId], channelId, name, memberIds: _groupEditMembers };
     }
     _editingGroupId = null;
-    await saveContacts(_contacts);
-    await bgContactsUpdated();
-    await showMain();
+    const saveGroupBtn = document.getElementById('btn-save-edit-group');
+    await withSaveButton(saveGroupBtn, 'Saving changes…', async () => {
+      await ensureContactsKey();
+      await saveContacts(_contacts);
+      await bgContactsUpdated();
+      await showMain();
+    });
   });
 
   // ─── Group sheet ──────────────────────────────────────────────────────────────
@@ -1534,6 +1650,8 @@
     if (!serverId || !/^\d{1,20}$/.test(serverId)) { showErr(errEl, 'Server ID must be 1–20 digits.'); return; }
     if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
       { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
+    if (!isPrintableAscii(name))
+      { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
     for (const [uuid, c] of Object.entries(_contacts)) {
       if (uuid === _editingServerId) continue;
       if (c.type === 'server' && c.serverId === serverId) { showErr(errEl, 'A server with this Server ID already exists.'); return; }
@@ -1544,9 +1662,13 @@
       _contacts[_editingServerId] = { ..._contacts[_editingServerId], serverId, name, memberIds: _serverEditMembers };
     }
     _editingServerId = null;
-    await saveContacts(_contacts);
-    await bgContactsUpdated();
-    await showMain();
+    const saveServerBtn = document.getElementById('btn-save-edit-server');
+    await withSaveButton(saveServerBtn, 'Saving changes…', async () => {
+      await ensureContactsKey();
+      await saveContacts(_contacts);
+      await bgContactsUpdated();
+      await showMain();
+    });
   });
 
   // ─── Server sheet ─────────────────────────────────────────────────────────────
@@ -1619,7 +1741,7 @@
 
     const a = Object.assign(document.createElement('a'), {
       href:     url,
-      download: `discord-age-contacts-${datePart}.json`,
+      download: `discord_age_contacts_${datePart}.json`,
     });
     document.body.appendChild(a);
     a.click();
@@ -1632,6 +1754,13 @@
   async function doImportContacts(json) {
     const msgEl = document.getElementById('modal-import-contacts-msg');
     const modal  = document.getElementById('modal-import-contacts');
+
+    // Reject oversized files before JSON.parse to prevent freezing the UI thread.
+    if (json.length > IMPORT_SIZE_LIMIT) {
+      msgEl.textContent = 'File too large — contacts exports must be under 1 MB.';
+      modal.hidden = false;
+      return;
+    }
 
     let parsed;
     try { parsed = JSON.parse(json); }
@@ -1710,6 +1839,7 @@
         if (!channelId || !username || !ageRecipient)                   { skipped++; continue; }
         if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID) { skipped++; continue; }
         if (typeof username !== 'string' || username.length < MIN_USERNAME || username.length > MAX_USERNAME)    { skipped++; continue; }
+        if (!isPrintableAscii(username))                                                                          { skipped++; continue; }
         if (typeof ageRecipient !== 'string' || !ageRecipient.startsWith('age1') || !/;ed25519:[A-Za-z0-9_-]{40,}$/.test(ageRecipient)) { skipped++; continue; }
         if (Object.prototype.hasOwnProperty.call(_contacts, id))        { skipped++; continue; }
 
@@ -1728,6 +1858,7 @@
         if (!channelId || !name)                                        { skipped++; continue; }
         if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID) { skipped++; continue; }
         if (typeof name !== 'string' || name.length < MIN_USERNAME || name.length > MAX_USERNAME) { skipped++; continue; }
+        if (!isPrintableAscii(name))                                                               { skipped++; continue; }
         if (!Array.isArray(memberIds))                                  { skipped++; continue; }
         if (Object.prototype.hasOwnProperty.call(_contacts, id))        { skipped++; continue; }
 
@@ -1749,6 +1880,7 @@
         if (!serverId || !name)                                         { skipped++; continue; }
         if (!/^\d{1,20}$/.test(serverId))                               { skipped++; continue; }
         if (typeof name !== 'string' || name.length < MIN_USERNAME || name.length > MAX_USERNAME) { skipped++; continue; }
+        if (!isPrintableAscii(name))                                                               { skipped++; continue; }
         if (!Array.isArray(memberIds))                                  { skipped++; continue; }
         if (Object.prototype.hasOwnProperty.call(_contacts, id))        { skipped++; continue; }
         if (existingServerIds.has(serverId))                            { skipped++; continue; }
@@ -1766,9 +1898,9 @@
       }
     }
 
+    await ensureContactsKey();
     await saveContacts(_contacts);
     await bgContactsUpdated();
-    if (_sessionIdentity) await bgUnlock(_sessionIdentity, _sessionPassphrase);
     renderContacts();
 
     const parts = [];
@@ -1833,15 +1965,7 @@
   document.getElementById('btn-copy-key').addEventListener('click', async () => {
     const ageRecipient = await getAgeRecipient();
     if (!ageRecipient) return;
-    try {
-      await navigator.clipboard.writeText(ageRecipient);
-    } catch {
-      const ta = Object.assign(document.createElement('textarea'), { value: ageRecipient });
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-    }
+    await navigator.clipboard.writeText(ageRecipient);
     const btn   = document.getElementById('btn-copy-key');
     const label = document.getElementById('btn-copy-key-label');
     btn.classList.add('copied');
@@ -1852,7 +1976,7 @@
     }, 1800);
   });
 
-  // ─── Manage keypair sheet ─────────────────────────────────────────────────────
+  // ─── Manage keypair sheet (kept for backwards compat but no longer opened) ────
 
   function openManageKeypairSheet() {
     document.getElementById('sheet-manage-keypair').hidden          = false;
@@ -1864,7 +1988,9 @@
     document.getElementById('sheet-manage-keypair-backdrop').hidden = true;
   }
 
-  document.getElementById('btn-manage-keypair').addEventListener('click', openManageKeypairSheet);
+  // btn-manage-keypair is hidden in the new layout; these listeners are kept for safety.
+  if (document.getElementById('btn-manage-keypair'))
+    document.getElementById('btn-manage-keypair').addEventListener('click', openManageKeypairSheet);
   document.getElementById('btn-close-manage-keypair').addEventListener('click', closeManageKeypairSheet);
   document.getElementById('sheet-manage-keypair-backdrop').addEventListener('click', closeManageKeypairSheet);
 
@@ -2090,6 +2216,7 @@
       // Update cached passphrase and re-derive the contacts key under the new
       // passphrase with a fresh salt so old ciphertext is invalidated.
       _sessionPassphrase = newPass;
+      await setSessionPassphrase(newPass);
       await store.remove(['contactsSalt', 'contactsEnc']);
       await bgUnlock(identity, newPass);
       await saveContacts(_contacts);
