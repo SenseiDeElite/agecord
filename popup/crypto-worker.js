@@ -78,14 +78,27 @@ function bytesToBase64(bytes) {
   return btoa(s);
 }
 
-function base64ToBytes(b64) {
-  // Tolerate base64url (- and .) as well as standard base64.
-  let std = b64.replace(/-/g, '+').replace(/\./g, '/').replace(/_/g, '/');
-  while (std.length % 4) std += '=';
-  const bin = atob(std);
+// Standard base64 (btoa/atob alphabet — used for internal envelopes and salts).
+function b64ToBytes(b64) {
+  const bin = atob(b64);
   const out  = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+// Base64url alphabet (RFC 4648 §5: + → -  / → _) — used for Ed25519 key material.
+function b64urlToBytes(str) {
+  let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4) b64 += '=';
+  return b64ToBytes(b64);
+}
+
+// "Disc" alphabet (+ → -  / → .) — used for age wire-format fields on Discord.
+// Underscore is intentionally absent so Discord underline markup (__) is never triggered.
+function b64discToBytes(str) {
+  let b64 = str.replace(/-/g, '+').replace(/\./g, '/');
+  while (b64.length % 4) b64 += '=';
+  return b64ToBytes(b64);
 }
 
 // Argon2id parameters — RFC 9106 §4 second recommended option (memory-constrained).
@@ -114,7 +127,7 @@ self.onmessage = async ({ data }) => {
       const d = new age.Decrypter();
       d.addPassphrase(data.passphrase);
       // age wire format uses the "disc" alphabet: - → +  . → /
-      const raw     = base64ToBytes(data.encryptedB64);
+      const raw     = b64discToBytes(data.encryptedB64);
       const bytes   = await d.decrypt(raw, 'uint8array');
       const identity = new TextDecoder().decode(bytes);
       self.postMessage({ ok: true, identity });
@@ -134,7 +147,7 @@ self.onmessage = async ({ data }) => {
 
     if (data.op === 'ARGON2ID_DERIVE') {
       const passwordBytes = new TextEncoder().encode(data.password);
-      const saltBytes     = base64ToBytes(data.saltB64);
+      const saltBytes     = b64ToBytes(data.saltB64);
       const derived = _nobleHashes.argon2id(passwordBytes, saltBytes, ARGON2ID_PARAMS);
       self.postMessage({ ok: true, keyB64: bytesToBase64(derived) });
       return;
@@ -148,9 +161,9 @@ self.onmessage = async ({ data }) => {
     const NONCE_LEN = 24; // XChaCha20 nonce length
 
     if (data.op === 'XCHACHA_ENCRYPT') {
-      const key       = base64ToBytes(data.keyB64);
-      const plaintext = base64ToBytes(data.plaintextB64);
-      const salt      = data.saltB64 ? base64ToBytes(data.saltB64)
+      const key       = b64ToBytes(data.keyB64);
+      const plaintext = b64ToBytes(data.plaintextB64);
+      const salt      = data.saltB64 ? b64ToBytes(data.saltB64)
                                      : crypto.getRandomValues(new Uint8Array(SALT_LEN));
       const nonce     = crypto.getRandomValues(new Uint8Array(NONCE_LEN));
 
@@ -168,11 +181,11 @@ self.onmessage = async ({ data }) => {
     }
 
     if (data.op === 'XCHACHA_DECRYPT') {
-      const envelope = base64ToBytes(data.envelopeB64);
+      const envelope = b64ToBytes(data.envelopeB64);
       if (envelope[0] !== ENVELOPE_VERSION)
         throw new Error(`Unknown envelope version 0x${envelope[0].toString(16)}.`);
 
-      const key   = base64ToBytes(data.keyB64);
+      const key   = b64ToBytes(data.keyB64);
       const nonce = envelope.slice(1 + SALT_LEN, 1 + SALT_LEN + NONCE_LEN);
       const ct    = envelope.slice(1 + SALT_LEN + NONCE_LEN);
 
