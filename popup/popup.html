@@ -18,7 +18,7 @@
 
     <div class="form-group">
       <label for="passphrase-input">Passphrase</label>
-      <input id="passphrase-input" type="password" placeholder="Your passphrase…" autocomplete="current-password">
+      <input id="passphrase-input" type="password" placeholder="Type current passphrase" autocomplete="current-password">
     </div>
     <div id="unlock-error" class="error-msg" hidden></div>
 
@@ -36,7 +36,7 @@
 
     <div class="form-group">
       <label for="setup-passphrase">Passphrase</label>
-      <input id="setup-passphrase" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password">
+      <input id="setup-passphrase" type="password" placeholder="Type new passphrase" autocomplete="new-password">
       <div id="strength-bar-wrap"><div id="strength-bar"></div></div>
       <span id="strength-label" class="hint"></span>
     </div>
@@ -48,7 +48,7 @@
 
     <button id="btn-generate" class="btn btn-primary btn-full">Generate keypair</button>
     <div id="setup-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Generating keypair… this may take a moment.</span>
+      <div class="spinner"></div><span>Generating keypair... do not close this window.</span>
     </div>
 
     <button id="btn-show-import" class="btn btn-outlined btn-full">Import existing keypair</button>
@@ -62,19 +62,19 @@
       <span class="topbar-title">Import keypair</span>
     </div>
 
-    <p class="hint" style="padding: 8px 16px 4px">Paste your encrypted private key blob, enter the export passphrase used when it was created, then choose a new passphrase to protect it on this device.</p>
+    <p class="hint" style="padding: 8px 16px 4px">Import an existing keypair, then choose a new passphrase to protect it on this device.</p>
 
     <div class="form-group">
       <label for="import-blob">Encrypted private key blob</label>
-      <textarea id="import-blob" rows="4" placeholder="Paste your encrypted private key blob here…" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
+      <textarea id="import-blob" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
     </div>
     <div class="form-group">
       <label for="import-export-passphrase">Export passphrase</label>
-      <input id="import-export-passphrase" type="password" placeholder="Passphrase used when the blob was exported" autocomplete="current-password">
+      <input id="import-export-passphrase" type="password" placeholder="Type export passphrase" autocomplete="current-password">
     </div>
     <div class="form-group">
-      <label for="import-passphrase">New unlock passphrase</label>
-      <input id="import-passphrase" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password">
+      <label for="import-passphrase">New passphrase</label>
+      <input id="import-passphrase" type="password" placeholder="Type new passphrase" autocomplete="new-password">
     </div>
     <div class="form-group">
       <label for="import-passphrase2">Confirm new passphrase</label>
@@ -83,7 +83,7 @@
     <div id="import-error" class="error-msg" hidden></div>
     <button id="btn-import" class="btn btn-primary btn-full">Import &amp; unlock</button>
     <div id="import-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Importing… deriving key, please wait.</span>
+      <div class="spinner"></div><span>Importing... do not close this window.</span>
     </div>
   </div>
 
@@ -117,7 +117,7 @@
       </div>
     </div>
 
-    <input id="contacts-search" type="search" placeholder="Search…" autocomplete="off">
+    <input id="contacts-search" type="search" placeholder="Search..." autocomplete="off">
 
     <div id="contacts-list" class="contacts-list">
       <div id="no-contacts" class="empty-state">No contacts yet.<br>Add one below.</div>
@@ -157,12 +157,12 @@
     <div id="add-fields-contact">
       <div class="form-group">
         <label for="contact-channel-id">Channel ID</label>
-        <input id="contact-channel-id" type="text" placeholder="Numbers only">
+        <input id="contact-channel-id" type="text" placeholder="Paste channel ID">
         <span class="hint">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
       </div>
       <div class="form-group">
         <label for="contact-username">Name</label>
-        <input id="contact-username" type="text" placeholder="e.g. Alice">
+        <input id="contact-username" type="text" placeholder="e.g. George">
       </div>
       <div class="form-group">
         <label for="contact-key">Public key</label>
@@ -174,7 +174,7 @@
     <div id="add-fields-group" hidden>
       <div class="form-group">
         <label for="group-channel-id">Channel ID</label>
-        <input id="group-channel-id" type="text" placeholder="Numbers only">
+        <input id="group-channel-id" type="text" placeholder="Paste channel ID">
         <span class="hint">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
       </div>
       <div class="form-group">
@@ -184,7 +184,7 @@
       <div class="form-group">
         <label>Members <span id="group-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0 / 10)</span></label>
         <div id="group-member-list" class="member-chip-list"></div>
-        <button id="btn-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+        <button id="btn-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
       </div>
     </div>
 
@@ -192,7 +192,7 @@
     <div id="add-fields-server" hidden>
       <div class="form-group">
         <label for="server-id-input">Server ID</label>
-        <input id="server-id-input" type="text" placeholder="Numbers only">
+        <input id="server-id-input" type="text" placeholder="Paste server ID">
         <span class="hint">discord.com/channels/<strong>SERVER_ID</strong>/CHANNEL_ID</span>
       </div>
       <div class="form-group">
@@ -202,7 +202,7 @@
       <div class="form-group">
         <label>Members <span id="server-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0)</span></label>
         <div id="server-member-list" class="member-chip-list"></div>
-        <button id="btn-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+        <button id="btn-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
       </div>
     </div>
 
@@ -228,7 +228,7 @@
     </div>
     <div class="form-group">
       <label for="edit-key">Public key</label>
-      <textarea id="edit-key" rows="5" placeholder="age1…"></textarea>
+      <textarea id="edit-key" rows="5" placeholder="age1..."></textarea>
     </div>
     <div id="edit-contact-error" class="error-msg" hidden></div>
 
@@ -253,7 +253,7 @@
     <div class="form-group">
       <label>Members <span id="edit-group-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0 / 10)</span></label>
       <div id="edit-group-member-list" class="member-chip-list"></div>
-      <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+      <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
     </div>
     <div id="edit-group-error" class="error-msg" hidden></div>
     <button id="btn-save-edit-group" class="btn btn-primary btn-full">Save changes</button>
@@ -277,7 +277,7 @@
     <div class="form-group">
       <label>Members <span id="edit-server-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0)</span></label>
       <div id="edit-server-member-list" class="member-chip-list"></div>
-      <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members…</button>
+      <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
     </div>
     <div id="edit-server-error" class="error-msg" hidden></div>
     <button id="btn-save-edit-server" class="btn btn-primary btn-full">Save changes</button>
@@ -287,7 +287,7 @@
   <div id="sheet-member-picker" class="bottom-sheet bottom-sheet-tall" hidden>
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="member-picker-title">Select members</div>
-    <input id="member-picker-search" type="search" placeholder="Search contacts…">
+    <input id="member-picker-search" type="search" placeholder="Search contacts...">
     <div id="member-picker-list"></div>
     <div class="sheet-actions" style="padding: 8px 16px 16px;">
       <button id="btn-member-picker-done" class="btn btn-primary btn-full">Done</button>
@@ -350,7 +350,7 @@
 
     <div style="margin: 8px 16px 0; border-top: 1px solid var(--md-outline-variant);"></div>
     <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">BLAKE3 Fingerprint</div>
-    <div class="sheet-fingerprint" id="my-key-fp" style="text-align: center;">Computing fingerprint…</div>
+    <div class="sheet-fingerprint" id="my-key-fp" style="text-align: center;">Computing fingerprint...</div>
 
     <div class="danger-zone">
       <div class="section-label" style="color: var(--md-error)">Advanced</div>
@@ -436,7 +436,7 @@
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="sheet-contact-name"></div>
     <div class="sheet-fp-label">BLAKE3 Fingerprint</div>
-    <div class="sheet-fingerprint" id="sheet-contact-fp">Computing fingerprint…</div>
+    <div class="sheet-fingerprint" id="sheet-contact-fp">Computing fingerprint...</div>
     <div class="sheet-row">
       <span>Encrypt to this contact</span>
       <label class="switch">
@@ -454,7 +454,7 @@
   <div id="sheet-manage-keypair" class="bottom-sheet" hidden>
     <div class="sheet-handle"></div>
     <div class="sheet-title">Manage keypair</div>
-    <button id="btn-export-key" class="btn btn-outlined btn-full">Export private key</button>
+    <button id="btn-export-key" class="btn btn-outlined-error btn-full">Export private key</button>
     <button id="btn-regen"      class="btn btn-outlined-error btn-full" style="margin-top:8px;">Regenerate keypair</button>
     <button id="btn-close-manage-keypair" class="btn btn-text btn-full">Cancel</button>
   </div>
@@ -463,16 +463,16 @@
   <div id="modal-export-key" class="modal-overlay" hidden>
     <div class="modal">
       <h3>Export private key</h3>
-      <p style="font-size:12px; color:var(--md-on-surface-variant);">The exported blob is age-encrypted with a separate export passphrase. Store both in a password manager.</p>
+      <p style="font-size:12px; color:var(--md-on-surface-variant);">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
       <label for="export-passphrase-input" style="font-size:13px; font-weight:500; margin-top:8px; display:block;">Unlock passphrase</label>
-      <input id="export-passphrase-input" type="password" placeholder="Your current unlock passphrase…" autocomplete="current-password" style="margin-top:6px;">
+      <input id="export-passphrase-input" type="password" placeholder="Type unlock passphrase" autocomplete="current-password" style="margin-top:6px;">
       <label for="export-new-passphrase" style="font-size:13px; font-weight:500; margin-top:12px; display:block;">Export passphrase</label>
-      <input id="export-new-passphrase" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password" style="margin-top:6px;">
+      <input id="export-new-passphrase" type="password" placeholder="Type export passphrase" autocomplete="new-password" style="margin-top:6px;">
       <label for="export-new-passphrase2" style="font-size:13px; font-weight:500; margin-top:12px; display:block;">Confirm export passphrase</label>
       <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password" style="margin-top:6px;">
       <div id="export-passphrase-error" class="error-msg" hidden></div>
       <div id="export-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
-        <div class="spinner"></div><span>Encrypting… do not close this window.</span>
+        <div class="spinner"></div><span>Encrypting... do not close this window.</span>
       </div>
       <div class="modal-actions">
         <button id="btn-export-cancel"  class="btn btn-text">Cancel</button>
@@ -500,16 +500,16 @@
   <div id="modal-change-passphrase" class="modal-overlay" hidden>
     <div class="modal">
       <h3>Change passphrase</h3>
-      <p style="font-size:12px; color:var(--md-on-surface-variant);">Your private key will be re-encrypted with the new passphrase. Contacts are also re-encrypted.</p>
+      <p style="font-size:12px; color:var(--md-on-surface-variant);">Your data will be re-encrypted with the new passphrase.</p>
       <label for="change-pass-current" style="font-size:13px;font-weight:500;margin-top:8px;display:block;">Current passphrase</label>
-      <input id="change-pass-current" type="password" placeholder="Your current passphrase…" autocomplete="current-password" style="margin-top:6px;">
+      <input id="change-pass-current" type="password" placeholder="Type current passphrase" autocomplete="current-password" style="margin-top:6px;">
       <label for="change-pass-new" style="font-size:13px;font-weight:500;margin-top:12px;display:block;">New passphrase</label>
-      <input id="change-pass-new" type="password" placeholder="Min 20 chars, A–Z a–z 0–9 + symbol" autocomplete="new-password" style="margin-top:6px;">
+      <input id="change-pass-new" type="password" placeholder="Type new passphrase" autocomplete="new-password" style="margin-top:6px;">
       <label for="change-pass-new2" style="font-size:13px;font-weight:500;margin-top:12px;display:block;">Confirm new passphrase</label>
       <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password" style="margin-top:6px;">
       <div id="change-pass-error" class="error-msg" hidden></div>
       <div id="change-pass-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
-        <div class="spinner"></div><span>Re-encrypting… do not close this window.</span>
+        <div class="spinner"></div><span>Re-encrypting... do not close this window.</span>
       </div>
       <div class="modal-actions">
         <button id="btn-change-pass-cancel"  class="btn btn-text">Cancel</button>
@@ -522,7 +522,7 @@
   <div id="modal-clear-data" class="modal-overlay" hidden>
     <div class="modal">
       <h3>⚠️ Clear all data?</h3>
-      <p>This will <strong>permanently delete your keypair and all contacts</strong>. Encrypted messages will be unreadable forever — there is no recovery without a backup.</p>
+      <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
       <p>Type <strong>CONFIRM</strong> to proceed:</p>
       <input id="clear-data-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
       <div class="modal-actions">
@@ -535,7 +535,7 @@
   <!-- ── MODAL: REGEN CONFIRM ──────────────────────────────────────────── -->
   <div id="modal-regen" class="modal-overlay" hidden>
     <div class="modal">
-      <h3>Regenerate keypair?</h3>
+      <h3>⚠️ Regenerate keypair?</h3>
       <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> Contacts will be disabled.</p>
       <p>Type <strong>CONFIRM</strong> to proceed:</p>
       <input id="regen-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
@@ -562,7 +562,7 @@
   <div id="modal-reset-keypair" class="modal-overlay" hidden>
     <div class="modal">
       <h3>⚠️ Erase everything?</h3>
-      <p>This will <strong>permanently delete your keypair and all contacts</strong>. Encrypted messages will be unreadable forever — there is no recovery.</p>
+      <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
       <p>Only continue if you have forgotten your passphrase.</p>
       <p>Type <strong>CONFIRM</strong> to proceed:</p>
       <input id="reset-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
