@@ -416,11 +416,16 @@
       const sigBytes = base64DiscToBytes(sig).slice(0, 64); // clamp for Chromium
 
       // Build the list of candidate verify keys depending on entry type.
-      // Contact: single key. Group/server: all member keys + own key — try each in turn.
+      // Contact: contact key + own key. Group/server: all member keys + own key — try each in turn.
+      // Own key is always included so that our own messages verify correctly once
+      // the 8-second outgoing cache has expired (e.g. after a channel switch or reload).
       let candidateKeys; // Array<CryptoKey>
       if (entry.type === 'contact' || !entry.type) {
-        const key = await importVerifyKey(entry.ageRecipient).catch(() => null);
-        candidateKeys = key ? [key] : [];
+        const keyPromises = [importVerifyKey(entry.ageRecipient).catch(() => null)];
+        if (_selfRecipient) {
+          keyPromises.push(importVerifyKey(_selfRecipient).catch(() => null));
+        }
+        candidateKeys = (await Promise.all(keyPromises)).filter(Boolean);
       } else {
         // Group or server: collect Ed25519 verify keys from all members,
         // plus our own public key so our own outgoing messages verify correctly
