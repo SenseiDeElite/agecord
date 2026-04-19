@@ -1314,12 +1314,21 @@
 
   document.getElementById('btn-delete-confirm').addEventListener('click', async () => {
     document.getElementById('modal-delete-contact').hidden = true;
-    if (!_selectedId) return;
-    delete _contacts[_selectedId];
-    for (const entry of Object.values(_contacts)) {
-      if (Array.isArray(entry.memberIds)) {
-        entry.memberIds = entry.memberIds.filter(id => id !== _selectedId);
+    if (_selectedId) {
+      const deletedId = _selectedId;
+      delete _contacts[deletedId];
+      // Remove the deleted contact from any group/server member lists.
+      for (const entry of Object.values(_contacts)) {
+        if (Array.isArray(entry.memberIds)) {
+          entry.memberIds = entry.memberIds.filter(id => id !== deletedId);
+        }
       }
+    } else if (_selectedGroupId) {
+      delete _contacts[_selectedGroupId];
+    } else if (_selectedServerId) {
+      delete _contacts[_selectedServerId];
+    } else {
+      return;
     }
     await saveContacts(_contacts);
     await bgContactsUpdated();
@@ -1596,14 +1605,11 @@
     show('edit-group');
   });
 
-  document.getElementById('btn-delete-group').addEventListener('click', async () => {
+  document.getElementById('btn-delete-group').addEventListener('click', () => {
     if (!_selectedGroupId) return;
-    delete _contacts[_selectedGroupId];
-    _selectedGroupId = null;
-    await saveContacts(_contacts);
-    await bgContactsUpdated();
-    closeSheet();
-    renderContacts();
+    document.getElementById('modal-delete-msg').textContent =
+      `"${_contacts[_selectedGroupId].name}" group will be permanently removed.`;
+    document.getElementById('modal-delete-contact').hidden = false;
   });
 
   document.getElementById('btn-close-group-sheet').addEventListener('click', closeSheet);
@@ -1708,14 +1714,11 @@
     show('edit-server');
   });
 
-  document.getElementById('btn-delete-server').addEventListener('click', async () => {
+  document.getElementById('btn-delete-server').addEventListener('click', () => {
     if (!_selectedServerId) return;
-    delete _contacts[_selectedServerId];
-    _selectedServerId = null;
-    await saveContacts(_contacts);
-    await bgContactsUpdated();
-    closeSheet();
-    renderContacts();
+    document.getElementById('modal-delete-msg').textContent =
+      `"${_contacts[_selectedServerId].name}" server will be permanently removed.`;
+    document.getElementById('modal-delete-contact').hidden = false;
   });
 
   document.getElementById('btn-close-server-sheet').addEventListener('click', closeSheet);
