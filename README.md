@@ -74,7 +74,7 @@ Firefox: `javascript.options.wasm` preference. (about:config)
 
 1. Open a contact, group or server in Discord;
 2. Click **+ Add** in the extension;
-3. Fill required details;
+3. Fill in the required details;
 4. Click **Save** once done.
 
 All sides need to have added each other before encrypted messaging works correctly.
