@@ -3,9 +3,8 @@
 // Wire format : [age]:<base64disc_payload>:<base64disc_ed25519_sig>
 // Crypto      : age-encryption (X25519 + ChaCha20-Poly1305) + Ed25519 signatures
 // Compression : deflate-raw applied to plaintext before encryption
-// Sig input   : UTF-8("<bindingId>:<cipher>")
-//   Contact / Group : bindingId = channelId
-//   Server          : bindingId = serverId  (binds to server, not per-channel)
+// Sig input   : UTF-8("<channelId>:<cipher>")            — contacts & groups
+//             : UTF-8("<serverId>:<channelId>:<cipher>") — servers
 // Encoding    : both cipher and sig use the "disc" base64 alphabet (+ → -  / → .)
 //               so that neither field ever contains _ which Discord renders as
 //               underline markup and strips from the DOM.
@@ -33,9 +32,9 @@
   // IIFE completes (e.g. React reconciliation re-adding the same node).
   const _inFlight = new Set();
 
-  // _outgoingCache: Map<cipherBase64disc, { plaintext, bindingId }>
+  // _outgoingCache: Map<cipherBase64disc, { plaintext, channelId }>
   // Populated when we send a message; lets us render our own message immediately
-  // without a background decrypt round-trip. bindingId is stored so the lookup
+  // without a background decrypt round-trip. channelId is stored so the lookup
   // can verify the cipher belongs to the same channel before skipping sig-verify.
   // TTL: 8 s.
   const _outgoingCache = new Map();
@@ -68,9 +67,10 @@
     return m ? m[1] : null;
   }
 
-  // Returns { entry, bindingId } for the current URL, or null if none matches or
-  // the matching entry is disabled. bindingId drives the Ed25519 signature input:
-  // channelId for contacts/groups, serverId for servers (server-wide replay prevention).
+  // Returns { entry, channelId } for the current URL, or null if none matches or
+  // the matching entry is disabled. channelId drives the Ed25519 signature input
+  // for all entry types. For server entries, entry.serverId is also included in
+  // the sig input to bind the signature to the specific server+channel pair.
   function getActiveEntry() {
     const channelId = getCurrentChannelId();
     const serverId  = getCurrentServerId();
@@ -78,16 +78,16 @@
     if (serverId) {
       for (const entry of Object.values(_contacts)) {
         if (entry.type === 'server' && entry.serverId === serverId && entry.enabled)
-          return { entry, bindingId: serverId };
+          return { entry, channelId };
       }
     }
 
     if (channelId) {
       for (const entry of Object.values(_contacts)) {
         if ((entry.type === 'contact' || !entry.type) && entry.channelId === channelId && entry.enabled)
-          return { entry, bindingId: channelId };
+          return { entry, channelId };
         if (entry.type === 'group' && entry.channelId === channelId && entry.enabled)
-          return { entry, bindingId: channelId };
+          return { entry, channelId };
       }
     }
     return null;
@@ -233,21 +233,23 @@
     const active = getActiveEntry();
     const plain  = getTextbox()?.innerText?.trim();
     if (!plain || !active) return;
-    const { entry, bindingId } = active;
+    const { entry, channelId } = active;
     _sending = true;
     try {
       const cipher = await encryptMessage(plain, entry);
 
-      const sigInput = new TextEncoder().encode(`${bindingId}:${cipher}`);
+      const sigInput = (entry.type === 'server')
+        ? new TextEncoder().encode(`${entry.serverId}:${channelId}:${cipher}`)
+        : new TextEncoder().encode(`${channelId}:${cipher}`);
       const sigBytes = await crypto.subtle.sign('Ed25519', _signingKey, sigInput);
       // Clamp to 64 bytes — some Chromium builds return 65 bytes from Ed25519 sign.
       const sig = bytesToBase64Disc(new Uint8Array(sigBytes).slice(0, 64));
 
       // Cache own outgoing message by cipher so we can render it immediately
       // when it echoes back in the message list, without a background decrypt.
-      // bindingId is stored alongside so the cache lookup can verify the message
+      // channelId is stored alongside so the cache lookup can verify the message
       // belongs to the same channel before bypassing signature verification.
-      _outgoingCache.set(cipher, { plaintext: plain, bindingId });
+      _outgoingCache.set(cipher, { plaintext: plain, channelId });
       setTimeout(() => _outgoingCache.delete(cipher), 8000);
 
       await pasteIntoEditor(`${PREFIX}:${cipher}:${sig}`);
@@ -363,13 +365,13 @@
       // was sent in — a replayed cipher in a different channel must not bypass
       // the signature check via the outgoing cache short-circuit.
       const activeForCache = getActiveEntry();
-      if (activeForCache && outgoingEntry.bindingId === activeForCache.bindingId) {
+      if (activeForCache && outgoingEntry.channelId === activeForCache.channelId) {
         _processedIds.add(msgId);
         _decryptedCache.set(msgId, outgoingEntry.plaintext);
         renderDecrypted(el, outgoingEntry.plaintext);
         return;
       }
-    // bindingId mismatch — fall through to normal sig-verify + decrypt path.
+    // channelId mismatch — fall through to normal sig-verify + decrypt path.
     }
 
     // Guard against concurrent async IIFEs for the same message.
@@ -406,9 +408,11 @@
         return;
       }
 
-      const { entry, bindingId } = active;
+      const { entry, channelId } = active;
       const sig      = m[2];
-      const sigInput = new TextEncoder().encode(`${bindingId}:${cipher}`);
+      const sigInput = (entry.type === 'server')
+        ? new TextEncoder().encode(`${entry.serverId}:${channelId}:${cipher}`)
+        : new TextEncoder().encode(`${channelId}:${cipher}`);
       const sigBytes = base64DiscToBytes(sig).slice(0, 64); // clamp for Chromium
 
       // Build the list of candidate verify keys depending on entry type.
