@@ -23,7 +23,7 @@ Your data is stored encrypted at rest on your device using Argon2id + XChaCha20-
 
 **🪡 Wire format**
 
-Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a bindingId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to all recipients and the sender, so the relevant parties can read the conversation.
+Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a serverId (only for servers), channelId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to all recipients and the sender, so the relevant parties can read the conversation.
 
 **🫆 Key fingerprints**
 
