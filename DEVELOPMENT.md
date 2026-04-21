@@ -6,10 +6,10 @@ To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryp
 
 **typage**
 
-The most important library. 
+"A TypeScript implementation of the age file encryption format, available as an npm package or as a bundled .js file."
 
 - First, download the desired version, which is generally the [latest release](https://github.com/FiloSottile/typage/releases/latest).
-- Upon unpacking it, create a entry.js inside the extracted folder:
+- Upon unpacking it, create a `entry.js` inside the extracted folder:
   ```js
   // entry.js
   export { Encrypter, Decrypter } from 'age-encryption';
@@ -26,10 +26,10 @@ The most important library.
 
 **awasm-noble**
 
-Secure and fast WebAssembly cryptography. 
+"Auditable WASM implementation of cryptographic hashes & ciphers"
 
 - First, download the desired version, which is generally the [latest release](https://github.com/paulmillr/awasm-noble/releases/latest).
-- Upon unpacking it, create a entry.js inside the extracted folder:
+- Upon unpacking it, create a `entry.js` inside the extracted folder:
   ```js
   // entry.js
   export { argon2id, xchacha20poly1305, blake3 } from './targets/wasm/index.js';
@@ -44,7 +44,7 @@ Secure and fast WebAssembly cryptography.
   --outfile=awasm-noble.min.js
   ```
 
-After finishing, move them inside [lib](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib).
+After finishing, move them inside [/lib/](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib).
 
 For their respective licenses, see [THIRD_PARTY_NOTICES.txt](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt).
 
