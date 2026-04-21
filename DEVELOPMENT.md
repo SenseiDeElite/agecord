@@ -50,7 +50,7 @@ For their respective licenses, see [THIRD_PARTY_NOTICES.txt](https://github.com/
 
 ---
 
-## Packing
+## Packaging
 
 **Chromium**
 
