@@ -1,14 +1,8 @@
 // emoji_map.js — Discord :shortcode: → emoji lookup table
 //
 // 5940 entries | correct Discord :shortcode: names
-//
-// Loaded as a content script before content.js. Declared at top level so it
-// is accessible inside content.js's IIFE without being passed as a parameter.
 
-'use strict';
-
-// eslint-disable-next-line no-unused-vars
-const EMOJI_MAP = {
+export const EMOJI_MAP = {
   // ── activity
   soccer: '⚽',
   soccer_ball: '⚽',
