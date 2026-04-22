@@ -17,10 +17,8 @@
 // (Chrome JSON IPC drops them).  We send raw base64url PKCS8 bytes instead;
 // the content script imports them into a non-extractable CryptoKey locally.
 
-'use strict';
-
-importScripts('lib/age.min.js');
-importScripts('lib/awasm-noble.min.js');
+import { xchacha20poly1305 } from './lib/awasm-noble.min.js';
+import { Decrypter } from './lib/age.min.js';
 
 let _identity          = null;
 let _contactsKeyBytes  = null; // raw Uint8Array from Argon2id derivation in popup
@@ -32,13 +30,8 @@ let _ageRecipient      = null; // own public key string, relayed to content scri
 // Contacts envelope format: [ 0x01 version ][ 24-byte nonce ][ ct + 16-byte tag ]
 // (No salt — the Argon2id key is derived by the popup and sent in UNLOCK.)
 function _xchacha_encrypt(key, plaintext) {
-  const nc = (typeof awasmNoble !== 'undefined') ? awasmNoble
-           : (typeof globalThis.awasmNoble !== 'undefined') ? globalThis.awasmNoble
-           : null;
-  if (!nc?.xchacha20poly1305)
-    throw new Error('awasm-noble not loaded in background service worker.');
   const nonce = crypto.getRandomValues(new Uint8Array(24));
-  const ct    = nc.xchacha20poly1305(key, nonce).encrypt(plaintext);
+  const ct    = xchacha20poly1305(key, nonce).encrypt(plaintext);
   // Prepend nonce to ciphertext so decrypt can recover it
   const out = new Uint8Array(24 + ct.length);
   out.set(nonce, 0);
@@ -47,14 +40,9 @@ function _xchacha_encrypt(key, plaintext) {
 }
 
 function _xchacha_decrypt(key, noncePlusCt) {
-  const nc = (typeof awasmNoble !== 'undefined') ? awasmNoble
-           : (typeof globalThis.awasmNoble !== 'undefined') ? globalThis.awasmNoble
-           : null;
-  if (!nc?.xchacha20poly1305)
-    throw new Error('awasm-noble not loaded in background service worker.');
   const nonce = noncePlusCt.slice(0, 24);
   const ct    = noncePlusCt.slice(24);
-  return nc.xchacha20poly1305(key, nonce).decrypt(ct);
+  return xchacha20poly1305(key, nonce).decrypt(ct);
 }
 
 // ─── Base64 helpers ───────────────────────────────────────────────────────────
@@ -178,7 +166,7 @@ async function ensureIdentity() {
 }
 
 async function decryptPayload(cipherDisc) {
-  const dec = new age.Decrypter();
+  const dec = new Decrypter();
   dec.addIdentity(_identity.split('\n')[0]);
   const compressed = await dec.decrypt(discToBytes(cipherDisc), 'uint8array');
   return decompress(compressed);
