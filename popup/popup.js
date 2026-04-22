@@ -17,6 +17,16 @@
 (() => {
   'use strict';
 
+  // age-encryption named imports — resolved once via dynamic import() so the
+  // ESM bundle (age.min.js) is used without requiring popup.js to be a module.
+  let Encrypter, Decrypter, generateIdentity, identityToRecipient;
+  import(chrome.runtime.getURL('lib/age.min.js')).then(m => {
+    Encrypter           = m.Encrypter;
+    Decrypter           = m.Decrypter;
+    generateIdentity    = m.generateIdentity;
+    identityToRecipient = m.identityToRecipient;
+  });
+
   // ─── Constants ───────────────────────────────────────────────────────────────
 
   const MAX_CONTACTS    = 1000;
@@ -336,7 +346,7 @@
       const workerUrl = chrome.runtime.getURL('popup/crypto-worker.js');
       let worker;
       try {
-        worker = new Worker(workerUrl);
+        worker = new Worker(workerUrl, { type: 'module' });
       } catch (e) {
         reject(new Error('Could not start crypto worker: ' + e.message));
         return;
@@ -792,8 +802,8 @@
     document.getElementById('setup-spinner').hidden = false;
 
     try {
-      const identity  = await age.generateIdentity();
-      const recipient = await age.identityToRecipient(identity);
+      const identity  = await generateIdentity();
+      const recipient = await identityToRecipient(identity);
 
       const sigPair    = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
       const sigPrivRaw = await crypto.subtle.exportKey('pkcs8', sigPair.privateKey);
@@ -906,7 +916,7 @@
         throw new Error('Decrypted identity is missing an Ed25519 signing key (expected ed25519priv:…).');
 
       const identity  = lines[0];
-      const recipient = await age.identityToRecipient(identity);
+      const recipient = await identityToRecipient(identity);
 
       const sigPrivBytes = base64UrlToBytes(lines[1].slice('ed25519priv:'.length));
       const sigPrivKey   = await crypto.subtle.importKey('pkcs8', sigPrivBytes, { name: 'Ed25519' }, true, ['sign']);
@@ -1006,7 +1016,7 @@
     if (!/;ed25519:[A-Za-z0-9_-]{40,}$/.test(recipient))
       return 'Public key must be the full key including the Ed25519 component (age1…;ed25519:…).';
     try {
-      const test = new age.Encrypter();
+      const test = new Encrypter();
       test.addRecipient(recipient.split(';')[0]);
       await test.encrypt(new TextEncoder().encode(''));
     } catch (e) {
@@ -2248,12 +2258,8 @@
   async function keyFingerprint(recipient) {
     if (!recipient) return '(no key)';
     try {
-      // awasmNoble is a global injected by awasm-noble.min.js, which must be
-      // loaded before popup.js in popup.html.  If it is missing, fall through
-      // to the truncation fallback rather than throwing an unhandled error.
-      if (typeof awasmNoble === 'undefined' || !awasmNoble?.blake3)
-        throw new Error('awasmNoble not loaded');
-      const bytes = awasmNoble.blake3(new TextEncoder().encode(recipient), { dkLen: 128 });
+      const { blake3 } = await import(chrome.runtime.getURL('lib/awasm-noble.min.js'));
+      const bytes = blake3(new TextEncoder().encode(recipient), { dkLen: 128 });
       const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
       return hex.match(/.{1,4}/g).reduce((lines, chunk, i) => {
         if (i % 8 === 0) lines.push('');
