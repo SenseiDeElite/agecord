@@ -12,7 +12,7 @@ To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryp
 - Upon unpacking it, create a `entry.js` inside the extracted folder:
   ```js
   // entry.js
-  export { Encrypter, Decrypter } from 'age-encryption';
+  export { Encrypter, Decrypter, generateIdentity, identityToRecipient } from 'age-encryption';
   ```
 - After that, run `npm ci` and `npm run build`.
 - For bundling, use [esbuild](https://github.com/evanw/esbuild):
