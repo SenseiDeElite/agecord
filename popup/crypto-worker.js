@@ -1,4 +1,6 @@
 // crypto-worker.js — Dedicated Web Worker for all passphrase-derived crypto
+import { argon2id, xchacha20poly1305 } from '../lib/awasm-noble.min.js';
+import { Encrypter, Decrypter } from '../lib/age.min.js';
 //
 // Runs in a dedicated Worker so the popup UI thread stays responsive during
 // long-running key derivation.  A fresh worker is spawned per call and
@@ -40,35 +42,9 @@
 // primitives.  The high-level keygen/import/unlock paths in popup.js combine
 // them as:  derive key from passphrase+salt → encrypt/decrypt with that key.
 
-'use strict';
-
 // ─── Library init ────────────────────────────────────────────────────────────
-
-let _initError   = null;
-let _nobleHashes = null;
-let _nobleCiphers = null;
-
-try {
-  importScripts('../lib/age.min.js');
-} catch (e) {
-  _initError = 'Worker init failed (age): ' + (e?.message ?? String(e));
-}
-
-if (!_initError) {
-  try {
-    importScripts('../lib/awasm-noble.min.js');
-    // awasm-noble exposes a global; try common bundle export names.
-    const _awasm = (typeof awasmNoble !== 'undefined') ? awasmNoble
-                 : (typeof globalThis.awasmNoble !== 'undefined') ? globalThis.awasmNoble
-                 : null;
-    if (!_awasm?.argon2id) throw new Error('argon2id not found in awasm-noble bundle');
-    if (!_awasm?.xchacha20poly1305) throw new Error('xchacha20poly1305 not found in awasm-noble bundle');
-    _nobleHashes  = _awasm;
-    _nobleCiphers = _awasm;
-  } catch (e) {
-    _initError = 'Worker init failed (awasm-noble): ' + (e?.message ?? String(e));
-  }
-}
+// ESM imports at top of file supply argon2id, xchacha20poly1305 (awasm-noble)
+// and Encrypter, Decrypter (age-encryption).  No globals needed.
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -115,16 +91,11 @@ const SALT_LEN         = 16;
 // ─── Message handler ──────────────────────────────────────────────────────────
 
 self.onmessage = async ({ data }) => {
-  if (_initError) {
-    self.postMessage({ ok: false, error: _initError });
-    return;
-  }
-
   try {
     // ── Age wire-format ops (DM encryption) ────────────────────────────────
 
     if (data.op === 'DECRYPT') {
-      const d = new age.Decrypter();
+      const d = new Decrypter();
       d.addPassphrase(data.passphrase);
       // age wire format uses the "disc" alphabet: - → +  . → /
       const raw     = b64discToBytes(data.encryptedB64);
@@ -135,7 +106,7 @@ self.onmessage = async ({ data }) => {
     }
 
     if (data.op === 'ENCRYPT') {
-      const enc = new age.Encrypter();
+      const enc = new Encrypter();
       enc.setPassphrase(data.passphrase);
       enc.setScryptWorkFactor(18); // N = 2^18
       const ct = await enc.encrypt(new TextEncoder().encode(data.identityBlob));
@@ -148,7 +119,7 @@ self.onmessage = async ({ data }) => {
     if (data.op === 'ARGON2ID_DERIVE') {
       const passwordBytes = new TextEncoder().encode(data.password);
       const saltBytes     = b64ToBytes(data.saltB64);
-      const derived = _nobleHashes.argon2id(passwordBytes, saltBytes, ARGON2ID_PARAMS);
+      const derived = argon2id(passwordBytes, saltBytes, ARGON2ID_PARAMS);
       self.postMessage({ ok: true, keyB64: bytesToBase64(derived) });
       return;
     }
@@ -167,7 +138,7 @@ self.onmessage = async ({ data }) => {
                                      : crypto.getRandomValues(new Uint8Array(SALT_LEN));
       const nonce     = crypto.getRandomValues(new Uint8Array(NONCE_LEN));
 
-      const ct = _nobleCiphers.xchacha20poly1305(key, nonce).encrypt(plaintext);
+      const ct = xchacha20poly1305(key, nonce).encrypt(plaintext);
 
       // Envelope: version | salt | nonce | ct
       const envelope = new Uint8Array(1 + SALT_LEN + NONCE_LEN + ct.length);
@@ -189,7 +160,7 @@ self.onmessage = async ({ data }) => {
       const nonce = envelope.slice(1 + SALT_LEN, 1 + SALT_LEN + NONCE_LEN);
       const ct    = envelope.slice(1 + SALT_LEN + NONCE_LEN);
 
-      const plaintext = _nobleCiphers.xchacha20poly1305(key, nonce).decrypt(ct);
+      const plaintext = xchacha20poly1305(key, nonce).decrypt(ct);
 
       self.postMessage({ ok: true, plaintextB64: bytesToBase64(plaintext) });
       return;
