@@ -15,7 +15,8 @@
     "https://discord.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "content_scripts": [
     {
@@ -23,9 +24,7 @@
         "https://discord.com/*"
       ],
       "js": [
-        "lib/age.min.js",
-        "content/emoji_map.js",
-        "content/content.js"
+        "content/content-loader.js"
       ],
       "run_at": "document_idle"
     }
@@ -34,8 +33,18 @@
     "default_popup": "popup/popup.html",
     "default_title": "Discord Age Encryption"
   },
-"content_security_policy": {
-  "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none';"
-},
-  "web_accessible_resources": []
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none';"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/content.js",
+        "content/emoji_map.js",
+        "lib/age.min.js",
+        "lib/awasm-noble.min.js"
+      ],
+      "matches": ["https://discord.com/*"]
+    }
+  ]
 }
