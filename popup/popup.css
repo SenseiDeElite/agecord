@@ -1141,3 +1141,11 @@ html, body {
   margin: 4px 16px 0;
   width: calc(100% - 32px);
 }
+
+/* ── Update button (top-left corner, lock + main screens) ────────────────── */
+#btn-update {
+  position: fixed;
+  top: 6px;
+  left: 6px;
+  z-index: 999;
+}
