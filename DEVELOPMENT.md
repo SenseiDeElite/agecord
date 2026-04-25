@@ -4,7 +4,7 @@
 
 To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib), follow the steps below.
 
-[**typage**](https://github.com/FiloSottile/typage/)
+[**typage**](https://github.com/FiloSottile/typage)
 
 "A TypeScript implementation of the age file encryption format, available as an npm package or as a bundled .js file."
 
@@ -27,7 +27,7 @@ To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryp
   --outfile=age.min.js
   ```
 
-[**awasm-noble**](https://github.com/paulmillr/awasm-noble/)
+[**awasm-noble**](https://github.com/paulmillr/awasm-noble)
 
 "Auditable WASM implementation of cryptographic hashes & ciphers"
 
