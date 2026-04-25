@@ -25,6 +25,10 @@
         {
           "version": "0.5.1",
           "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.5.1/discord-age-encryption.xpi"
+        },
+        {
+          "version": "0.6.0",
+          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.6.0/discord-age-encryption.xpi"
         }
       ]
     }
