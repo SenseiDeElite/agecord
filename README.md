@@ -31,7 +31,7 @@ Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the exte
 
 Each contact's public key is displayed as a BLAKE3 (128-byte output) fingerprint. You can verify a contact's key out-of-band by comparing fingerprints with them directly if you wish.
 
-**Limitations**
+**🚧 Limitations**
 
 > ❌ **No forward secrecy.** If your private key is ever compromised, past messages encrypted to it could be read. Keep your passphrase strong and your private key safe.
 
