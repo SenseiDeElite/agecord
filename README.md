@@ -39,12 +39,6 @@ Each contact's public key is displayed as a BLAKE3 (128-byte output) fingerprint
 
 ---
 
-### 🐛 Known Issues
-
-Editing encrypted messages does not update the decrypted view. If you edit an already sent encrypted message, it'll continue to show the old decrypted content until you switch channels or reload the page. This is a limitation of how the extension hooks into Discord's React-based DOM and does not have a simple fix at this time. Contributions are welcome.
-
----
-
 ### ⬇️ Installation
 
 #### 🦊 Chromium & Firefox
