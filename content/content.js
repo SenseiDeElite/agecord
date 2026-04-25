@@ -240,22 +240,13 @@ async function pasteIntoEditor(text) {
 let _sending = false;
 
 // ─── Slate plain-text extraction ──────────────────────────────────────────────
-// Discord's Slate editor represents blockquotes as <blockquote> DOM elements.
-// Reading .innerText on the editor root strips the "> " prefix entirely, so
-// blockquote lines are lost before encryption.  This function walks the Slate
-// paragraph/block structure and re-adds "> " for any blockquote block.
+// Walks the Slate paragraph/block structure to collect plain text across all
+// block children.  Falls back to innerText if the walk produces nothing.
 function getSlateText(tb) {
   const lines = [];
   for (const block of tb.children) {
-    if (block.tagName === 'BLOCKQUOTE') {
-      const inner = block.innerText?.replace(/\n+$/, '') ?? '';
-      for (const line of inner.split('\n')) {
-        lines.push('> ' + line);
-      }
-    } else {
-      const text = block.innerText?.replace(/\n+$/, '') ?? '';
-      lines.push(text);
-    }
+    const text = block.innerText?.replace(/\n+$/, '') ?? '';
+    lines.push(text);
   }
   // Fall back to plain innerText if the walk produced nothing (safety net).
   return lines.join('\n').trim() || (tb.innerText?.trim() ?? '');
@@ -655,10 +646,10 @@ function processMessageNode(li) {
           : Promise.resolve(null);
       });
       // Add own key if available — stored in _selfRecipient as the full
-    // recipient string (age1…;ed25519:…), same format as contact keys.
-    if (_selfRecipient) {
-       keyPromises.push(importVerifyKey(_selfRecipient).catch(() => null));
-    }
+      // recipient string (age1…;ed25519:…), same format as contact keys.
+      if (_selfRecipient) {
+        keyPromises.push(importVerifyKey(_selfRecipient).catch(() => null));
+      }
       candidateKeys = (await Promise.all(keyPromises)).filter(Boolean);
     }
 
@@ -757,12 +748,7 @@ function renderDecrypted(el, plaintext) {
 function renderMarkdownLine(text) {
   const wrap = document.createElement('span');
   wrap.style.color = '#889ce6';
-  if (/^> /.test(text)) {
-    wrap.style.cssText = 'color:#889ce6;border-left:3px solid #5c6aaa;padding-left:8px;display:inline-block;margin:2px 0';
-    applyInlineMarkdown(wrap, text.slice(2));
-  } else {
-    applyInlineMarkdown(wrap, text);
-  }
+  applyInlineMarkdown(wrap, text);
   return wrap;
 }
 
@@ -776,10 +762,13 @@ function applyInlineMarkdown(container, text) {
     { re: /\|\|(.+?)\|\|/s,  tag: 'spoiler' },
     // Markdown hyperlink syntax: [label](https://...) — must come before bare
     // link so the whole pattern is consumed and the trailing ) is not left over.
-    // Only https:// is permitted; other schemes are rejected at render time.
-    { re: /\[([^\]]+)\]\((https:\/\/[^\s<>"')]+)\)/, tag: 'mdlink' },
-    // Bare URL — exclude trailing ) so [text](url) is not partially matched.
-    { re: /(https:\/\/[^\s<>"')]+)/, tag: 'link' },
+    // Only https:// is permitted; other schemes (javascript:, data:, blob:, etc.)
+    // are rejected both by the regex and by the post-assignment href check below.
+    { re: /\[([^\]]+)\]\((https:\/\/[^\s<>"'()]+)\)/, tag: 'mdlink' },
+    // Bare URL — restricted to https://.  The exclusion class strips characters
+    // that commonly appear after a URL in prose and also blocks % to prevent
+    // percent-encoded scheme bypass attempts.
+    { re: /(https:\/\/[^\s<>"'()%]+)/, tag: 'link' },
   ];
 
   let remaining = text;
@@ -816,10 +805,9 @@ function applyInlineMarkdown(container, text) {
       container.appendChild(sp);
     } else if (earliest.tag === 'mdlink') {
       // Markdown hyperlink: [label](https://url)
-      // earliest.match holds the full [label](url) token.
-      // The regex has two capture groups: m[1] = label, m[2] = url.
-      // We re-exec to retrieve m[2] (the URL) since `earliest` only stores m[1].
-      const mdm = /^\[([^\]]+)\]\((https:\/\/[^\s<>"')]+)\)/.exec(earliest.match);
+      // Re-exec against the full matched token to extract both capture groups
+      // (label and URL), since `earliest` only carries the first capture group.
+      const mdm = /^\[([^\]]+)\]\((https:\/\/[^\s<>"'()]+)\)/.exec(earliest.match);
       const label = mdm ? mdm[1] : earliest.inner;
       const url   = mdm ? mdm[2] : '';
       const a = document.createElement('a');
@@ -832,7 +820,17 @@ function applyInlineMarkdown(container, text) {
       if (!/^https:\/\//i.test(a.href)) {
         a.removeAttribute('href');
       }
-      container.appendChild(a);
+      // Anti-phishing: if the label itself looks like a URL or bare hostname,
+      // the hyperlink could disguise a malicious destination behind a trusted-
+      // looking address (e.g. [youtube.com](https://evil.com)). Render as plain
+      // text instead so the actual destination is never hidden from the user.
+      const labelIsUrl = /^https?:\/\//i.test(label) ||
+        /^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/\S*)?$/.test(label.trim());
+      if (labelIsUrl) {
+        container.appendChild(document.createTextNode(earliest.match));
+      } else {
+        container.appendChild(a);
+      }
     } else if (earliest.tag === 'link') {
       const url = earliest.inner;
       const a = document.createElement('a');
