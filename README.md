@@ -1,6 +1,6 @@
 ## 🏛️ Discord Age Encryption
 
-A browser extension that adds end-to-end encrypted messaging to Discord. Messages are encrypted on your device before being sent — Discord's servers only see ciphertext.
+A browser extension that adds end-to-end encrypted messaging to Discord. Messages are encrypted on your device before being sent – Discord's servers only see ciphertext.
 
 Here be dragons! 🐲🐉
 
@@ -8,24 +8,24 @@ Here be dragons! 🐲🐉
 
 ### ⚙️ Features
 
-- 🔒 **End-to-end encrypted —** only you and your recipients can read messages;
-- ✍️ **Signed messages —** every message is cryptographically signed, proving authenticity;
-- 🔑 **Your keys, your device —** private keys never leave your browser;
-- 🔐 **Passphrase protected —** your data is encrypted at rest, unlocked per session.
-- 🤫 **Modern cryptography —** Utilizes Argon2id, XChaCha20-Poly1305, BLAKE3 through [awasm-noble](https://github.com/paulmillr/awasm-noble) where appropriate.
-- ⚡ **Lightning fast —** Messages are encrypted and decrypted almost instantly. WebCrypto API, hardware acceleration and WebAssembly are leveraged to deliver you a smooth experience.
+- 🔒 **End-to-end encrypted –** only you and your recipients can read messages;
+- ✍️ **Signed messages –** every message is cryptographically signed, proving authenticity;
+- 🔑 **Your keys, your device –** private keys never leave your browser;
+- 🔐 **Passphrase protected –** your data is encrypted at rest, unlocked per session.
+- 🤫 **Modern cryptography –** Utilizes Argon2id, XChaCha20-Poly1305, BLAKE3 through [awasm-noble](https://github.com/paulmillr/awasm-noble) where appropriate.
+- ⚡ **Lightning fast –** Messages are encrypted and decrypted almost instantly. WebCrypto API, hardware acceleration and WebAssembly are leveraged to deliver you a smooth experience.
 
 ---
 
 ### 🔐 Cryptography
 
-Encryption uses [age](https://github.com/FiloSottile/typage) (X25519 key agreement + ChaCha20-Poly1305), a modern and well-audited encryption format. Each message is also signed with an Ed25519 signature, which guarantees that a message could only have been sent by the person who owns that keypair — any tampering or forgery is flagged immediately.
+Encryption uses [age](https://github.com/FiloSottile/typage) (X25519 key agreement + ChaCha20-Poly1305), a modern and well-audited encryption format. Each message is also signed with an Ed25519 signature, which guarantees that a message could only have been sent by the person who owns that keypair – any tampering or forgery is flagged immediately.
 
 Your data is stored encrypted at rest on your device using Argon2id + XChaCha20-Poly1305. It is never uploaded anywhere.
 
 **🪡 Wire format**
 
-Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a serverId (only for servers), channelId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature — all in a single self-contained string. Messages are encrypted to all recipients and the sender, so the relevant parties can read the conversation.
+Encrypted messages are sent as raw ciphertext, prefixed with `[age]` so the extension can identify them. Each message embeds a serverId (only for servers), channelId (to prevent cross-channel replay), the ciphertext, and an Ed25519 signature – all in a single self-contained string. Messages are encrypted to all recipients and the sender, so the relevant parties can read the conversation.
 
 **🫆 Key fingerprints**
 
@@ -51,7 +51,7 @@ v0.4.0+ requires WebAssembly. Make sure you didn't disable it through browser ha
 
 Chromium: `DefaultJavaScriptJitSetting` policy.
 
-Firefox: `javascript.options.wasm` preference. (about:config)
+Firefox: `javascript.options.wasm` preference (`about:config`).
 
 ---
 
@@ -61,7 +61,7 @@ Firefox: `javascript.options.wasm` preference. (about:config)
 
 1. Click the extension icon in your toolbar;
 2. Choose a strong passphrase (at least 20 characters, mixed case, numbers, and symbols);
-3. Click **Generate keypair** — your keys are created and stored locally;
+3. Click **Generate keypair** – your keys are created and stored locally;
 4. Click **My public key** and copy it to share with your contact.
 
 **➕ Adding a recipient**
@@ -75,9 +75,9 @@ All sides need to have added each other before encrypted messaging works correct
 
 **📩 Sending messages**
 
-Once a given recipient is added and enabled, just type your message and press **Enter** — the extension intercepts and encrypts it before sending. Hit enter again to confirm.
+Once a given recipient is added and enabled, just type your message and press **Enter** – the extension intercepts and encrypts it before sending. Hit enter again to confirm.
 
-If Discord warns you that the message you are about to send might contain a Discord token, this is a side effect of the characters present in the message. You can safely ignore it and hit enter again — the extension never sends any secrets anywhere.
+If Discord warns you that the message you are about to send might contain a Discord token, this is a side effect of the characters present in the message. You can safely ignore it and hit enter again – the extension never sends any secrets anywhere.
 
 Received encrypted messages are decrypted and shown inline with a lock badge.
 
@@ -87,6 +87,6 @@ Received encrypted messages are decrypted and shown inline with a lock badge.
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE)
 
-See [THIRD_PARTY_NOTICES.txt](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
+See [`THIRD_PARTY_NOTICES.txt`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
 
 This extension is not affiliated with nor endorsed by Discord Inc.
