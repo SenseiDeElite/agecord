@@ -42,6 +42,7 @@ let _selfRecipient = null;  // own age public key, received at UNLOCK time
 let _contacts     = {};
 let _globalOn     = true;
 let _msgObserver  = null;
+let _editObserver = null;   // MutationObserver watching for edit boxes
 // _generation: incremented on every RELOCK and UNLOCK so that async IIFEs
 // spawned under a previous lock state silently no-op when they complete
 // rather than overwriting DOM that a newer cycle has already written.
@@ -107,6 +108,19 @@ function attachEnterHook() {
     if (!raw) return;
     if (raw.startsWith(PREFIX)) return;
     if (!isEncryptionActive()) return;
+
+    // If we are inside an edit box (tb lives inside a message li), re-encrypt
+    // the edited plaintext instead of sending a new message.
+    if (_editingMsgId) {
+      const li = document.getElementById(_editingMsgId);
+      if (li?.contains(tb)) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleEditEncrypt();
+        return;
+      }
+    }
+
     e.preventDefault();
     e.stopPropagation();
     handleEncryptClick();
@@ -225,11 +239,34 @@ async function pasteIntoEditor(text) {
 
 let _sending = false;
 
+// ─── Slate plain-text extraction ──────────────────────────────────────────────
+// Discord's Slate editor represents blockquotes as <blockquote> DOM elements.
+// Reading .innerText on the editor root strips the "> " prefix entirely, so
+// blockquote lines are lost before encryption.  This function walks the Slate
+// paragraph/block structure and re-adds "> " for any blockquote block.
+function getSlateText(tb) {
+  const lines = [];
+  for (const block of tb.children) {
+    if (block.tagName === 'BLOCKQUOTE') {
+      const inner = block.innerText?.replace(/\n+$/, '') ?? '';
+      for (const line of inner.split('\n')) {
+        lines.push('> ' + line);
+      }
+    } else {
+      const text = block.innerText?.replace(/\n+$/, '') ?? '';
+      lines.push(text);
+    }
+  }
+  // Fall back to plain innerText if the walk produced nothing (safety net).
+  return lines.join('\n').trim() || (tb.innerText?.trim() ?? '');
+}
+
 async function handleEncryptClick() {
   if (_sending) return;
   if (!isEncryptionActive()) return;
   const active = getActiveEntry();
-  const plain  = getTextbox()?.innerText?.trim();
+  const tb     = getTextbox();
+  const plain  = tb ? getSlateText(tb) : '';
   if (!plain || !active) return;
   const { entry, channelId } = active;
   _sending = true;
@@ -258,7 +295,182 @@ async function handleEncryptClick() {
   }
 }
 
-// ─── Receive ──────────────────────────────────────────────────────────────────
+// ─── Edit interception ────────────────────────────────────────────────────────
+// When a user edits a message they sent, Discord populates the Slate editor
+// with the raw ciphertext.  We intercept this: replace it with the cached
+// plaintext so the user edits real text, then re-encrypt on save.
+
+// Tracks which li is currently being edited so the Enter hook knows to
+// re-encrypt rather than send a new message.
+let _editingMsgId    = null;
+let _pendingEditMsgId = null; // set while re-encrypt write is in-flight; suppresses processMessageNode
+
+function getEditBox() {
+  // Discord places a Slate editor inside the message's li during an edit.
+  // It carries the same data-slate-editor attribute as the main compose box.
+  if (!_editingMsgId) return null;
+  const li = document.getElementById(_editingMsgId);
+  return li?.querySelector('[data-slate-editor="true"]') ?? null;
+}
+
+// Write plaintext into a Slate (contenteditable) editor via ClipboardEvent.
+// Direct innerText mutation is ignored by React's Slate integration.
+async function writeIntoSlate(editor, text) {
+  editor.focus();
+  await sleep(20);
+  document.execCommand('selectAll', false);
+  await sleep(20);
+  const dt = new DataTransfer();
+  dt.setData('text/plain', text);
+  editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  await sleep(80);
+}
+
+// Called once an edit box appears inside a message li.
+// We only record which message is being edited so the Enter key hook knows to
+// re-encrypt rather than send a new message.  We do not attempt to replace the
+// raw ciphertext with plaintext — selectAll is unreliable in Slate editors and
+// causes paste to append rather than replace, corrupting the message.
+function onEditBoxAppeared(li, _editor) {
+  _editingMsgId = li.id;
+}
+
+// Watch for edit boxes appearing inside message list items.
+function startEditObserver() {
+  _editObserver?.disconnect();
+
+  _editObserver = new MutationObserver(mutations => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+
+        // The Slate editor that Discord injects for edits.
+        const editors = node.matches?.('[data-slate-editor="true"]')
+          ? [node]
+          : [...(node.querySelectorAll?.('[data-slate-editor="true"]') ?? [])];
+
+        for (const editor of editors) {
+          // Ignore the main compose box at the bottom — only care about editors
+          // that live inside a chat message li.
+          const li = editor.closest('li[id^="chat-messages-"]');
+          if (!li) continue;
+          // Attach the age key handler to the edit box so encrypted-edit Enter
+          // interception works without a separate listener.
+          if (!editor._ageKeyHandler && _signingKey) {
+            editor._ageKeyHandler = (e) => {
+              if (e.key !== 'Enter' || e.shiftKey || e.altKey) return;
+              if (document.querySelector('[role="listbox"]')) return;
+              const raw = editor.innerText?.trim() ?? '';
+              if (!raw || raw.startsWith(PREFIX) || !isEncryptionActive()) return;
+              if (_editingMsgId && li.contains(editor)) {
+                e.preventDefault();
+                e.stopPropagation();
+                handleEditEncrypt();
+              }
+            };
+            editor.addEventListener('keydown', editor._ageKeyHandler, { capture: true });
+          }
+          onEditBoxAppeared(li, editor);
+        }
+      }
+
+      // Detect when the edit box is removed (edit cancelled or saved).
+      for (const node of mutation.removedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const hadEditor = node.matches?.('[data-slate-editor="true"]')
+          || node.querySelector?.('[data-slate-editor="true"]');
+        if (hadEditor) _editingMsgId = null;
+      }
+    }
+  });
+
+  // Observe the full document body so we catch editors in any li regardless
+  // of whether the message list has loaded yet.
+  _editObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+// Re-encrypt an edited message and write the wire-format string back into the
+// editor.  Called from the Enter key hook when _editingMsgId is set.
+async function handleEditEncrypt() {
+  if (_sending) return;
+  if (!isEncryptionActive()) return;
+  const active = getActiveEntry();
+  const editor = getEditBox();
+  if (!editor || !active) return;
+
+  const plain = getSlateText(editor);
+  if (!plain || plain.startsWith(PREFIX)) return; // nothing to do
+
+  const { entry, channelId } = active;
+  _sending = true;
+  try {
+    const cipher = await encryptMessage(plain, entry);
+
+    const sigInput = (entry.type === 'server')
+      ? new TextEncoder().encode(`${entry.serverId}:${channelId}:${cipher}`)
+      : new TextEncoder().encode(`${channelId}:${cipher}`);
+    const sigBytes = await crypto.subtle.sign('Ed25519', _signingKey, sigInput);
+    const sig = bytesToBase64Disc(new Uint8Array(sigBytes).slice(0, 64));
+
+    const wireText = `${PREFIX}:${cipher}:${sig}`;
+
+    // Stage the new plaintext in the outgoing cache (keyed on the new cipher)
+    // so processMessageNode can render it immediately via the fast path once
+    // the new wire text appears in the DOM.  Do NOT touch _decryptedCache or
+    // _processedIds yet — the edit hasn't reached Discord's servers, and an
+    // in-flight decrypt of the OLD cipher could still overwrite the cache.
+    _outgoingCache.set(cipher, { plaintext: plain, channelId });
+    setTimeout(() => _outgoingCache.delete(cipher), 8000);
+
+    // Lock out processMessageNode for this message while we write the new
+    // wire text into the edit box and wait for Discord to commit the edit.
+    // Without this, the MutationObserver fires during pasteIntoEditor and
+    // triggers a decrypt of the OLD cipher, overwriting the cache.
+    _pendingEditMsgId = _editingMsgId;
+
+    await writeIntoSlate(editor, wireText);
+
+    // Poll for the new ciphertext to appear in the message DOM and re-render
+    // it immediately, preventing the window between Discord re-rendering from
+    // its store (raw ciphertext) and our MutationObserver picking it up.
+    const targetMsgId = _editingMsgId;
+    (async () => {
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        await sleep(100);
+        const li = document.getElementById(targetMsgId);
+        if (!li) break;
+        const el = [...li.querySelectorAll('[id^="message-content-"]')].find(e =>
+          !e.closest('[class*="repliedText"]') && !e.closest('[class*="replyPreview"]')
+        );
+        if (!el) continue;
+        const raw = directTextContent(el).trim();
+        if (raw === wireText || el.dataset.ageRaw === wireText) {
+          // New ciphertext confirmed in DOM. Commit the cache atomically:
+          // evict the old processed/decrypted entries THEN force re-process so
+          // processMessageNode sees the new wire text and hits the outgoingCache
+          // fast path (or falls through to a fresh decrypt if the cache expired).
+          _pendingEditMsgId = null;
+          _processedIds.delete(targetMsgId);
+          _decryptedCache.delete(targetMsgId);
+          el.dataset.ageRaw = wireText;
+          processMessageNode(li);
+          break;
+        }
+      }
+      // Timed out or li removed — always clear the guard so the message
+      // isn't permanently suppressed.
+      _pendingEditMsgId = null;
+    })();
+
+  } catch (err) {
+    console.error('[age] edit-encrypt error:', err);
+  } finally {
+    _sending = false;
+  }
+}
+
+
 
 function waitForMessageList(onReady) {
   const list = getMessageList();
@@ -327,6 +539,13 @@ function processMessageNode(li) {
   if (!el) return;
 
   const msgId = li.id;
+
+  // If this message is currently being edited, suppress re-processing until
+  // the poll loop confirms the new ciphertext and calls us explicitly.
+  // Without this guard, the MutationObserver fires when writeIntoSlate pastes
+  // the new wire text into the edit box (which is inside the li), triggering
+  // a decrypt of the OLD cipher and overwriting the cache prematurely.
+  if (_pendingEditMsgId === msgId) return;
 
   if (_processedIds.has(msgId)) {
     const cached = _decryptedCache.get(msgId);
@@ -555,6 +774,12 @@ function applyInlineMarkdown(container, text) {
     { re: /~~(.+?)~~/s,      tag: 's'       },
     { re: /`([^`]+)`/,       tag: 'code'    },
     { re: /\|\|(.+?)\|\|/s,  tag: 'spoiler' },
+    // Markdown hyperlink syntax: [label](https://...) — must come before bare
+    // link so the whole pattern is consumed and the trailing ) is not left over.
+    // Only https:// is permitted; other schemes are rejected at render time.
+    { re: /\[([^\]]+)\]\((https:\/\/[^\s<>"')]+)\)/, tag: 'mdlink' },
+    // Bare URL — exclude trailing ) so [text](url) is not partially matched.
+    { re: /(https:\/\/[^\s<>"')]+)/, tag: 'link' },
   ];
 
   let remaining = text;
@@ -589,6 +814,38 @@ function applyInlineMarkdown(container, text) {
       applyInlineMarkdown(sp, earliest.inner);
       sp.addEventListener('click', () => { sp.style.color = '#889ce6'; sp.style.background = 'transparent'; });
       container.appendChild(sp);
+    } else if (earliest.tag === 'mdlink') {
+      // Markdown hyperlink: [label](https://url)
+      // earliest.match holds the full [label](url) token.
+      // The regex has two capture groups: m[1] = label, m[2] = url.
+      // We re-exec to retrieve m[2] (the URL) since `earliest` only stores m[1].
+      const mdm = /^\[([^\]]+)\]\((https:\/\/[^\s<>"')]+)\)/.exec(earliest.match);
+      const label = mdm ? mdm[1] : earliest.inner;
+      const url   = mdm ? mdm[2] : '';
+      const a = document.createElement('a');
+      a.href   = url;
+      a.target = '_blank';
+      a.rel    = 'noopener noreferrer';
+      a.style.cssText = 'color:#5571de;text-decoration:underline;cursor:pointer;';
+      a.textContent = label;
+      // Belt-and-suspenders: reject anything the browser normalised away from https.
+      if (!/^https:\/\//i.test(a.href)) {
+        a.removeAttribute('href');
+      }
+      container.appendChild(a);
+    } else if (earliest.tag === 'link') {
+      const url = earliest.inner;
+      const a = document.createElement('a');
+      a.href   = url;
+      a.target = '_blank';
+      a.rel    = 'noopener noreferrer';
+      a.style.cssText = 'color:#5571de;text-decoration:underline;cursor:pointer;';
+      a.textContent = url;
+      // Belt-and-suspenders: reject anything the browser normalised away from https.
+      if (!/^https:\/\//i.test(a.href)) {
+        a.removeAttribute('href');
+      }
+      container.appendChild(a);
     } else {
       const el = document.createElement(earliest.tag);
       if (earliest.tag === 'strong') el.style.color = '#889ce6';
@@ -711,6 +968,8 @@ function listenForMessages() {
       _decryptedCache.clear();
       _outgoingCache.clear();
       _inFlight.clear();
+      _editingMsgId     = null;
+      _pendingEditMsgId = null;
       detachEnterHook();
       // Reset every message element that has a stashed raw cipher — this
       // covers not only already-decrypted (state='ok') messages but also any
@@ -734,6 +993,8 @@ function startNavObserver() {
     // In-flight guards belong to the previous channel — always clear them so
     // the new channel's messages aren't skipped by a stale _inFlight entry.
     _inFlight.clear();
+    _editingMsgId     = null;
+    _pendingEditMsgId = null;
 
     // Keep _decryptedCache across navigation: if Discord re-uses the same
     // li.id for the same message (it does — message IDs are stable), we can
@@ -770,6 +1031,7 @@ function startNavObserver() {
 async function init() {
   listenForMessages();
   startNavObserver();
+  startEditObserver();
   const localData = await localGet(['globalOn']);
   _globalOn = localData.globalOn !== false;
   waitForMessageList();
