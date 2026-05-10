@@ -95,8 +95,8 @@ Received encrypted messages are decrypted and shown inline with a lock badge.
 
 ### 📄 Licenses
 
-[GNU General Public License v3.0](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE)
+[`GNU General Public License v3.0`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE)
 
 See [`THIRD_PARTY_NOTICES.txt`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
 
-This extension is not affiliated with nor endorsed by Discord Inc.
+This extension is not affiliated with nor endorsed by **Discord Inc.**
