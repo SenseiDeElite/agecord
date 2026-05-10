@@ -5,9 +5,9 @@
 <h1 align="center">Discord Age Encryption</h1>
 
 <p align="center">
-  A browser extension that adds end-to-end encrypted messaging to Discord.
-  <br/>Messages are encrypted on your device before being sent —
-  <br/>Discord's servers only see ciphertext.
+  A browser extension that adds end-to-end <b>encrypted</b> messaging to <b>Discord.</b>
+  <br/>Messages are <b>encrypted</b> on your device before being sent —
+  <br/><b>Discord's</b> servers only see ciphertext.
 </p>
 
 <p align="center">
