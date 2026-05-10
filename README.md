@@ -1,10 +1,20 @@
-## 🏛️ Discord Age Encryption
+<p align="center">
+  <img src="/icons/icon.svg" alt="Discord Age Encryption logo" width="120" />
+</p>
 
-A browser extension that adds end-to-end encrypted messaging to Discord. Messages are encrypted on your device before being sent – Discord's servers only see ciphertext.
+<h1 align="center">Discord Age Encryption</h1>
 
-Here be dragons! 🐲🐉
+<p align="center">
+  A browser extension that adds end-to-end encrypted messaging to Discord.
+  <br/>Messages are encrypted on your device before being sent —
+  <br/>Discord's servers only see ciphertext.
+</p>
 
----
+<p align="center">
+  <a href="https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPLv3" />
+  </a>
+</p>
 
 ### ⚙️ Features
 
@@ -85,7 +95,7 @@ Received encrypted messages are decrypted and shown inline with a lock badge.
 
 ### 📄 Licenses
 
-[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE)
+[GNU General Public License v3.0](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE)
 
 See [`THIRD_PARTY_NOTICES.txt`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt) for full third-party license texts.
 
