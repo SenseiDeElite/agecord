@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Discord Age Encryption – CDN Bridge</title>
+  <!--
+    This page is intentionally blank and hidden.
+    It exists solely to provide an extension-origin context (chrome-extension://)
+    so that cdn-bridge.js can fetch from cdn.discordapp.com using the
+    extension's host_permissions, bypassing the CORB restriction that blocks
+    cross-origin fetches from content scripts running in the page renderer.
+
+    Decrypted bytes are transferred back to the parent content script via
+    window.parent.postMessage with an ArrayBuffer transferable — zero-copy.
+  -->
+</head>
+<body>
+  <script src="cdn-bridge.js"></script>
+</body>
+</html>
