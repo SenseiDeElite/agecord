@@ -11,8 +11,8 @@
   <!-- ── SCREEN: LOCK ──────────────────────────────────────────────────── -->
   <div id="screen-lock" class="screen" hidden>
     <div class="screen-header">
-      <span class="lock-icon">🏛️</span>
-      <h2>Discord Age Encryption</h2>
+      <span class="lock-icon">🔐</span>
+      <h2>Unlock extension</h2>
       <p class="subtitle">Enter your passphrase to unlock encryption for this session.</p>
     </div>
 
@@ -101,7 +101,7 @@
         <span class="main-header-title">Discord Age Encryption</span>
       </div>
       <div class="main-header-toggle-row">
-        <span class="main-header-toggle-label">🔐 Encryption &amp; Decryption</span>
+        <span class="main-header-toggle-label">🛡️ Encryption &amp; Decryption</span>
         <label class="switch" aria-label="Toggle global encryption">
           <input id="global-toggle" type="checkbox">
           <span class="slider"></span>
@@ -166,7 +166,7 @@
       </div>
       <div class="form-group">
         <label for="contact-key">Public key</label>
-        <textarea id="contact-key" rows="4" placeholder="age1...;ed25519:..."></textarea>
+        <textarea id="contact-key" rows="4" placeholder="age1...;mldsa87:..."></textarea>
       </div>
     </div>
 
@@ -289,7 +289,7 @@
     <div class="sheet-title" id="member-picker-title">Select members</div>
     <input id="member-picker-search" type="search" placeholder="Search contacts...">
     <div id="member-picker-list"></div>
-    <div class="sheet-actions" style="padding: 8px 16px 16px;">
+    <div style="padding: 8px 16px 16px;">
       <button id="btn-member-picker-done" class="btn btn-primary btn-full">Done</button>
     </div>
   </div>
@@ -349,7 +349,7 @@
     </div>
 
     <div style="margin: 8px 16px 0; border-top: 1px solid var(--md-outline-variant);"></div>
-    <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">BLAKE3 Fingerprint</div>
+    <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">SHAKE256 Fingerprint</div>
     <div class="sheet-fingerprint" id="my-key-fp" style="text-align: center;">Computing fingerprint...</div>
 
     <div class="danger-zone">
@@ -401,11 +401,11 @@
             </span>
             <span class="about-row-badge">↗</span>
           </button>
-          <button class="about-row" id="about-awasm-noble-link">
-            <span class="about-row-icon">#️⃣</span>
+          <button class="about-row" id="about-rustcrypto-link">
+            <span class="about-row-icon">🦀</span>
             <span class="about-row-text">
-              <div class="about-row-label">awasm-noble</div>
-              <div class="about-row-sub">MIT · Copyright (c) 2026 Paul Miller (https://paulmillr.com)</div>
+              <div class="about-row-label">RustCrypto</div>
+              <div class="about-row-sub">MIT · Copyright (c) 2026 RustCrypto</div>
             </span>
             <span class="about-row-badge">↗</span>
           </button>
@@ -436,7 +436,7 @@
   <div id="sheet-contact" class="bottom-sheet" hidden>
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="sheet-contact-name"></div>
-    <div class="sheet-fp-label">BLAKE3 Fingerprint</div>
+    <div class="sheet-fp-label">SHAKE256 Fingerprint</div>
     <div class="sheet-fingerprint" id="sheet-contact-fp">Computing fingerprint...</div>
     <div class="sheet-row">
       <span>Encrypt to this contact</span>
@@ -451,25 +451,16 @@
   </div>
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
 
-  <!-- ── SHEET: MANAGE KEYPAIR ─────────────────────────────────────────── -->
-  <div id="sheet-manage-keypair" class="bottom-sheet" hidden>
-    <div class="sheet-handle"></div>
-    <div class="sheet-title">Manage keypair</div>
-    <button id="btn-export-key" class="btn btn-outlined-error btn-full">Export private key</button>
-    <button id="btn-regen"      class="btn btn-outlined-error btn-full" style="margin-top:8px;">Regenerate keypair</button>
-    <button id="btn-close-manage-keypair" class="btn btn-text btn-full">Cancel</button>
-  </div>
-
   <!-- ── MODAL: EXPORT PRIVATE KEY ────────────────────────────────────── -->
   <div id="modal-export-key" class="modal-overlay" hidden>
     <div class="modal">
       <h3>Export private key</h3>
       <p style="font-size:12px; color:var(--md-on-surface-variant);">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
-      <label for="export-passphrase-input" style="font-size:13px; font-weight:500; margin-top:8px; display:block;">Unlock passphrase</label>
+      <label for="export-passphrase-input" class="modal-label">Unlock passphrase</label>
       <input id="export-passphrase-input" type="password" placeholder="Type unlock passphrase" autocomplete="current-password" style="margin-top:6px;">
-      <label for="export-new-passphrase" style="font-size:13px; font-weight:500; margin-top:12px; display:block;">Export passphrase</label>
+      <label for="export-new-passphrase" class="modal-label" style="margin-top:12px;">Export passphrase</label>
       <input id="export-new-passphrase" type="password" placeholder="Type export passphrase" autocomplete="new-password" style="margin-top:6px;">
-      <label for="export-new-passphrase2" style="font-size:13px; font-weight:500; margin-top:12px; display:block;">Confirm export passphrase</label>
+      <label for="export-new-passphrase2" class="modal-label" style="margin-top:12px;">Confirm export passphrase</label>
       <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password" style="margin-top:6px;">
       <div id="export-passphrase-error" class="error-msg" hidden></div>
       <div id="export-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
@@ -481,8 +472,6 @@
       </div>
     </div>
   </div>
-
-  <div id="sheet-manage-keypair-backdrop" class="sheet-backdrop" hidden></div>
 
   <!-- ── MODAL: EXPORT KEY DISPLAY ────────────────────────────────────── -->
   <div id="modal-export-display" class="modal-overlay" hidden>
@@ -502,11 +491,11 @@
     <div class="modal">
       <h3>Change passphrase</h3>
       <p style="font-size:12px; color:var(--md-on-surface-variant);">Your data will be re-encrypted with the new passphrase.</p>
-      <label for="change-pass-current" style="font-size:13px;font-weight:500;margin-top:8px;display:block;">Current passphrase</label>
+      <label for="change-pass-current" class="modal-label">Current passphrase</label>
       <input id="change-pass-current" type="password" placeholder="Type current passphrase" autocomplete="current-password" style="margin-top:6px;">
-      <label for="change-pass-new" style="font-size:13px;font-weight:500;margin-top:12px;display:block;">New passphrase</label>
+      <label for="change-pass-new" class="modal-label" style="margin-top:12px;">New passphrase</label>
       <input id="change-pass-new" type="password" placeholder="Type new passphrase" autocomplete="new-password" style="margin-top:6px;">
-      <label for="change-pass-new2" style="font-size:13px;font-weight:500;margin-top:12px;display:block;">Confirm new passphrase</label>
+      <label for="change-pass-new2" class="modal-label" style="margin-top:12px;">Confirm new passphrase</label>
       <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password" style="margin-top:6px;">
       <div id="change-pass-error" class="error-msg" hidden></div>
       <div id="change-pass-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
