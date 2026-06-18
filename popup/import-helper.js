@@ -25,18 +25,12 @@ document.getElementById('f').addEventListener('change', async (e) => {
 
     setStatus('Saving\u2026');
 
-    // Store this tab's ID alongside the JSON so the popup can close this tab
-    // once the user dismisses the import result modal.
-    const tabId = await new Promise(function(res) {
-      chrome.tabs.getCurrent(function(tab) { res(tab ? tab.id : null); });
-    });
+    // Store tab ID so the popup can close this tab after the import modal is dismissed.
+    // getCurrent() returns undefined (not null) outside a tab context.
+    const tab   = await chrome.tabs.getCurrent();
+    const tabId = tab?.id ?? null;
 
-    await new Promise(function(res, rej) {
-      chrome.storage.session.set({ pending_import: text, pending_import_tab: tabId }, function() {
-        if (chrome.runtime.lastError) rej(chrome.runtime.lastError);
-        else res();
-      });
-    });
+    await chrome.storage.session.set({ pending_import: text, pending_import_tab: tabId });
 
     try {
       await chrome.action.openPopup();
