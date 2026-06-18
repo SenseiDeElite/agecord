@@ -1,9 +1,8 @@
-// emoji_map.js — Discord :shortcode: → emoji lookup table
-//
-// 5940 entries | correct Discord :shortcode: names
+// emoji_map.js — 5940 entries | Discord :shortcode: → emoji lookup table
+
+'use strict';
 
 export const EMOJI_MAP = {
-  // ── activity
   soccer: '⚽',
   soccer_ball: '⚽',
   basketball: '🏀',
@@ -615,7 +614,6 @@ export const EMOJI_MAP = {
   slot_machine: '🎰',
   jigsaw: '🧩',
   puzzle_piece: '🧩',
-  // ── flags
   flag_white: '🏳️',
   flag_black: '🏴',
   pirate_flag: '🏴‍☠️',
@@ -886,7 +884,6 @@ export const EMOJI_MAP = {
   flag_sj: '🇸🇯',
   flag_ta: '🇹🇦',
   flag_um: '🇺🇲',
-  // ── food
   green_apple: '🍏',
   apple: '🍎',
   red_apple: '🍎',
@@ -1044,7 +1041,6 @@ export const EMOJI_MAP = {
   takeout_box: '🥡',
   chopsticks: '🥢',
   salt: '🧂',
-  // ── nature
   dog: '🐶',
   dog_face: '🐶',
   cat: '🐱',
@@ -1296,7 +1292,6 @@ export const EMOJI_MAP = {
   ocean: '🌊',
   water_wave: '🌊',
   fog: '🌫️',
-  // ── objects
   watch: '⌚',
   mobile_phone: '📱',
   iphone: '📱',
@@ -1594,7 +1589,6 @@ export const EMOJI_MAP = {
   locked: '🔒',
   unlock: '🔓',
   unlocked: '🔓',
-  // ── people
   grinning: '😀',
   grinning_face: '😀',
   smiley: '😃',
@@ -5370,7 +5364,6 @@ export const EMOJI_MAP = {
   dark_sunglasses: '🕶️',
   goggles: '🥽',
   closed_umbrella: '🌂',
-  // ── symbols
   "100": '💯',
   "1234": '🔢',
   pink_heart: '🩷',
@@ -5787,7 +5780,6 @@ export const EMOJI_MAP = {
   regional_indicator_c: '🇨',
   regional_indicator_b: '🇧',
   regional_indicator_a: '🇦',
-  // ── travel
   red_car: '🚗',
   automobile: '🚗',
   taxi: '🚕',
@@ -5950,5 +5942,6 @@ export const EMOJI_MAP = {
   night_with_stars: '🌃',
   milky_way: '🌌',
   bridge_at_night: '🌉',
-  foggy: '🌁'
+  foggy: '🌁',
+  fingerprint: '🫆'
 };
