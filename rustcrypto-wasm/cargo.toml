@@ -1,0 +1,36 @@
+[package]
+name = "rustcrypto-wasm"
+version = "0.1.0"
+authors = ["Sensei <https://github.com/SenseiDeElite>"]
+description = "WebAssembly RustCrypto"
+license = "MIT"
+repository = "https://github.com/SenseiDeElite/discord-age-encryption/rustcrypto-wasm"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen       = "0.2.125"
+getrandom          = { version = "0.4.2", features = ["wasm_js"] }
+
+chacha20poly1305   = "0.10.1"
+shake              = "0.1.0"
+argon2             = { version = "0.5.3", default-features = false, features = ["alloc"] }
+ml-dsa             = { version = "0.1.1", features = ["rand_core"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+# Force getrandom 0.2.x to enable the `js` feature so it compiles for wasm32-unknown-unknown.
+[dependencies.getrandom_02]
+package = "getrandom"
+version = "0.2.15"
+features = ["js"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O", "--enable-bulk-memory"]
