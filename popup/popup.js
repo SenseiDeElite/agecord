@@ -4,7 +4,7 @@
 //               stored as base64 in chrome.storage.local (key: identity_blob).
 // Session     : decrypted identity kept in chrome.storage.session;
 //               background service worker holds it in memory and sends only the
-//               non-extractable Ed25519 signing CryptoKey to content scripts.
+//               ML-DSA-87 signing key to content scripts.
 // Crypto      : offloaded to popup/crypto-worker.js so the UI stays responsive.
 // Contacts    : Argon2id key derived in crypto-worker.js, sent to background as
 //               raw bytes; contacts ciphertext uses XChaCha20-Poly1305 envelope.
@@ -14,18 +14,26 @@
 //               field on the entry, not the map key.  This is the v2 model
 //               introduced in 0.4.0.
 
-(() => {
-  'use strict';
+'use strict';
 
-  // age-encryption named imports — resolved once via dynamic import() so the
-  // ESM bundle (age.min.js) is used without requiring popup.js to be a module.
-  let Encrypter, Decrypter, generateIdentity, identityToRecipient;
-  import(chrome.runtime.getURL('lib/age.min.js')).then(m => {
-    Encrypter           = m.Encrypter;
-    Decrypter           = m.Decrypter;
-    generateIdentity    = m.generateIdentity;
-    identityToRecipient = m.identityToRecipient;
-  });
+(() => {
+
+  // age-encryption and rustcrypto-wasm named imports — resolved via dynamic import().
+  let Encrypter, generateHybridIdentity, identityToRecipient;
+  let ml_dsa87_keygen, ml_dsa87_verifying_key_from_seed, shake256;
+  const cryptoReady = Promise.all([
+    import(chrome.runtime.getURL('lib/age.min.js')).then(m => {
+      Encrypter              = m.Encrypter;
+      generateHybridIdentity = m.generateHybridIdentity;
+      identityToRecipient    = m.identityToRecipient;
+    }),
+    import(chrome.runtime.getURL('lib/rustcrypto-wasm.min.js')).then(async m => {
+      await m.init();
+      ml_dsa87_keygen                  = m.ml_dsa87_keygen;
+      ml_dsa87_verifying_key_from_seed = m.ml_dsa87_verifying_key_from_seed;
+      shake256                         = m.shake256;
+    }),
+  ]);
 
   // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -41,12 +49,11 @@
 
   // ─── Storage helpers ────────────────────────────────────────────────────────
   const store = {
-    get:    keys => new Promise(r => chrome.storage.local.get(keys, r)),
-    set:    data => new Promise(r => chrome.storage.local.set(data, r)),
-    remove: keys => new Promise(r => chrome.storage.local.remove(keys, r)),
+    get:    keys => chrome.storage.local.get(keys),
+    set:    data => chrome.storage.local.set(data),
+    remove: keys => chrome.storage.local.remove(keys),
   };
 
-  // ageRecipient is a public key — safe to read from local storage directly.
   async function getAgeRecipient() {
     const d = await store.get(['ageRecipient']);
     return d.ageRecipient ?? null;
@@ -138,12 +145,9 @@
     // written there when the contacts were last successfully loaded or saved, and
     // session storage has the same lifetime as the unlock session.
     try {
-      if (chrome.storage.session) {
-        const s = await new Promise(res => chrome.storage.session.get('age_contacts', res));
-        if (s.age_contacts && typeof s.age_contacts === 'object') {
-          console.info('[age] loadContacts: using session storage fallback');
-          return s.age_contacts;
-        }
+      const s = await chrome.storage.session.get('age_contacts');
+      if (s.age_contacts && typeof s.age_contacts === 'object') {
+        return s.age_contacts;
       }
     } catch {}
 
@@ -155,11 +159,12 @@
   // All tab-relay operations go through the background service worker.
 
   function bgSend(msg) {
-    return new Promise(resolve => {
-      chrome.runtime.sendMessage(msg, r => {
-        void chrome.runtime.lastError;
-        resolve(r);
-      });
+    // chrome.runtime.sendMessage returns a Promise natively in MV3.
+    // Swallow lastError (no listener on the other end during early boot) so the
+    // promise rejects cleanly rather than throwing an uncaught extension error.
+    return chrome.runtime.sendMessage(msg).catch(e => {
+      void e; // lastError consumed — callers already handle null/undefined responses
+      return undefined;
     });
   }
 
@@ -173,8 +178,8 @@
     let contactsKeyB64 = null;
     if (passphrase) {
       try {
-        const { contactsSalt } = await store.get(['contactsSalt']);
-        const { keyB64 } = await deriveContactsKey(passphrase, contactsSalt ?? null);
+        const { contactsSaltB64 } = await store.get(['contactsSaltB64']);
+        const { keyB64 } = await deriveContactsKey(passphrase, contactsSaltB64 ?? null);
         contactsKeyB64 = keyB64;
       } catch (e) {
         console.warn('[age] bgUnlock: could not derive contacts key:', e?.message);
@@ -186,7 +191,15 @@
   // bgUnlockResume: reopen path — resyncs identity + contacts with the background
   // without any key derivation.  The contacts key is derived lazily on first save
   // via ensureContactsKey(), so popup reopen is always instant.
+  //
+  // Optimization: if the background still holds a live identity, the service
+  // worker never slept and all content scripts are already unlocked.  Skip the
+  // UNLOCK broadcast entirely — it would trigger scanExisting() in every Discord
+  // tab and re-render already-decrypted messages for no reason.
+  // Only send UNLOCK when the background has lost its state (SW restart).
   async function bgUnlockResume(identity) {
+    const ping = await bgSend({ type: 'PING' }).catch(() => null);
+    if (ping?.hasIdentity) return; // background still live — nothing to do
     const ageRecipient = await getAgeRecipient();
     return bgSend({ type: 'UNLOCK', identity, contactsKeyB64: null, contacts: _contacts, ageRecipient });
   }
@@ -195,8 +208,7 @@
   // Called once before any saveContacts() write — a no-op if the key is already live.
   async function ensureContactsKey() {
     const ping = await bgSend({ type: 'PING' });
-    if (ping?.hasContactsKey) return; // already live — nothing to do
-    // Key is gone (service-worker restart or first save after reopen) — derive now.
+    if (ping?.hasContactsKey) return;
     const passphrase = _sessionPassphrase ?? await getSessionPassphrase();
     if (!passphrase) throw new Error('Session passphrase unavailable — please lock and unlock again.');
     const identity = _sessionIdentity ?? await getSessionIdentity();
@@ -224,16 +236,6 @@
     return bgSend({ type: 'CONTACTS_UPDATED', contacts: _contacts, ageRecipient });
   }
 
-  // ─── UUID generator ──────────────────────────────────────────────────────────
-
-  function generateUUID() {
-    const b = crypto.getRandomValues(new Uint8Array(16));
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    const h = Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
-    return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
-  }
-
   // contactsByChannelId → Map<channelId, entry>, used for duplicate-channelId enforcement.
   function contactsByChannelId(contacts) {
     const m = new Map();
@@ -257,8 +259,6 @@
   const UPDATE_BTN_SCREENS = new Set(['lock', 'main']);
   const show = screenId => {
     screens.forEach(id => { document.getElementById(`screen-${id}`).hidden = (id !== screenId); });
-    // Show the update button only on lock and main screens, and only if it's not hidden
-    // (i.e. an update was detected — checkForUpdate sets hidden=false when applicable)
     const btnUpdate = document.getElementById('btn-update');
     if (btnUpdate && !btnUpdate.hidden) {
       btnUpdate.style.display = UPDATE_BTN_SCREENS.has(screenId) ? '' : 'none';
@@ -269,64 +269,51 @@
 
   async function getSessionIdentity() {
     try {
-      if (chrome.storage.session) {
-        const r = await new Promise(res => chrome.storage.session.get(['age_unlocked', 'age_identity'], res));
-        return r.age_unlocked === true ? (r.age_identity ?? null) : null;
-      }
+      const r = await chrome.storage.session.get(['age_unlocked', 'age_identity']);
+      return r.age_unlocked === true ? (r.age_identity ?? null) : null;
     } catch {}
     return null;
   }
 
   async function setSession(identity) {
     try {
-      if (chrome.storage.session)
-        await new Promise(res => chrome.storage.session.set({ age_unlocked: true, age_identity: identity }, res));
+      await chrome.storage.session.set({ age_unlocked: true, age_identity: identity });
     } catch {}
   }
 
-  // Persist the public recipient string so the background can recover it after
-  // a service-worker restart without waiting for the popup to re-send UNLOCK.
+  // Persisted so the background can recover after a SW restart without waiting for UNLOCK.
   async function setSessionRecipient(recipient) {
     try {
-      if (recipient && chrome.storage.session)
-        await new Promise(res => chrome.storage.session.set({ age_recipient: recipient }, res));
+      if (recipient) await chrome.storage.session.set({ age_recipient: recipient });
     } catch {}
   }
 
-  // Write decrypted contacts to session storage so the background service worker
-  // can recover them after a restart without waiting for the popup.
+  // Persisted so the background can recover contacts after a SW restart without waiting for UNLOCK.
   async function setSessionContacts(contacts) {
     try {
-      if (chrome.storage.session)
-        await new Promise(res => chrome.storage.session.set({ age_contacts: contacts }, res));
+      await chrome.storage.session.set({ age_contacts: contacts });
     } catch {}
   }
 
   async function clearSession() {
     try {
-      if (chrome.storage.session)
-        await new Promise(res => chrome.storage.session.remove(
-          ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient',
-           'age_passphrase', 'pending_unlock'], res));
+      await chrome.storage.session.remove(
+        ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient',
+         'age_passphrase', 'pending_unlock']);
     } catch {}
   }
 
-  // Cache the session passphrase so saveContacts/loadContacts can re-derive the
-  // contacts key after a service-worker restart without re-prompting the user.
-  // Session storage is cleared on lock and on browser restart, so this is safe.
+  // Cached so saveContacts/loadContacts can re-derive the contacts key after a SW restart.
   async function setSessionPassphrase(passphrase) {
     try {
-      if (passphrase && chrome.storage.session)
-        await new Promise(res => chrome.storage.session.set({ age_passphrase: passphrase }, res));
+      if (passphrase) await chrome.storage.session.set({ age_passphrase: passphrase });
     } catch {}
   }
 
   async function getSessionPassphrase() {
     try {
-      if (chrome.storage.session) {
-        const r = await new Promise(res => chrome.storage.session.get('age_passphrase', res));
-        return r.age_passphrase ?? null;
-      }
+      const r = await chrome.storage.session.get('age_passphrase');
+      return r.age_passphrase ?? null;
     } catch {}
     return null;
   }
@@ -337,17 +324,14 @@
   // popup document.
   async function setPendingUnlock(val) {
     try {
-      if (chrome.storage.session)
-        await new Promise(res =>
-          val ? chrome.storage.session.set({ pending_unlock: true }, res)
-              : chrome.storage.session.remove('pending_unlock', res));
+      await (val
+        ? chrome.storage.session.set({ pending_unlock: true })
+        : chrome.storage.session.remove('pending_unlock'));
     } catch {}
   }
 
   // ─── Crypto worker ───────────────────────────────────────────────────────────
   // Spawns a fresh dedicated worker per call, terminated on completion.
-  // Handles age scrypt (DM wire format), Argon2id derivation, and
-  // XChaCha20-Poly1305 envelope encrypt/decrypt.
 
   function runCryptoWorker(msg) {
     return new Promise((resolve, reject) => {
@@ -372,43 +356,31 @@
     });
   }
 
-  // Argon2id parameters mirror crypto-worker.js.
-  // Salt is 16 bytes (Argon2id standard).
+  // Salt length mirrors crypto-worker.js ARGON2ID_DERIVE expectations.
   const CONTACTS_SALT_LEN = 16;
 
-  // Derive the Argon2id contacts key via the worker.
-  // saltB64: base64-encoded 16-byte salt (fetched from chrome.storage.local).
-  // Returns { keyB64, saltB64 }.
+  // Returns { keyB64, saltB64 }. Generates and persists a fresh salt if none provided.
   async function deriveContactsKey(passphrase, saltB64Opt) {
     let saltB64 = saltB64Opt;
     if (!saltB64) {
       // Generate a fresh salt and persist it.
       const salt = crypto.getRandomValues(new Uint8Array(CONTACTS_SALT_LEN));
-      let s = '';
-      for (const b of salt) s += String.fromCharCode(b);
-      saltB64 = btoa(s);
-      await store.set({ contactsSalt: saltB64 });
+      saltB64 = toB64(salt);
+      await store.set({ contactsSaltB64: saltB64 });
     }
     const { keyB64 } = await runCryptoWorker({ op: 'ARGON2ID_DERIVE', password: passphrase, saltB64 });
     return { keyB64, saltB64 };
   }
 
-  // Encrypt the identity blob with Argon2id + XChaCha20-Poly1305.
-  // Returns base64-encoded envelope (version 0x01 format from crypto-worker.js).
+  // Returns base64-encoded version-0x01 envelope (Argon2id + XChaCha20-Poly1305).
   async function encryptIdentityBlob(identityBlob, passphrase) {
     // Derive a fresh 32-byte key using a new random salt.
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    let s = '';
-    for (const b of salt) s += String.fromCharCode(b);
-    const saltB64 = btoa(s);
+    const salt    = crypto.getRandomValues(new Uint8Array(16));
+    const saltB64 = toB64(salt);
 
     const { keyB64 } = await runCryptoWorker({ op: 'ARGON2ID_DERIVE', password: passphrase, saltB64 });
 
-    // Encode plaintext as base64 for the worker.
-    const plaintextBytes = new TextEncoder().encode(identityBlob);
-    let ps = '';
-    for (const b of plaintextBytes) ps += String.fromCharCode(b);
-    const plaintextB64 = btoa(ps);
+    const plaintextB64 = toB64(new TextEncoder().encode(identityBlob));
 
     const { envelopeB64 } = await runCryptoWorker({
       op: 'XCHACHA_ENCRYPT', keyB64, plaintextB64, saltB64,
@@ -416,32 +388,26 @@
     return envelopeB64;
   }
 
-  // Decrypt the identity blob envelope.
-  // envelopeB64: base64-encoded version-0x01 envelope.
-  // Returns the raw identity string on success.
+  // Decrypts a base64-encoded version-0x01 envelope; returns the raw identity string.
   async function decryptIdentityBlob(envelopeB64, passphrase) {
-    // Parse envelope to extract the embedded Argon2id salt (bytes 1–16).
-    let std = envelopeB64.replace(/-/g, '+').replace(/\./g, '/').replace(/_/g, '/');
-    while (std.length % 4) std += '=';
-    const envBytes = Uint8Array.from(atob(std), c => c.charCodeAt(0));
+    const envBytes = fromB64(envelopeB64);
+
+    // 1 (version) + 16 (Argon2id salt) + 1 (min ciphertext)
+    if (envBytes.length < 18) {
+      throw new Error('CORRUPT_BLOB');
+    }
 
     if (envBytes[0] !== 0x01) {
       throw new Error('OUTDATED_FORMAT');
     }
 
     const saltBytes = envBytes.slice(1, 17);
-    let ss = '';
-    for (const b of saltBytes) ss += String.fromCharCode(b);
-    const saltB64 = btoa(ss);
+    const saltB64   = toB64(saltBytes);
 
-    const { keyB64 } = await runCryptoWorker({ op: 'ARGON2ID_DERIVE', password: passphrase, saltB64 });
+    const { keyB64 }       = await runCryptoWorker({ op: 'ARGON2ID_DERIVE', password: passphrase, saltB64 });
     const { plaintextB64 } = await runCryptoWorker({ op: 'XCHACHA_DECRYPT', keyB64, envelopeB64 });
 
-    // Decode plaintext from base64.
-    const bin = atob(plaintextB64);
-    const out  = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return new TextDecoder().decode(out);
+    return new TextDecoder().decode(fromB64(plaintextB64));
   }
 
   // ─── Update check ────────────────────────────────────────────────────────────
@@ -489,7 +455,6 @@
     el.replaceWith(fresh);
   }
 
-  // Returns true if a fetch is allowed under the 3-per-day cap, and records it.
   async function canFetchUpdate() {
     const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
     const stored = await store.get([UPDATE_CHECK_KEY]);
@@ -500,44 +465,52 @@
     return true;
   }
 
+  // Firefox extensions published on AMO must declare browser_specific_settings.gecko
+  // (AMO requirement for extension ID assignment).  Chrome never has this field in
+  // the manifest, making it a reliable, zero-cost browser discriminator.
   function isFirefox() {
-    return !!chrome.runtime.getManifest?.()?.browser_specific_settings?.gecko;
+    return !!chrome.runtime.getManifest().browser_specific_settings?.gecko;
   }
 
   async function checkForUpdate() {
     if (isFirefox()) return; // Firefox manages its own updates via manifest update_url
     try {
-      const current = chrome.runtime.getManifest?.()?.version ?? '0.0.0';
+      const current = chrome.runtime.getManifest().version;
       const stored  = await store.get([UPDATE_CACHE_KEY]);
       const cached  = stored[UPDATE_CACHE_KEY] ?? null;
 
-      // ── Step 2: cached <= installed → user has updated past it → clear & done ──
       if (cached && !semverGt(cached, current)) {
         await store.remove([UPDATE_CACHE_KEY]);
         return;
       }
 
-      // ── Step 3: cached > installed → update still pending → show, skip fetch ──
       if (cached && semverGt(cached, current)) {
         showUpdateButtons();
         return;
       }
 
-      // ── Step 4: no cache → check rate limit, then fetch ───────────────────────
       if (!(await canFetchUpdate())) return;
 
       let latest = '0.0.0';
       try {
-        const resp = await fetch(UPDATES_URL, { cache: 'no-store' });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        for (const addon of Object.values(data.addons ?? {})) {
-          for (const entry of addon.updates ?? []) {
-            if (semverGt(entry.version, latest)) latest = entry.version;
+        // AbortController enforces a hard timeout so a stalled CDN connection
+        // does not leave this fire-and-forget promise open indefinitely.
+        const controller = new AbortController();
+        const timeoutId  = setTimeout(() => controller.abort(), 6000);
+        try {
+          const resp = await fetch(UPDATES_URL, { cache: 'no-store', signal: controller.signal });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+          for (const addon of Object.values(data.addons ?? {})) {
+            for (const entry of addon.updates ?? []) {
+              if (semverGt(entry.version, latest)) latest = entry.version;
+            }
           }
+        } finally {
+          clearTimeout(timeoutId);
         }
       } catch {
-        return; // network/parse failure — silently skip, don't cache anything
+        return; // network/parse/abort failure — silently skip, don't cache anything
       }
 
       if (semverGt(latest, current)) {
@@ -571,7 +544,7 @@
       // Seed contacts from session storage so the list renders instantly on reopen,
       // before the background has re-established the contacts key.
       try {
-        const s = await new Promise(res => chrome.storage.session.get('age_contacts', res));
+        const s = await chrome.storage.session.get('age_contacts');
         if (s.age_contacts && typeof s.age_contacts === 'object')
           _contacts = s.age_contacts;
       } catch {}
@@ -588,11 +561,8 @@
       // written before we booted, then show a clean lock screen.
       // The user just needs to enter their passphrase once more (~1.6 s with Argon2id).
       try {
-        if (chrome.storage.session) {
-          const s = await new Promise(res =>
-            chrome.storage.session.get('pending_unlock', res));
-          if (s.pending_unlock) await clearSession();
-        }
+        const s = await chrome.storage.session.get('pending_unlock');
+        if (s.pending_unlock) await clearSession();
       } catch {}
       document.getElementById('btn-goto-setup').hidden = false;
       await showLockScreen();
@@ -618,23 +588,32 @@
   document.getElementById('reset-confirm-input').addEventListener('input', e => {
     document.getElementById('btn-reset-confirm').disabled = (e.target.value !== 'CONFIRM');
   });
-  document.getElementById('btn-reset-confirm').addEventListener('click', async () => {
-    document.getElementById('modal-reset-keypair').hidden = true;
+  // resetToSetupScreen: shared teardown for reset-keypair and clear-all-data.
+  // clearSetupFields: true when arriving from the lock screen (setup fields visible).
+  async function resetToSetupScreen(clearSetupFields = false) {
     await store.remove(['ageRecipient', 'identity_blob', 'ageEncryptedIdentity',
-                        'contactsEnc', 'contactsSalt', 'contacts', 'globalOn',
+                        'contactsEnc', 'contactsSaltB64', 'contacts', 'globalOn',
                         'unlockAttempts', 'unlockLockedUntil', 'format_version']);
     await clearSession();
     _contacts          = {};
     _globalOn          = true;
+    _sessionIdentity   = null;
     _sessionPassphrase = null;
     await bgSend({ type: 'RELOCK' });
-    document.getElementById('btn-goto-setup').hidden = true;
-    document.getElementById('passphrase-input').value = '';
-    document.getElementById('unlock-error').hidden = true;
-    document.getElementById('setup-passphrase').value  = '';
-    document.getElementById('setup-passphrase2').value = '';
-    document.getElementById('setup-error').hidden      = true;
+    document.getElementById('btn-goto-setup').hidden   = true;
+    document.getElementById('passphrase-input').value  = '';
+    document.getElementById('unlock-error').hidden     = true;
+    if (clearSetupFields) {
+      document.getElementById('setup-passphrase').value  = '';
+      document.getElementById('setup-passphrase2').value = '';
+      document.getElementById('setup-error').hidden      = true;
+    }
     show('setup');
+  }
+
+  document.getElementById('btn-reset-confirm').addEventListener('click', async () => {
+    document.getElementById('modal-reset-keypair').hidden = true;
+    await resetToSetupScreen(true);
   });
 
   // ─── Passphrase lockdown ──────────────────────────────────────────────────────
@@ -768,6 +747,7 @@
   }
 
   async function doUnlock() {
+    await cryptoReady;
     // Synchronous re-entrance guard — must be the very first operation so that a
     // double-click cannot queue two concurrent Argon2id derivations before the
     // button has had a chance to disable itself.
@@ -814,20 +794,34 @@
       try {
         identity = await decryptIdentityBlob(blobB64, passphrase);
       } catch (workerErr) {
-        if (workerErr.message === 'OUTDATED_FORMAT') throw workerErr;
+        if (workerErr.message === 'OUTDATED_FORMAT' ||
+          workerErr.message === 'CORRUPT_BLOB') throw workerErr;
         // Any other decryption failure → wrong passphrase.
         _decryptFailed = true;
         throw workerErr;
       }
 
       const identityLines = identity.split('\n');
-      if (!identityLines[0].startsWith('AGE-SECRET-KEY-1')) {
-        // Decrypted but produced garbage — treat as wrong passphrase.
+      if (!identityLines[0].startsWith('AGE-SECRET-KEY-1') &&
+          !identityLines[0].startsWith('AGE-SECRET-KEY-PQ-1')) {
         _decryptFailed = true;
         throw new Error('Decrypted data is not a valid age identity.');
       }
-      if (!identityLines[1]?.startsWith('ed25519priv:')) {
-        throw new Error('Keypair missing Ed25519 signing key — please reset and generate a new keypair.');
+      if (!identityLines[1]?.startsWith('mldsa87seed:')) {
+        throw new Error('Keypair missing ML-DSA-87 seed — please reset and generate a new keypair.');
+      }
+
+      // Re-derive the ML-DSA-87 verifying key deterministically from the stored seed.
+      const mldsaSeed = fromB64(identityLines[1].slice('mldsa87seed:'.length));
+      const mldsaPub = ml_dsa87_verifying_key_from_seed(mldsaSeed);
+      const mldsaPubB64 = toB64(mldsaPub);
+
+      // Rebuild the full recipient string if it was stored without the suffix
+      // (migration: old entries may not have the ;mldsa87: component yet).
+      let storedRecipient = await getAgeRecipient();
+      if (storedRecipient && !storedRecipient.includes(';mldsa87:')) {
+        storedRecipient = storedRecipient + ';mldsa87:' + mldsaPubB64;
+        await store.set({ ageRecipient: storedRecipient });
       }
 
       await clearFailedAttempts();
@@ -843,10 +837,12 @@
       await showMain();
 
     } catch (e) {
-      if (e.message === 'OUTDATED_FORMAT') {
+      if (e.message === 'CORRUPT_BLOB') {
+        showErr(errEl, 'The stored key blob appears truncated or corrupt. Please re-import from a backup.');
+      } else if (e.message === 'OUTDATED_FORMAT') {
         showErr(errEl,
           'Your identity format is outdated. Please regenerate your key or re-import from a backup.');
-        await store.remove(['contactsSalt', 'contactsEnc']);
+        await store.remove(['contactsSaltB64', 'contactsEnc']);
       } else if (_decryptFailed) {
         // Wrong passphrase — record against lockdown counter.
         await recordFailedAttempt();
@@ -884,9 +880,7 @@
     strengthLbl.textContent      = p.length ? ['Too short','Weak','Weak','Fair','Good','Strong','Very strong'][score] : '';
   });
 
-  // Returns true if every character in s is printable ASCII (U+0020–U+007E).
-  // Excludes control characters and non-ASCII Unicode that could interfere with
-  // JSON serialisation, storage round-trips, or future protocol fields.
+  // Rejects non-ASCII and control chars that could break JSON serialisation or protocol fields.
   function isPrintableAscii(s) {
     return /^[\x20-\x7E]+$/.test(s);
   }
@@ -902,6 +896,7 @@
   }
 
   document.getElementById('btn-generate').addEventListener('click', async () => {
+    await cryptoReady;
     const pass  = setupPassEl.value;
     const pass2 = document.getElementById('setup-passphrase2').value;
     const errEl = document.getElementById('setup-error');
@@ -916,17 +911,29 @@
     document.getElementById('setup-spinner').hidden = false;
 
     try {
-      const identity  = await generateIdentity();
+      const identity  = await generateHybridIdentity();
       const recipient = await identityToRecipient(identity);
 
-      const sigPair    = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
-      const sigPrivRaw = await crypto.subtle.exportKey('pkcs8', sigPair.privateKey);
-      const sigPubRaw  = await crypto.subtle.exportKey('raw',   sigPair.publicKey);
-      const sigPrivB64 = bytesToBase64Url(new Uint8Array(sigPrivRaw));
-      const sigPubB64  = bytesToBase64Url(new Uint8Array(sigPubRaw));
+      // Generate ML-DSA-87 keypair for message authentication.
+      // ml_dsa87_keygen() returns seed(32)||verifyingKey(2592) = 2624 bytes total.
+      // We store only the seed — the verifying key is re-derived at unlock time
+      // via ml_dsa87_verifying_key_from_seed(seed).  This keeps the identity
+      // blob compact and makes the mldsa87pub: line unnecessary.
+      const mldsaRaw     = ml_dsa87_keygen();              // 2624 bytes: seed(32)||vk(2592)
+      const mldsaSeed    = mldsaRaw.slice(0, 32);          // 32-byte seed — the private key
+      const mldsaPub     = mldsaRaw.slice(32);             // 2592-byte verifying key
+      const mldsaSeedB64 = toB64(mldsaSeed);
+      const mldsaPubB64  = toB64(mldsaPub);
 
-      const identityBlob  = identity + '\ned25519priv:' + sigPrivB64;
-      const fullRecipient = recipient + ';ed25519:' + sigPubB64;
+      // Identity blob (2 lines):
+      //   AGE-SECRET-KEY-PQ-1… — age ML-KEM-768×X25519 hybrid private key
+      //   mldsa87seed:<b64>     — 32-byte ML-DSA-87 seed (standard base64, 44 chars)
+      //
+      // The seed is all that is stored.  At unlock the verifying key is re-derived
+      // via ml_dsa87_verifying_key_from_seed(seed), so both signing and recipient
+      // strings can always be reconstructed without storing the large keys.
+      const identityBlob  = identity + '\nmldsa87seed:' + mldsaSeedB64;
+      const fullRecipient = recipient + ';mldsa87:' + mldsaPubB64;
 
       const envelopeB64 = await encryptIdentityBlob(identityBlob, pass);
 
@@ -955,41 +962,39 @@
 
   // ─── Import existing keypair ─────────────────────────────────────────────────
 
-  const DRAFT_TTL           = 10 * 60 * 1000;
+  const DRAFT_TTL = 10 * 60 * 1000;
+
+  function makeDraftManager(sessionKey, fieldIds) {
+    async function save() {
+      const draft = { ts: Date.now() };
+      fieldIds.forEach(id => { draft[id] = document.getElementById(id).value; });
+      try { await chrome.storage.session.set({ [sessionKey]: draft }); } catch {}
+    }
+    async function restore() {
+      try {
+        const result = await chrome.storage.session.get(sessionKey);
+        const draft = result[sessionKey];
+        if (!draft || Date.now() - draft.ts > DRAFT_TTL) return false;
+        fieldIds.forEach(id => { if (draft[id]) document.getElementById(id).value = draft[id]; });
+        return fieldIds.some(id => document.getElementById(id).value.trim());
+      } catch { return false; }
+    }
+    async function clear() {
+      try { await chrome.storage.session.remove(sessionKey); } catch {}
+    }
+    return { save, restore, clear };
+  }
+
   const IMPORT_DRAFT_FIELDS = ['import-blob', 'import-export-passphrase', 'import-passphrase', 'import-passphrase2'];
-
-  async function saveImportDraft() {
-    const draft = { ts: Date.now() };
-    IMPORT_DRAFT_FIELDS.forEach(id => { draft[id] = document.getElementById(id).value; });
-    try {
-      if (chrome.storage.session)
-        await new Promise(r => chrome.storage.session.set({ import_draft: draft }, r));
-    } catch {}
-  }
-
-  async function restoreImportDraft() {
-    try {
-      if (!chrome.storage.session) return false;
-      const { import_draft: draft } =
-        await new Promise(res => chrome.storage.session.get('import_draft', res));
-      if (!draft || Date.now() - draft.ts > DRAFT_TTL) return false;
-      IMPORT_DRAFT_FIELDS.forEach(id => { if (draft[id]) document.getElementById(id).value = draft[id]; });
-      return IMPORT_DRAFT_FIELDS.some(id => document.getElementById(id).value.trim());
-    } catch { return false; }
-  }
-
-  async function clearImportDraft() {
-    try {
-      if (chrome.storage.session)
-        await new Promise(r => chrome.storage.session.remove('import_draft', r));
-    } catch {}
-  }
+  const { save: saveImportDraft, restore: restoreImportDraft, clear: clearImportDraft } =
+    makeDraftManager('import_draft', IMPORT_DRAFT_FIELDS);
 
   IMPORT_DRAFT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveImportDraft));
   document.getElementById('btn-show-import').addEventListener('click', () => show('import'));
   document.getElementById('btn-back-import').addEventListener('click', () => show('setup'));
 
   document.getElementById('btn-import').addEventListener('click', async () => {
+    await cryptoReady;
     const encryptedBlob  = document.getElementById('import-blob').value.trim();
     const exportPass     = document.getElementById('import-export-passphrase').value;
     const newPass        = document.getElementById('import-passphrase').value;
@@ -1016,6 +1021,9 @@
       try {
         identityBlob = await decryptIdentityBlob(encryptedBlob, exportPass);
       } catch (e) {
+        if (e.message === 'CORRUPT_BLOB') {
+          throw new Error('The pasted blob appears truncated or corrupt. Please copy it again in full.');
+        }
         if (e.message === 'OUTDATED_FORMAT') {
           throw new Error('This export was created with an older version of the extension. ' +
             'Please regenerate your keypair on the original device and export again.');
@@ -1024,22 +1032,19 @@
       }
 
       const lines = identityBlob.split('\n');
-      if (!lines[0].startsWith('AGE-SECRET-KEY-1'))
-        throw new Error('Decrypted content is not a valid age identity (expected AGE-SECRET-KEY-1…).');
-      if (!lines[1]?.startsWith('ed25519priv:'))
-        throw new Error('Decrypted identity is missing an Ed25519 signing key (expected ed25519priv:…).');
+      if (!lines[0].startsWith('AGE-SECRET-KEY-1') && !lines[0].startsWith('AGE-SECRET-KEY-PQ-1'))
+        throw new Error('Decrypted content is not a valid age identity (expected AGE-SECRET-KEY-1… or AGE-SECRET-KEY-PQ-1…).');
+      if (!lines[1]?.startsWith('mldsa87seed:'))
+        throw new Error('Decrypted identity is missing an ML-DSA-87 seed (expected mldsa87seed:…).');
 
       const identity  = lines[0];
       const recipient = await identityToRecipient(identity);
 
-      const sigPrivBytes = base64UrlToBytes(lines[1].slice('ed25519priv:'.length));
-      const sigPrivKey   = await crypto.subtle.importKey('pkcs8', sigPrivBytes, { name: 'Ed25519' }, true, ['sign']);
-      const jwk          = await crypto.subtle.exportKey('jwk', sigPrivKey);
-      const sigPubKey    = await crypto.subtle.importKey('jwk',
-        { kty: jwk.kty, crv: jwk.crv, x: jwk.x, key_ops: ['verify'] },
-        { name: 'Ed25519' }, true, ['verify']);
-      const sigPubB64    = bytesToBase64Url(new Uint8Array(await crypto.subtle.exportKey('raw', sigPubKey)));
-      const fullRecipient = recipient + ';ed25519:' + sigPubB64;
+      // Re-derive the ML-DSA-87 verifying key from the stored seed.
+      const mldsaSeed    = fromB64(lines[1].slice('mldsa87seed:'.length));
+      const mldsaPub     = ml_dsa87_verifying_key_from_seed(mldsaSeed);
+      const mldsaPubB64  = toB64(mldsaPub);
+      const fullRecipient = recipient + ';mldsa87:' + mldsaPubB64;
 
       const envelopeB64 = await encryptIdentityBlob(identityBlob, newPass);
 
@@ -1122,22 +1127,25 @@
 
   // ─── Contact validation ───────────────────────────────────────────────────────
 
-  // Validate a full age recipient string (age1… + ;ed25519:… suffix).
+  // Validate a full age recipient string (age1pq1… + ;mldsa87:… suffix).
   // Returns null on success, error string on failure.
-  async function validateRecipient(recipient) {
-    if (!recipient.startsWith('age1'))
-      return 'Public key must start with "age1…".';
+  // Only X25519+MLKEM768 hybrid keys (age1pq1…) are accepted.
+  // Validates structurally — bech32 charset + length bounds for the age1pq1 portion,
+  // and the existing regex for the ML-DSA-87 suffix — without performing live
+  // key agreement.  Hybrid keys are ~1958 chars; the body allows '1' since the
+  // bech32 format uses it as an internal separator in the data payload.
+  function validateRecipient(recipient) {
+    if (!recipient.startsWith('age1pq1'))
+      return 'Public key must start with "age1pq1…" (X25519+MLKEM768 hybrid key).';
     if (recipient.startsWith('AGE-SECRET-KEY-'))
-      return 'That is a private key — paste their public key (age1…) instead.';
-    if (!/;ed25519:[A-Za-z0-9_-]{40,}$/.test(recipient))
-      return 'Public key must be the full key including the Ed25519 component (age1…;ed25519:…).';
-    try {
-      const test = new Encrypter();
-      test.addRecipient(recipient.split(';')[0]);
-      await test.encrypt(new TextEncoder().encode(''));
-    } catch (e) {
-      return 'Key validation failed: ' + e.message;
-    }
+      return 'That is a private key — paste their public key (age1pq1…) instead.';
+    if (!/;mldsa87:[A-Za-z0-9+/]+=*$/.test(recipient))
+      return 'Public key must be the full key including the ML-DSA-87 component (age1pq1…;mldsa87:…).';
+    // Validate the age1pq1 portion: bech32 charset including '1' (used as an
+    // internal separator in the hybrid format), length ~1958 chars total.
+    const agePart = recipient.split(';')[0];
+    if (!/^age1pq1[ac-hj-np-z02-91]{50,1960}$/.test(agePart))
+      return 'age1pq1... key appears malformed — check that it was copied correctly.';
     return null;
   }
 
@@ -1168,6 +1176,36 @@
     return null;
   }
 
+  // validateGroupFields: mirrors validateContactFields for group add/edit.
+  // editingUUID: UUID being edited (null for new groups) — excluded from duplicate check.
+  function validateGroupFields(channelId, name, editingUUID = null) {
+    if (!channelId) return 'Channel ID is required.';
+    if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
+      return `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`;
+    if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
+      return `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`;
+    if (!isPrintableAscii(name)) return 'Name must contain printable ASCII characters only.';
+    for (const [uuid, c] of Object.entries(_contacts)) {
+      if (uuid === editingUUID) continue;
+      if (c.channelId === channelId) return 'A contact or group with this Channel ID already exists.';
+    }
+    return null;
+  }
+
+  // validateServerFields: mirrors validateContactFields for server add/edit.
+  // editingUUID: UUID being edited (null for new servers) — excluded from duplicate check.
+  function validateServerFields(serverId, name, editingUUID = null) {
+    if (!serverId || !/^\d{1,20}$/.test(serverId)) return 'Server ID must be 1–20 digits.';
+    if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
+      return `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`;
+    if (!isPrintableAscii(name)) return 'Name must contain printable ASCII characters only.';
+    for (const [uuid, c] of Object.entries(_contacts)) {
+      if (uuid === editingUUID) continue;
+      if (c.type === 'server' && c.serverId === serverId) return 'A server with this Server ID already exists.';
+    }
+    return null;
+  }
+
   // ─── Contacts list ────────────────────────────────────────────────────────────
 
   function renderContacts(query = '') {
@@ -1184,6 +1222,12 @@
       return true;
     });
 
+    entries.sort((a, b) => {
+      const la = ((a.type === 'contact' || !a.type) ? a.username : a.name) ?? '';
+      const lb = ((b.type === 'contact' || !b.type) ? b.username : b.name) ?? '';
+      return la.localeCompare(lb, undefined, { sensitivity: 'base' });
+    });
+
     empty.hidden = entries.length > 0;
 
     entries.forEach(c => {
@@ -1192,7 +1236,7 @@
       card.className = 'contact-card';
 
       const type   = c.type ?? 'contact';
-      const icon   = type === 'group' ? '👥' : type === 'server' ? '🏠' : '👤';
+      const icon   = type === 'group' ? '👥' : type === 'server' ? '🌐' : '👤';
       const label  = type === 'contact' ? c.username : c.name;
 
       const avatar = Object.assign(document.createElement('div'), {
@@ -1241,7 +1285,7 @@
 
   document.getElementById('btn-add-contact').addEventListener('click', async () => {
     resetAddScreen();
-    const channelId = await inferChannelId();
+    const channelId = await inferDmChannelId();
     if (channelId) document.getElementById('contact-channel-id').value = channelId;
     show('add-contact');
   });
@@ -1253,10 +1297,10 @@
     document.getElementById('add-fields-server').hidden  = type !== 'server';
     document.getElementById('add-contact-error').hidden  = true;
     if (type === 'contact') {
-      const channelId = await inferChannelId();
+      const channelId = await inferDmChannelId();
       if (channelId) document.getElementById('contact-channel-id').value = channelId;
     } else if (type === 'group') {
-      const channelId = await inferChannelId();
+      const channelId = await inferDmChannelId();
       if (channelId) document.getElementById('group-channel-id').value = channelId;
     } else if (type === 'server') {
       const serverId = await inferServerId();
@@ -1267,53 +1311,22 @@
   // ─── Add contact / group / server ─────────────────────────────────────────────
 
   const DRAFT_FIELDS = ['contact-channel-id', 'contact-username', 'contact-key'];
-
-  async function saveDraft() {
-    const draft = { ts: Date.now() };
-    DRAFT_FIELDS.forEach(id => { draft[id] = document.getElementById(id).value; });
-    try {
-      if (chrome.storage.session)
-        await new Promise(r => chrome.storage.session.set({ add_contact_draft: draft }, r));
-    } catch {}
-  }
-
-  async function restoreDraft() {
-    try {
-      if (!chrome.storage.session) return false;
-      const { add_contact_draft: draft } =
-        await new Promise(res => chrome.storage.session.get('add_contact_draft', res));
-      if (!draft || Date.now() - draft.ts > DRAFT_TTL) return false;
-      DRAFT_FIELDS.forEach(id => { if (draft[id]) document.getElementById(id).value = draft[id]; });
-      return DRAFT_FIELDS.some(id => draft[id]?.trim());
-    } catch { return false; }
-  }
-
-  async function clearDraft() {
-    try {
-      if (chrome.storage.session)
-        await new Promise(r => chrome.storage.session.remove('add_contact_draft', r));
-    } catch {}
-  }
+  const { save: saveDraft, restore: restoreDraft, clear: clearDraft } =
+    makeDraftManager('add_contact_draft', DRAFT_FIELDS);
 
   DRAFT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveDraft));
 
-  async function inferChannelId() {
-    return new Promise(resolve => {
-      chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-        const m = (tabs[0]?.url ?? '').match(/discord\.com\/channels\/@me\/(\d+)/);
-        resolve(m ? m[1] : null);
-      });
-    });
+  async function inferFromTab(pattern) {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const m = (tabs[0]?.url ?? '').match(pattern);
+    return m ? m[1] : null;
   }
 
-  async function inferServerId() {
-    return new Promise(resolve => {
-      chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
-        const m = (tabs[0]?.url ?? '').match(/discord\.com\/channels\/(\d+)\/\d+/);
-        resolve(m ? m[1] : null);
-      });
-    });
-  }
+  // inferDmChannelId: extracts the channel ID from DM URLs only
+  //   (/channels/@me/<id>).  Returns null for server channel URLs
+  //   (/channels/<serverId>/<channelId>) — use inferServerId for those.
+  const inferDmChannelId = () => inferFromTab(/discord\.com\/channels\/@me\/(\d+)/);
+  const inferServerId    = () => inferFromTab(/discord\.com\/channels\/(\d+)\/\d+/);
 
   document.getElementById('btn-back-add').addEventListener('click', async () => {
     await clearDraft();
@@ -1333,51 +1346,37 @@
 
       const fieldErr = validateContactFields(channelId, username, recipient, null);
       if (fieldErr) { showErr(errEl, fieldErr); return; }
-      const recipErr = await validateRecipient(recipient);
+      const recipErr = validateRecipient(recipient);
       if (recipErr)  { showErr(errEl, recipErr); return; }
 
       const contactCount = Object.values(_contacts).filter(c => c.type === 'contact' || !c.type).length;
       if (contactCount >= MAX_CONTACTS) { showErr(errEl, `Contact limit reached (${MAX_CONTACTS} max).`); return; }
 
-      const uuid = generateUUID();
+      const uuid = crypto.randomUUID();
       _contacts[uuid] = { id: uuid, type: 'contact', channelId, username, ageRecipient: recipient, enabled: true };
 
     } else if (type === 'group') {
       const channelId = document.getElementById('group-channel-id').value.trim();
       const name      = document.getElementById('group-name').value.trim();
 
-      if (!channelId) { showErr(errEl, 'Channel ID is required.'); return; }
-      if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
-        { showErr(errEl, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`); return; }
-      if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
-        { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
-      if (!isPrintableAscii(name))
-        { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
-      for (const c of Object.values(_contacts)) {
-        if (c.channelId === channelId) { showErr(errEl, 'A contact or group with this Channel ID already exists.'); return; }
-      }
+      const groupErr = validateGroupFields(channelId, name, null);
+      if (groupErr) { showErr(errEl, groupErr); return; }
       if (_groupAddMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
 
-      const uuid = generateUUID();
+      const uuid = crypto.randomUUID();
       _contacts[uuid] = { id: uuid, type: 'group', channelId, name, memberIds: _groupAddMembers, enabled: true };
 
     } else if (type === 'server') {
       const serverId = document.getElementById('server-id-input').value.trim();
       const name     = document.getElementById('server-name').value.trim();
 
-      if (!serverId || !/^\d{1,20}$/.test(serverId)) { showErr(errEl, 'Server ID must be 1–20 digits.'); return; }
-      if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
-        { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
-      if (!isPrintableAscii(name))
-        { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
+      const serverErr = validateServerFields(serverId, name, null);
+      if (serverErr) { showErr(errEl, serverErr); return; }
       const serverCount = Object.values(_contacts).filter(c => c.type === 'server').length;
       if (serverCount >= MAX_SERVERS) { showErr(errEl, `Server limit reached (${MAX_SERVERS} max).`); return; }
-      for (const c of Object.values(_contacts)) {
-        if (c.type === 'server' && c.serverId === serverId) { showErr(errEl, 'A server with this Server ID already exists.'); return; }
-      }
       if (_serverAddMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
 
-      const uuid = generateUUID();
+      const uuid = crypto.randomUUID();
       _contacts[uuid] = { id: uuid, type: 'server', serverId, name, memberIds: _serverAddMembers, enabled: true };
     }
 
@@ -1486,7 +1485,7 @@
     const fieldErr = validateContactFields(channelId, username, recipient, _editingId);
     if (fieldErr) { showErr(errEl, fieldErr); return; }
 
-    const recipErr = await validateRecipient(recipient);
+    const recipErr = validateRecipient(recipient);
     if (recipErr)  { showErr(errEl, recipErr); return; }
 
     if (_editingId && _contacts[_editingId]) {
@@ -1668,17 +1667,8 @@
     const errEl     = document.getElementById('edit-group-error');
     errEl.hidden    = true;
 
-    if (!channelId) { showErr(errEl, 'Channel ID is required.'); return; }
-    if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
-      { showErr(errEl, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`); return; }
-    if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
-      { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
-    if (!isPrintableAscii(name))
-      { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
-    for (const [uuid, c] of Object.entries(_contacts)) {
-      if (uuid === _editingGroupId) continue;
-      if (c.channelId === channelId) { showErr(errEl, 'A contact or group with this Channel ID already exists.'); return; }
-    }
+    const groupErr = validateGroupFields(channelId, name, _editingGroupId);
+    if (groupErr) { showErr(errEl, groupErr); return; }
     if (_groupEditMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
 
     if (_editingGroupId && _contacts[_editingGroupId]) {
@@ -1779,15 +1769,8 @@
     const errEl    = document.getElementById('edit-server-error');
     errEl.hidden   = true;
 
-    if (!serverId || !/^\d{1,20}$/.test(serverId)) { showErr(errEl, 'Server ID must be 1–20 digits.'); return; }
-    if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
-      { showErr(errEl, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`); return; }
-    if (!isPrintableAscii(name))
-      { showErr(errEl, 'Name must contain printable ASCII characters only.'); return; }
-    for (const [uuid, c] of Object.entries(_contacts)) {
-      if (uuid === _editingServerId) continue;
-      if (c.type === 'server' && c.serverId === serverId) { showErr(errEl, 'A server with this Server ID already exists.'); return; }
-    }
+    const serverErr = validateServerFields(serverId, name, _editingServerId);
+    if (serverErr) { showErr(errEl, serverErr); return; }
     if (_serverEditMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
 
     if (_editingServerId && _contacts[_editingServerId]) {
@@ -1864,9 +1847,9 @@
     const blob = new Blob([json], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
 
-    const datePart = new Date()
-      .toLocaleDateString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' })
-      .replace(/[\/\\:]/g, '-');
+    // toISOString() always produces YYYY-MM-DD regardless of locale/OS settings,
+    // giving a consistent, sortable filename across all environments.
+    const datePart = new Date().toISOString().slice(0, 10);
 
     const a = Object.assign(document.createElement('a'), {
       href:     url,
@@ -1954,7 +1937,6 @@
     for (let idx = 0; idx < entries.length; idx++) {
       const entry = entries[idx] ?? {};
 
-      // Basic: must have a string UUID and known type.
       if (typeof entry.id !== 'string' || !entry.id)                   { skipped++; continue; }
       if (dupUUIDIndices.has(idx))                                      { skipped++; continue; }
       if (dupFieldIndices.has(idx))                                     { skipped++; continue; }
@@ -1969,7 +1951,7 @@
         if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID) { skipped++; continue; }
         if (typeof username !== 'string' || username.length < MIN_USERNAME || username.length > MAX_USERNAME)    { skipped++; continue; }
         if (!isPrintableAscii(username))                                                                          { skipped++; continue; }
-        if (typeof ageRecipient !== 'string' || !ageRecipient.startsWith('age1') || !/;ed25519:[A-Za-z0-9_-]{40,}$/.test(ageRecipient)) { skipped++; continue; }
+        if (typeof ageRecipient !== 'string' || !ageRecipient.startsWith('age1pq1') || !/;mldsa87:[A-Za-z0-9+/]+=*$/.test(ageRecipient)) { skipped++; continue; }
         if (Object.prototype.hasOwnProperty.call(_contacts, id))        { skipped++; continue; }
 
         const existingForChannel = existingChannelIds.get(channelId);
@@ -2052,17 +2034,15 @@
     if (_importHelperTabId === null) return;
     const id = _importHelperTabId;
     _importHelperTabId = null;
-    chrome.tabs.remove(id, () => void chrome.runtime.lastError);
+    chrome.tabs.remove(id).catch(() => {});
   }
 
   async function checkPendingImport() {
     try {
-      if (!chrome.storage.session) return;
-      const data = await new Promise(r =>
-        chrome.storage.session.get(['pending_import', 'pending_import_tab'], r));
+      const data = await chrome.storage.session.get(['pending_import', 'pending_import_tab']);
       if (!data.pending_import) return;
       _importHelperTabId = data.pending_import_tab ?? null;
-      await new Promise(r => chrome.storage.session.remove(['pending_import', 'pending_import_tab'], r));
+      await chrome.storage.session.remove(['pending_import', 'pending_import_tab']);
       await doImportContacts(data.pending_import);
     } catch {}
   }
@@ -2105,24 +2085,6 @@
     }, 1800);
   });
 
-  // ─── Manage keypair sheet (kept for backwards compat but no longer opened) ────
-
-  function openManageKeypairSheet() {
-    document.getElementById('sheet-manage-keypair').hidden          = false;
-    document.getElementById('sheet-manage-keypair-backdrop').hidden = false;
-  }
-
-  function closeManageKeypairSheet() {
-    document.getElementById('sheet-manage-keypair').hidden          = true;
-    document.getElementById('sheet-manage-keypair-backdrop').hidden = true;
-  }
-
-  // btn-manage-keypair is hidden in the new layout; these listeners are kept for safety.
-  if (document.getElementById('btn-manage-keypair'))
-    document.getElementById('btn-manage-keypair').addEventListener('click', openManageKeypairSheet);
-  document.getElementById('btn-close-manage-keypair').addEventListener('click', closeManageKeypairSheet);
-  document.getElementById('sheet-manage-keypair-backdrop').addEventListener('click', closeManageKeypairSheet);
-
   // ─── Export private key ───────────────────────────────────────────────────────
 
   function resetExportModal() {
@@ -2137,7 +2099,6 @@
   }
 
   document.getElementById('btn-export-key').addEventListener('click', () => {
-    closeManageKeypairSheet();
     resetExportModal();
     document.getElementById('modal-export-key').hidden = false;
   });
@@ -2170,25 +2131,13 @@
     spinner.hidden  = false;
 
     try {
-      const stored = await store.get(['identity_blob', 'ageEncryptedIdentity']);
-      const blobB64 = stored.identity_blob || stored.ageEncryptedIdentity;
-      if (!blobB64) throw new Error('No keypair found.');
-      if (!stored.identity_blob && stored.ageEncryptedIdentity)
-        throw new Error('OUTDATED_FORMAT');
-
-      let identity;
-      try {
-        identity = await decryptIdentityBlob(blobB64, unlockPass);
-      } catch (e) {
-        if (e.message === 'OUTDATED_FORMAT') throw e;
-        throw new Error('Wrong unlock passphrase.');
-      }
+      const identity = await loadAndDecryptIdentity(unlockPass, 'Wrong unlock passphrase.');
 
       btn.textContent = 'Encrypting…';
       const envelopeB64 = await encryptIdentityBlob(identity, exportPass);
 
       resetExportModal();
-      document.getElementById('export-key-blob').value       = envelopeB64;
+      document.getElementById('export-key-blob').value = envelopeB64;
       document.getElementById('modal-export-display').hidden = false;
 
     } catch (e) {
@@ -2216,7 +2165,6 @@
   // ─── Keypair regeneration ─────────────────────────────────────────────────────
 
   document.getElementById('btn-regen').addEventListener('click', () => {
-    closeManageKeypairSheet();
     document.getElementById('regen-confirm-input').value   = '';
     document.getElementById('btn-regen-confirm').disabled  = true;
     document.getElementById('modal-regen').hidden          = false;
@@ -2230,11 +2178,10 @@
   document.getElementById('btn-regen-confirm').addEventListener('click', async () => {
     document.getElementById('modal-regen').hidden = true;
     Object.values(_contacts).forEach(c => { c.enabled = false; });
-    // Contacts are stored plaintext temporarily until the new passphrase is set
-    // at next setup — boot() migration re-encrypts them on first unlock.
+    // Contacts are intentionally discarded on keypair regeneration — the new
+    // identity is a new encryption context and all prior public keys are stale.
     await store.remove(['ageRecipient', 'identity_blob', 'ageEncryptedIdentity',
-                        'contactsSalt', 'contactsEnc', 'format_version']);
-    await store.set({ contacts: _contacts });
+                        'contactsSaltB64', 'contactsEnc', 'format_version']);
     await clearSession();
     _sessionIdentity   = null;
     _sessionPassphrase = null;
@@ -2262,19 +2209,7 @@
   });
   document.getElementById('btn-clear-data-confirm').addEventListener('click', async () => {
     document.getElementById('modal-clear-data').hidden = true;
-    await store.remove(['ageRecipient', 'identity_blob', 'ageEncryptedIdentity',
-                        'contactsEnc', 'contactsSalt', 'contacts', 'globalOn',
-                        'unlockAttempts', 'unlockLockedUntil', 'format_version']);
-    await clearSession();
-    _contacts          = {};
-    _globalOn          = true;
-    _sessionIdentity   = null;
-    _sessionPassphrase = null;
-    await bgSend({ type: 'RELOCK' });
-    document.getElementById('passphrase-input').value = '';
-    document.getElementById('unlock-error').hidden    = true;
-    document.getElementById('btn-goto-setup').hidden  = true;
-    show('setup');
+    await resetToSetupScreen(false);
   });
 
   // ─── Change passphrase ────────────────────────────────────────────────────────
@@ -2324,19 +2259,7 @@
     spinner.hidden  = false;
 
     try {
-      const stored = await store.get(['identity_blob', 'ageEncryptedIdentity']);
-      const blobB64 = stored.identity_blob || stored.ageEncryptedIdentity;
-      if (!blobB64) throw new Error('No keypair found.');
-      if (!stored.identity_blob && stored.ageEncryptedIdentity)
-        throw new Error('OUTDATED_FORMAT');
-
-      let identity;
-      try {
-        identity = await decryptIdentityBlob(blobB64, currentPass);
-      } catch (e) {
-        if (e.message === 'OUTDATED_FORMAT') throw e;
-        throw new Error('Wrong current passphrase.');
-      }
+      const identity = await loadAndDecryptIdentity(currentPass, 'Wrong current passphrase.');
 
       btn.textContent = 'Re-encrypting…';
       const envelopeB64 = await encryptIdentityBlob(identity, newPass);
@@ -2346,7 +2269,7 @@
       // passphrase with a fresh salt so old ciphertext is invalidated.
       _sessionPassphrase = newPass;
       await setSessionPassphrase(newPass);
-      await store.remove(['contactsSalt', 'contactsEnc']);
+      await store.remove(['contactsSaltB64', 'contactsEnc']);
       await bgUnlock(identity, newPass);
       await saveContacts(_contacts);
 
@@ -2369,42 +2292,43 @@
 
   // ─── Utilities ────────────────────────────────────────────────────────────────
 
+  async function loadAndDecryptIdentity(passphrase, wrongPassErr) {
+    const stored = await store.get(['identity_blob', 'ageEncryptedIdentity']);
+    const blobB64 = stored.identity_blob || stored.ageEncryptedIdentity;
+    if (!blobB64) throw new Error('No keypair found.');
+    if (!stored.identity_blob && stored.ageEncryptedIdentity)
+      throw new Error('OUTDATED_FORMAT');
+    try {
+      return await decryptIdentityBlob(blobB64, passphrase);
+    } catch (e) {
+      if (e.message === 'OUTDATED_FORMAT') throw e;
+      throw new Error(wrongPassErr);
+    }
+  }
+
   function showErr(el, msg) { el.textContent = msg; el.hidden = false; }
+
+  // ─── Base64 helpers ───────────────────────────────────────────────────────────
+  const toB64   = bytes => bytes.toBase64();
+  const fromB64 = b64   => Uint8Array.fromBase64(b64);
 
   async function keyFingerprint(recipient) {
     if (!recipient) return '(no key)';
     try {
-      const { blake3 } = await import(chrome.runtime.getURL('lib/awasm-noble.min.js'));
-      const bytes = blake3(new TextEncoder().encode(recipient), { dkLen: 128 });
-      const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+      // 64 bytes → 128 hex chars, displayed as 8 groups of 4 per line.
+      const bytes = shake256(new TextEncoder().encode(recipient), 64);
+
+      let hex = '';
+      for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+      hex = hex.toUpperCase();
       return hex.match(/.{1,4}/g).reduce((lines, chunk, i) => {
         if (i % 8 === 0) lines.push('');
         lines[lines.length - 1] += (lines[lines.length - 1] ? ' ' : '') + chunk;
         return lines;
       }, []).join('\n');
     } catch {
-      if (recipient.length <= 28) return recipient;
       return recipient.slice(0, 16) + '…' + recipient.slice(-12);
     }
-  }
-
-  function bytesToBase64(bytes) {
-    let s = '';
-    for (const b of bytes) s += String.fromCharCode(b);
-    return btoa(s);
-  }
-
-  function bytesToBase64Url(bytes) {
-    return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  }
-
-  function base64UrlToBytes(str) {
-    let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    while (b64.length % 4) b64 += '=';
-    const bin = atob(b64);
-    const out  = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
   }
 
   // ─── About screen ────────────────────────────────────────────────────────────
@@ -2414,7 +2338,7 @@
   const _aboutLinks = {
     'about-repo-link':          'https://github.com/SenseiDeElite/discord-age-encryption',
     'about-typage-link':        'https://github.com/FiloSottile/typage/blob/main/LICENSE',
-    'about-awasm-noble-link':   'https://github.com/paulmillr/awasm-noble/blob/main/LICENSE',
+    'about-rustcrypto-link':    'https://opensource.org/license/MIT',
     'about-license-link':       'https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE',
   };
   Object.entries(_aboutLinks).forEach(([id, url]) => {
@@ -2422,8 +2346,8 @@
   });
 
   function showAbout() {
-    const ver = chrome.runtime.getManifest?.()?.version ?? '';
-    document.getElementById('about-version').textContent = ver ? 'v' + ver : '';
+    const ver = chrome.runtime.getManifest().version;
+    document.getElementById('about-version').textContent = 'v' + ver;
     show('about');
   }
 
