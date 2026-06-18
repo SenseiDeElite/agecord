@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Discord Age Encryption",
-  "version": "0.6.0",
-  "description": "End-to-end age encryption for Discord.",
+  "version": "0.7.0",
+  "description": "End-to-end post-quantum age encryption for Discord.",
   "browser_specific_settings": {
     "gecko": {
       "id": "{19e0c78a-600a-4739-8977-56ca5741df7e}",
-      "strict_min_version": "140.0",
+      "strict_min_version": "152.0",
       "update_url": "https://raw.githubusercontent.com/SenseiDeElite/discord-age-encryption/refs/heads/main/updates.json",
       "data_collection_permissions": {
         "required": [
@@ -25,7 +25,8 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://discord.com/*"
+    "https://discord.com/*",
+    "https://cdn.discordapp.com/*"
   ],
   "background": {
     "scripts": [
@@ -34,6 +35,16 @@
     "type": "module"
   },
   "content_scripts": [
+    {
+      "matches": [
+        "https://discord.com/*"
+      ],
+      "js": [
+        "content/upload-interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": [
         "https://discord.com/*"
@@ -56,8 +67,12 @@
       "resources": [
         "content/content.js",
         "content/emoji_map.js",
+        "content/highlight_map.js",
+        "content/file-crypto-worker.js",
+        "content/cdn-bridge.html",
+        "content/cdn-bridge.js",
         "lib/age.min.js",
-        "lib/awasm-noble.min.js"
+        "lib/rustcrypto-wasm.min.js"
       ],
       "matches": ["https://discord.com/*"]
     }
