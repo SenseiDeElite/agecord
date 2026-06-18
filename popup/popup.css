@@ -13,13 +13,9 @@
 
   /* Secondary — sky blue */
   --md-secondary:              #4fc3f7;
-  --md-on-secondary:           #003258;
-  --md-secondary-container:    #0277bd;
-  --md-on-secondary-container: #e1f5fe;
 
   /* Error */
   --md-error:                  #ffb4ab;
-  --md-on-error:               #690005;
   --md-error-container:        #93000a;
   --md-on-error-container:     #ffdad6;
 
@@ -644,9 +640,6 @@ html, body {
 .chip-on  { background: color-mix(in srgb, var(--md-primary) 15%, transparent); color: var(--md-primary); }
 .chip-off { background: var(--md-surface-container-highest); color: var(--md-on-surface-variant); }
 
-/* ── Contacts actions bar (Add / Export / Import) ────────────────────────── */
-/* (removed — buttons now live in the section-label row) */
-
 /* ── FAB / Add contact button ────────────────────────────────────────────── */
 .fab {
   display: flex;
@@ -692,14 +685,22 @@ html, body {
 }
 
 .my-key-card-text {
-  padding: 8px 10px;
+  padding: 8px 10px 8px 8px;
   font-family: 'Roboto Mono', 'Consolas', monospace;
   font-size: 10px;
   line-height: 1.55;
   color: var(--md-on-surface);
   word-break: break-all;
   white-space: pre-wrap;
+  max-height: 112px;
+  overflow-y: scroll;
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-outline) transparent;
 }
+
+.my-key-card-text::-webkit-scrollbar       { width: 6px; }
+.my-key-card-text::-webkit-scrollbar-track { background: var(--md-surface-container-high); border-radius: 0 0 var(--shape-xs) 0; }
+.my-key-card-text::-webkit-scrollbar-thumb { background: var(--md-outline); border-radius: 3px; }
 
 .key-box-label {
   font-size: 9.5px;
@@ -828,6 +829,16 @@ html, body {
   border-bottom: 1px solid var(--md-outline-variant);
   margin-bottom: 10px;
 }
+
+/* ── Modal label ─────────────────────────────────────────────────────────── */
+.modal-label {
+  font-size: 13px;
+  font-weight: 500;
+  margin-top: 8px;
+  display: block;
+}
+
+.modal-label + input { margin-top: 6px; }
 
 /* ── Modal ───────────────────────────────────────────────────────────────── */
 .modal-overlay {
