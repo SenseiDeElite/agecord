@@ -1,9 +1,9 @@
 Third-Party Notices
 ===================
 
-## typage
-Source: https://github.com/FiloSottile/typage
-License: BSD-3-Clause
+## [typage](https://github.com/FiloSottile/typage)
+[BSD 3-Clause "New" or "Revised" License](https://github.com/FiloSottile/typage/blob/main/LICENSE)
+```
 Copyright 2023 The age Authors
 
 Redistribution and use in source and binary forms, with or without
@@ -31,28 +31,28 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
 
-## awasm-noble
-Source: https://github.com/paulmillr/awasm-noble
-License: MIT
-The MIT License (MIT)
-
-Copyright (c) 2026 Paul Miller (https://paulmillr.com)
+## RustCrypto [ML-DSA](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), [ChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [Argon2](https://github.com/RustCrypto/password-hashes/tree/master/argon2) and [SHAKE](https://github.com/RustCrypto/XOFs/tree/master/shake)
+[MIT License](https://opensource.org/license/MIT)
+```
+Copyright (c) 2026 RustCrypto
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the “Software”), to deal
+of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
