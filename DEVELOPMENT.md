@@ -6,53 +6,61 @@ To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryp
 
 [**typage**](https://github.com/FiloSottile/typage)
 
-"A TypeScript implementation of the age file encryption format, available as an npm package or as a bundled .js file."
+*"A TypeScript implementation of the age file encryption format, available as an npm package or as a bundled .js file."*
 
 - Download the expected version. We generally bundle the [latest release](https://github.com/FiloSottile/typage/releases/latest).
 - Upon unpacking it, create a `entry.js` inside the extracted folder:
   
-  ```js
-  // entry.js
-  export { Encrypter, Decrypter, generateIdentity, identityToRecipient } from 'age-encryption';
-  ```
+```js
+export { Encrypter, Decrypter, generateHybridIdentity, identityToRecipient } from 'age-encryption';
+```
   
-- After that, run `npm ci` and `npm run build`.
+- After that, run:
+
+```sh
+npm ci --ignore-scripts && npm run build
+```
+
 - For bundling, use [esbuild](https://github.com/evanw/esbuild):
   
-  ```sh
-  esbuild entry.js \
-  --bundle \
-  --minify \
-  --format=esm \
-  --outfile=age.min.js
-  ```
-
-[**awasm-noble**](https://github.com/paulmillr/awasm-noble)
-
-"Auditable WASM implementation of cryptographic hashes & ciphers"
-
-- Download the expected version. We generally bundle the [latest release](https://github.com/paulmillr/awasm-noble/releases/latest).
-- Upon unpacking it, create a `entry.js` inside the extracted folder:
+```sh
+esbuild entry.js \
+      --bundle \
+      --format=esm \
+      --minify \
+      --charset=utf8 \
+      --tree-shaking=true \
+      --outfile=age.min.js
+```
   
-  ```js
-  // entry.js
-  export { argon2id, xchacha20poly1305, blake3 } from './targets/wasm/index.js';
-  ```
-  
-- After that, run `npm ci` and `npm run build`.
+[**Rust Crypto**](https://github.com/RustCrypto)
+
+*"Cryptographic algorithms written in pure Rust"*
+
+- Our project provides [rustcrypto-wasm](https://github.com/SenseiDeElite/discord-age-encryption/rustcrypto-wasm), a WebAssembly wrapper around RustCrypto implementations of [Argon2id](https://github.com/RustCrypto/password-hashes/tree/master/argon2), [XChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [SHAKE256](https://github.com/RustCrypto/XOFs/tree/master/shake), and [ML-DSA-87](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), built by compiling native Rust code to WebAssembly.
+- Make dependencies: [wasm-pack](https://github.com/wasm-bindgen/wasm-pack), [rust](https://github.com/rust-lang/rust) (including rust-wasm), [wasm-bindgen](https://github.com/wasm-bindgen/wasm-bindgen) and [binaryen](https://github.com/WebAssembly/binaryen).
+- Upon obtaining them, run:
+
+```sh
+wasm-pack build --target web --release
+```
+
 - For bundling, use [esbuild](https://github.com/evanw/esbuild):
   
-  ```sh
-  esbuild entry.js \
-  --bundle \
-  --minify \
-  --format=esm \
-  --outfile=awasm-noble.min.js
-  ```
+```sh
+esbuild entry.js \
+      --bundle \
+      --format=esm \
+      --minify \
+      --charset=utf8 \
+      --tree-shaking=true \
+      --loader:.wasm=binary \
+      --outfile=rustcrypto-wasm.min.js
+```
 
-After finishing, move them inside [/lib/](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib).
+After finishing, move the libraries to [/lib/](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib).
 
-For their respective licenses, see [`THIRD_PARTY_NOTICES.txt`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/THIRD_PARTY_NOTICES.txt).
+For their respective licenses, see [`NOTICES.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/NOTICES.md).
 
 ---
 
@@ -60,17 +68,17 @@ For their respective licenses, see [`THIRD_PARTY_NOTICES.txt`](https://github.co
 
 **Chromium**
 
-1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest);
+1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
 2. Unpack it;
-3. Remove unneeded files for this build: `/icons/icon.svg`, `manifest-firefox.json`, `README.md` and `updates.json`;
+3. Remove unnecessary files for this build: `/icons/icon.svg`, `manifest-firefox.json`, `README.md` and `updates.json`;
 4. Rename `manifest-chromium.json` to `manifest.json`;
 5. Zip everything inside the folder.
 
 **Firefox**
 
-1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest);
+1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
 2. Unpack it;
-3. Remove unneeded files for this build: `manifest-chromium.json` and `README.MD`;
+3. Remove unnecessary files for this build: `manifest-chromium.json` and `README.md`;
 4. Rename `manifest-firefox.json` to `manifest.json`;
 5. Zip everything inside the folder;
 6. Rename the file extension to `.xpi`.
