@@ -69,16 +69,16 @@ For their respective licenses, see [`NOTICES.md`](https://github.com/SenseiDeEli
 **Chromium**
 
 1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
-2. Unpack it;
-3. Remove unnecessary files for this build: `/icons/icon.svg`, `manifest-firefox.json`, `README.md` and `updates.json`;
+2. Extract it;
+3. Remove unnecessary files for this build: `/icons/icon.svg`, `manifest-firefox.json`, `README.md`, `DEVELOPMENT.md`, `updates.json` and `/rustcrypto-wasm/`;
 4. Rename `manifest-chromium.json` to `manifest.json`;
 5. Zip everything inside the folder.
 
 **Firefox**
 
 1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
-2. Unpack it;
-3. Remove unnecessary files for this build: `manifest-chromium.json` and `README.md`;
+2. Extract it;
+3. Remove unnecessary files for this build: `manifest-chromium.json`, `DEVELOPMENT.md`, `README.md` and `/rustcrypto-wasm/`;
 4. Rename `manifest-firefox.json` to `manifest.json`;
 5. Zip everything inside the folder;
 6. Rename the file extension to `.xpi`.
