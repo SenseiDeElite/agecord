@@ -20,7 +20,6 @@
 
 'use strict';
  
-import { Encrypter }      from '../lib/age.min.js';
 import { init as _rustcryptoInit, ml_dsa87_sign }
   from '../lib/rustcrypto-wasm.min.js';
 
@@ -399,30 +398,6 @@ function buildCandidateKeysB64(entry) {
     .filter(Boolean);
 }
  
-// ─── Compression ─────────────────────────────────────────────────────────────
- 
-async function streamTransform(stream, bytes) {
-  const writer = stream.writable.getWriter();
-  writer.write(bytes);
-  writer.close();
-  const chunks = [];
-  const reader = stream.readable.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-  let off = 0;
-  for (const c of chunks) { out.set(c, off); off += c.length; }
-  return out;
-}
- 
-const compress   = str  => streamTransform(
-  new CompressionStream('deflate-raw'), new TextEncoder().encode(str));
-const decompress = bytes => streamTransform(
-  new DecompressionStream('deflate-raw'), bytes);
- 
 // ─── Base64 helpers ───────────────────────────────────────────────────────────
 // Uint8Array.toBase64 / Uint8Array.fromBase64 — baseline since Sep 2025
 // (Chrome 128+, Firefox 133+, Safari 18.4+).
@@ -548,18 +523,19 @@ async function handleEncryptClick() {
 
   const { entry } = active;
   try {
-    const enc = new Encrypter();
+    const recipients = [];
     if (entry.type === 'contact' || !entry.type) {
-      enc.addRecipient(entry.ageRecipient.split(';')[0]);
+      recipients.push(entry.ageRecipient.split(';')[0]);
     } else {
       for (const memberUUID of (entry.memberIds ?? [])) {
         const member = _contacts[memberUUID];
-        if (member?.ageRecipient) enc.addRecipient(member.ageRecipient.split(';')[0]);
+        if (member?.ageRecipient) recipients.push(member.ageRecipient.split(';')[0]);
       }
     }
-    if (_selfRecipient) enc.addRecipient(_selfRecipient.split(';')[0]);
- 
-    const ageBytes = await enc.encrypt(await compress(plain));
+    if (_selfRecipient) recipients.push(_selfRecipient.split(';')[0]);
+
+    const ageBuffer = await workerCompressEncrypt(plain, recipients);
+    const ageBytes  = new Uint8Array(ageBuffer);
     const fileBytes = buildSignedAgeFile(ageBytes, entry, sendChannelId);
  
     // Sends bytes via postMessage so upload-interceptor calls React's onChange prop
@@ -1576,6 +1552,7 @@ function _spawnWorker(pendingMap) {
     if (!entry) return;
     pendingMap.delete(id);
     if (op === 'ENCRYPT_RESULT' ||
+        op === 'COMPRESS_ENCRYPT_RESULT' ||
         op === 'VERIFY_DECRYPT_RESULT' ||
         op === 'VERIFY_DECRYPT_DECOMPRESS_RESULT') {
       entry.resolve(data);
@@ -1698,6 +1675,20 @@ function workerVerifyDecrypt(fileBuffer, identityLine, prefixBytes, candidateKey
     },
     [fileBuffer],
   );
+}
+
+// Compress + age-encrypt a plaintext string via the text Worker (COMPRESS_ENCRYPT op).
+// Isolated from the media Worker so a large attachment encrypt never delays sending
+// a text message. Returns Promise<ArrayBuffer> of the age ciphertext.
+function workerCompressEncrypt(text, recipients) {
+  return new Promise((resolve, reject) => {
+    const id = _textWorkerNextId++;
+    _textWorkerPending.set(id, {
+      resolve: (data) => resolve(data.buffer),
+      reject,
+    });
+    getTextWorker().postMessage({ op: 'COMPRESS_ENCRYPT', id, text, recipients });
+  });
 }
 
 // Fused verify + decrypt + decompress for message.txt.age via the text Worker
