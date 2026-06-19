@@ -64,7 +64,7 @@ Chromium: `DefaultJavaScriptJitSetting` policy.
 
 Firefox: `javascript.options.wasm` preference (`about:config`).
 
-**v0.7.0+** requires **JPEG XL** support. Make sure it is enabled or **JXL** images will be rendered broken.
+**v0.7.1+** requires **JPEG XL** support. Make sure it is enabled or **JXL** images will be rendered broken.
 
 Chromium 145+: `#enable-jxl-image-format` flag (`chrome://flags/`).
 
