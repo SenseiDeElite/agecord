@@ -15,25 +15,45 @@ import { init, ml_dsa87_verify } from '../lib/rustcrypto-wasm.min.js';
 
 await init();
 
-// ─── DecompressionStream helper ───────────────────────────────────────────────
-// Mirrors content.js streamTransform() but runs inside the Worker so the main
-// thread never touches post-decrypt bytes.
-async function decompress(bytes) {
-  const ds     = new DecompressionStream('deflate-raw');
-  const writer = ds.writable.getWriter();
-  writer.write(bytes);
-  writer.close();
+// ─── Compression helpers ───────────────────────────────────────────────────────
+// Uses pipeThrough()/pipeTo() to keep compression/decompression inside the
+// Worker, avoiding Firefox Xray Vision on CompressionStream and keeping
+// plaintext/decrypted data off the main thread.
+
+// Drains a ReadableStream<Uint8Array> into a single Uint8Array.
+async function collectBytes(readable) {
   const chunks = [];
-  const reader = ds.readable.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
+  await readable.pipeTo(new WritableStream({
+    write(chunk) { chunks.push(chunk); },
+  }));
   const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
   let off = 0;
   for (const c of chunks) { out.set(c, off); off += c.length; }
   return out;
+}
+
+// Single pipeThrough chain: source -> TextEncoderStream -> CompressionStream.
+function compress(str) {
+  const source = new ReadableStream({
+    start(controller) { controller.enqueue(str); controller.close(); },
+  });
+  const compressed = source
+    .pipeThrough(new TextEncoderStream())
+    .pipeThrough(new CompressionStream('deflate-raw'));
+  return collectBytes(compressed);
+}
+
+// Single pipeThrough chain: source -> DecompressionStream -> TextDecoderStream.
+async function decompressToText(bytes) {
+  const source = new ReadableStream({
+    start(controller) { controller.enqueue(bytes); controller.close(); },
+  });
+  const textStream = source
+    .pipeThrough(new DecompressionStream('deflate-raw'))
+    .pipeThrough(new TextDecoderStream());
+  let text = '';
+  for await (const chunk of textStream) text += chunk;
+  return text;
 }
 
 // Decoded ML-DSA-87 public keys (2592 B each) keyed by base64 string.
@@ -133,6 +153,29 @@ self.onmessage = async ({ data }) => {
       return;
     }
 
+    // Used by the outgoing text-message path so CompressionStream never runs on
+    // the main thread (Firefox Xray Vision tripped on it there).
+    if (op === 'COMPRESS_ENCRYPT') {
+      const { text, recipients } = data;
+
+      if (typeof text !== 'string')
+        throw new Error('COMPRESS_ENCRYPT: text must be a string');
+      if (!Array.isArray(recipients) || recipients.length === 0)
+        throw new Error('COMPRESS_ENCRYPT: no recipients provided');
+
+      const compressedBytes = await compress(text);
+
+      const enc = new Encrypter();
+      for (const recipient of recipients) enc.addRecipient(recipient);
+      const encBytes = await enc.encrypt(compressedBytes);
+
+      self.postMessage(
+        { op: 'COMPRESS_ENCRYPT_RESULT', id, buffer: encBytes.buffer },
+        [encBytes.buffer]
+      );
+      return;
+    }
+
     // VERIFY_DECRYPT: verify + decrypt signed media; return raw bytes.
     if (op === 'VERIFY_DECRYPT') {
       const { fileBuffer, identityLine, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen } = data;
@@ -159,9 +202,7 @@ self.onmessage = async ({ data }) => {
         self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: false });
         return;
       }
-      // ── deflate-raw decompress then UTF-8 decode ──────────────────────────
-      const decompressed = await decompress(result.plainBytes);
-      const plaintext    = _textDecoder.decode(decompressed);
+      const plaintext = await decompressToText(result.plainBytes);
       self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: true, plaintext });
       return;
     }
