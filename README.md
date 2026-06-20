@@ -62,6 +62,8 @@ Only Firefox supports automatic updates for extensions distributed outside its s
 
 This extension is faster on Firefox. 🦊
 
+Make sure the `Access your data for https://discord.com` and `Access your data for https://cdn.discordapp.com` permissions are enabled on Firefox or the extension won't work!
+
 **v0.4.0+** requires **WebAssembly**. Make sure you didn't disable it through browser hardening.
 
 Chromium: `DefaultJavaScriptJitSetting` policy.
