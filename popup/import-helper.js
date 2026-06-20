@@ -29,15 +29,21 @@ document.getElementById('f').addEventListener('change', async (e) => {
     // getCurrent() returns undefined (not null) outside a tab context.
     const tab   = await chrome.tabs.getCurrent();
     const tabId = tab?.id ?? null;
-
+    
     await chrome.storage.session.set({ pending_import: text, pending_import_tab: tabId });
 
-    try {
-      await chrome.action.openPopup();
-      setStatus('Done. The extension has reopened.', 'ok');
-    } catch (_) {
-      setStatus('Done. Click the extension icon to apply the import.', 'ok');
-    }
+    const isFirefox = !!chrome.runtime.getManifest().browser_specific_settings?.gecko;
+
+try {
+  if (isFirefox) {
+    await browser.browserAction.openPopup();
+  } else {
+    await chrome.action.openPopup();
+  }
+  setStatus('Done. The extension has reopened.', 'ok');
+} catch (_) {
+  setStatus('Done. Click the extension icon to apply the import.', 'ok');
+}
 
   } catch (err) {
     setStatus('Error: ' + (err && err.message ? err.message : 'Unknown error'), 'err');
