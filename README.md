@@ -26,7 +26,7 @@
 - ✍️ **Digital signatures –** Messages are signed using public-key cryptography, providing authenticity and non-repudiation.
 - 🔐 **Passphrase protection –** Encryption keys are unlocked with your passphrase for each session.
 - ⚛️ **Post-quantum cryptography –** Uses ML-KEM-768×X25519 hybrid key encapsulation for quantum-resistant key exchange.
-- 🦀 **Memory-safe algorithms –** Rust-based implementations of ML-DSA-87, Argon2id, XChaCha20-Poly1305, and SHAKE256 compiled to WebAssembly via [rustcrypto-wasm](https://github.com/SenseiDeElite/discord-age-encryption/rustcrypto-wasm).
+- 🦀 **Memory-safe algorithms –** Rust-based implementations of ML-DSA-87, Argon2id, XChaCha20-Poly1305, and SHAKE256 compiled to WebAssembly via [rustcrypto-wasm](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/rustcrypto-wasm).
 
 ---
 
