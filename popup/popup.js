@@ -253,6 +253,10 @@
   let _selectedServerId= null; // uuid of the currently open server sheet
   let _editingId       = null; // uuid currently open in the edit screen
   let _sessionIdentity = null; // decrypted two-line identity blob, kept for export
+  // Resolves once boot()'s fire-and-forget showMain() call has finished its
+  // async contact-load/broadcast tail. checkPendingImport() awaits this so 
+  // an import can't race loadContacts()'s reassignment of _contacts.
+  let _mainReadyPromise = null;
   // ─── Screen router ──────────────────────────────────────────────────────────
   const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact',
                    'edit-group', 'edit-server', 'my-key', 'about'];
@@ -549,7 +553,12 @@
           _contacts = s.age_contacts;
       } catch {}
 
-      showMain(); // show immediately with cached contacts
+      // showMain() shows the screen immediately but its contact-load/broadcast
+      // tail is async; stash the promise so checkPendingImport() can wait 
+      // for it to fully settle before mutating _contacts — otherwise 
+      // an import could race loadContacts()'s reassignment of _contacts and 
+      // silently get reverted in memory.
+      _mainReadyPromise = showMain();
 
       // Re-sync with the background in parallel; showMain's own loadContacts()
       // call will refresh the list once the key is available.
@@ -834,7 +843,7 @@
       await store.set({ format_version: 2 });
       await bgUnlock(identity, passphrase);
       document.getElementById('passphrase-input').value = '';
-      await showMain();
+      showMain();
 
     } catch (e) {
       if (e.message === 'CORRUPT_BLOB') {
@@ -2041,6 +2050,22 @@
     try {
       const data = await chrome.storage.session.get(['pending_import', 'pending_import_tab']);
       if (!data.pending_import) return;
+      // If the vault is locked at this point, the user must have manually locked it
+      if (document.getElementById('screen-lock').hidden === false) {
+        await chrome.storage.session.remove(['pending_import', 'pending_import_tab']);
+        if (data.pending_import_tab != null)
+          chrome.tabs.remove(data.pending_import_tab).catch(() => {});
+        return;
+      }
+      // showMain()'s tail reassigns _contacts from loadContacts() and
+      // broadcasts it. If we ran the import concurrently with that, 
+      // the import's mutation of _contacts could be silently clobbered by 
+      // the later reassignment. Wait for it to fully settle first so 
+      // we mutate the final, authoritative _contacts.
+      if (_mainReadyPromise) {
+        await _mainReadyPromise.catch(() => {});
+        _mainReadyPromise = null;
+      }
       _importHelperTabId = data.pending_import_tab ?? null;
       await chrome.storage.session.remove(['pending_import', 'pending_import_tab']);
       await doImportContacts(data.pending_import);
@@ -2355,8 +2380,9 @@
 
   async function bootWithDraftCheck() {
     await boot();
-    if (!document.getElementById('screen-main').hidden)
-      await checkPendingImport();
+    // Always check — boot() may have landed on the lock screen if the vault
+    // was locked when import-helper reopened the popup.
+    await checkPendingImport();
   }
 
   bootWithDraftCheck().catch(e => console.error('[age] popup boot error:', e));
