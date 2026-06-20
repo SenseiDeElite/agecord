@@ -128,12 +128,22 @@ function _signalContextInvalidated() {
   window.postMessage({ type: 'AGE_CONTEXT_INVALIDATED' }, '*');
 }
 
+// Synchronous, zero-IPC context check. Call this before any operation that
+// requires a live extension context (encrypt, decrypt, sendMessage).
+// Returns false and signals invalidation if the context is already dead.
+function isContextValid() {
+  if (_contextInvalidated) return false;
+  if (!chrome.runtime?.id) { _signalContextInvalidated(); return false; }
+  return true;
+}
+
 function _isContextInvalidationError(msg) {
   return typeof msg === 'string' && msg.toLowerCase().includes('invalidated');
 }
 
 // Safe wrapper around chrome.runtime.sendMessage. On context invalidation, calls
-// _signalContextInvalidated() immediately rather than waiting for the 5-second poll watchdog.
+// _signalContextInvalidated() as an error-boundary catch alongside the on-demand
+// isContextValid() checks at each crypto entry point.
 function bgGetIdentityLine() {
   try {
     return chrome.runtime.sendMessage({ type: 'GET_IDENTITY_LINE' })
@@ -507,6 +517,9 @@ async function clearViaPageContext() {
 async function handleEncryptClick() {
   if (_sending) return;
   if (!isEncryptionActive()) return;
+  // Bail immediately if the extension context has been invalidated (update/reload/disable).
+  // On-demand check so the send path never attempts chrome.runtime IPC against a dead context.
+  if (!isContextValid()) return;
   // Set _sending before the first await so Enter presses during the ~500ms text-extraction
   // window are blocked — otherwise a second Enter would start a duplicate encrypt cycle.
   _sending = true;
@@ -2380,6 +2393,9 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
 }
 
 async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalName) {
+  // isContextValid() calls _signalContextInvalidated() which swaps all placeholders to 'locked'.
+  if (!isContextValid()) return;
+
   // ── No-entry early exit ───────────────────────────────────────────────────────
   // Checked synchronously, before any async work or forwarding detection, so
   // "No entry configured" takes precedence over "forwarding not supported"
@@ -2568,14 +2584,19 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     } catch (e) {
       _attachmentInProgress.delete(attachId);
       // A generation change means showAllPlaceholders already wrote the
-      // correct status — don't overwrite it with "Could not decrypt."
+      // correct status — don't overwrite it with "Couldn't decrypt."
       if (_generation !== capturedGeneration) return;
+      // "Couldn't decrypt" is a strong signal that the extension context may
+      // have been invalidated mid-flight. Check before rendering the error badge
+      // so the page shows the correct 'locked' state instead of a misleading
+      // decrypt failure when the real cause is a context loss.
+      if (!isContextValid()) return;
       console.info('[age] message.txt.age decrypt skipped (not a valid age file or not encrypted):', e?.message ?? e);
       // Ensure the file card is hidden — if the error was thrown before the
       // normal hide path (e.g. "Extension context invalidated" from
       // bgGetIdentityLine), it would still be visible alongside the error badge.
       const _errMosaicItem = hideFileCard(fileCard);
-      renderDecryptedMessage(liElement, '🔓 Could not decrypt.', attachId, _errMosaicItem ?? fileCard);
+      renderDecryptedMessage(liElement, "🔓 Couldn't decrypt.", attachId, _errMosaicItem ?? fileCard);
     } finally {
       // Settle the promise — any concurrent awaiter (e.g. a flash-jump
       // re-inserted li) unblocks and re-enters to serve from cache or retry.
@@ -2767,10 +2788,11 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     _attachmentInProgress.delete(attachId);
     console.error('[age] attachment decrypt error:', e?.message ?? e);
     if (_generation !== capturedGeneration) return;
+    if (!isContextValid()) return;
     // Replace the "Decrypting…" placeholder with an error badge.
     liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
       .forEach(el => el.remove());
-    renderDecryptedMessage(liElement, '🔓 Could not decrypt.', undefined, _earlyMosaicItem ?? fileCard);
+    renderDecryptedMessage(liElement, "🔓 Couldn't decrypt.", undefined, _earlyMosaicItem ?? fileCard);
   } finally {
     // Settle the in-flight promise — any concurrent awaiter unblocks and
     // re-enters to serve from cache or retry on error.
@@ -3072,25 +3094,6 @@ function processLiFull(li) {
  
 // ─── Init ────────────────────────────────────────────────────────────────────
  
-// ─── Extension context invalidation watchdog ──────────────────────────────────
-//
-// Polls chrome.runtime?.id every 5 s. Returns undefined on invalidation
-// (force-reload, update, disable) — a synchronous check with no IPC.
-//
-// Port/disconnect approach avoided: MV3 SWs sleep after ~30 s and Chrome closes
-// ports on sleep, making port.onDisconnect indistinguishable from a real reload
-// (caused random page reloads every ~1 min).
-function watchContextInvalidation() {
-  function check() {
-    if (!chrome.runtime?.id) {
-      _signalContextInvalidated();
-      return; // stop polling — reload is imminent
-    }
-    setTimeout(check, 5000);
-  }
-  setTimeout(check, 0);
-}
-
 async function init() {
   listenForMessages();
   listenForInterceptorMessages();
@@ -3104,7 +3107,6 @@ async function init() {
   getFetchIframe();
   getTextWorker();   // never terminated
   getMediaWorker();  // terminated on nav, recreated lazily
-  watchContextInvalidation();
 }
  
 if (document.body) {
