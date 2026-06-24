@@ -260,13 +260,8 @@
   // ─── Screen router ──────────────────────────────────────────────────────────
   const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact',
                    'edit-group', 'edit-server', 'my-key', 'about'];
-  const UPDATE_BTN_SCREENS = new Set(['lock', 'main']);
   const show = screenId => {
     screens.forEach(id => { document.getElementById(`screen-${id}`).hidden = (id !== screenId); });
-    const btnUpdate = document.getElementById('btn-update');
-    if (btnUpdate && !btnUpdate.hidden) {
-      btnUpdate.style.display = UPDATE_BTN_SCREENS.has(screenId) ? '' : 'none';
-    }
   };
 
   // ─── Session helpers ─────────────────────────────────────────────────────────
@@ -412,119 +407,6 @@
     const { plaintextB64 } = await runCryptoWorker({ op: 'XCHACHA_DECRYPT', keyB64, envelopeB64 });
 
     return new TextDecoder().decode(fromB64(plaintextB64));
-  }
-
-  // ─── Update check ────────────────────────────────────────────────────────────
-  // Logic (runs every popup open):
-  //
-  //   1. Read 'updateCachedVersion' from chrome.storage.local.
-  //   2. If cached version == installed version → user just updated → clear & done.
-  //   3. If cached version > installed version → update still pending → show buttons,
-  //      skip fetch (no network spam).
-  //   4. No cache → fetch updates.json → if a newer version is found, store it
-  //      permanently and show buttons.  If not, store nothing.
-  //
-  // The cached value is ONLY the version string (e.g. "0.5.2"), stored permanently.
-  // It is cleared only when installed version catches up to it (step 2).
-
-  const UPDATES_URL       = 'https://raw.githubusercontent.com/SenseiDeElite/discord-age-encryption/refs/heads/main/updates.json';
-  const RELEASE_URL       = 'https://github.com/SenseiDeElite/discord-age-encryption/releases/latest';
-  const UPDATE_CACHE_KEY  = 'updateCachedVersion';
-  const UPDATE_CHECK_KEY  = 'updateCheckLog'; // { date: "YYYY-MM-DD", count: number }
-  const UPDATE_MAX_CHECKS = 3; // max fetches per calendar day
-
-  function parseSemver(v) {
-    return (v ?? '').split('.').map(n => parseInt(n, 10) || 0);
-  }
-
-  function semverGt(a, b) {
-    const pa = parseSemver(a), pb = parseSemver(b);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const diff = (pa[i] || 0) - (pb[i] || 0);
-      if (diff > 0) return true;
-      if (diff < 0) return false;
-    }
-    return false;
-  }
-
-  function showUpdateButtons() {
-    const openRelease = () => chrome.tabs.create({ url: RELEASE_URL });
-    const el = document.getElementById('btn-update');
-    if (!el) return;
-    const fresh = el.cloneNode(true);
-    fresh.hidden = false;
-    fresh.title  = 'Update available';
-    fresh.setAttribute('aria-label', 'Update available');
-    fresh.addEventListener('click', openRelease);
-    el.replaceWith(fresh);
-  }
-
-  async function canFetchUpdate() {
-    const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
-    const stored = await store.get([UPDATE_CHECK_KEY]);
-    const log    = stored[UPDATE_CHECK_KEY] ?? { date: '', count: 0 };
-    const count  = log.date === today ? log.count : 0;
-    if (count >= UPDATE_MAX_CHECKS) return false;
-    await store.set({ [UPDATE_CHECK_KEY]: { date: today, count: count + 1 } });
-    return true;
-  }
-
-  // Firefox extensions published on AMO must declare browser_specific_settings.gecko
-  // (AMO requirement for extension ID assignment).  Chrome never has this field in
-  // the manifest, making it a reliable, zero-cost browser discriminator.
-  function isFirefox() {
-    return !!chrome.runtime.getManifest().browser_specific_settings?.gecko;
-  }
-
-  async function checkForUpdate() {
-    if (isFirefox()) return; // Firefox manages its own updates via manifest update_url
-    try {
-      const current = chrome.runtime.getManifest().version;
-      const stored  = await store.get([UPDATE_CACHE_KEY]);
-      const cached  = stored[UPDATE_CACHE_KEY] ?? null;
-
-      if (cached && !semverGt(cached, current)) {
-        await store.remove([UPDATE_CACHE_KEY]);
-        return;
-      }
-
-      if (cached && semverGt(cached, current)) {
-        showUpdateButtons();
-        return;
-      }
-
-      if (!(await canFetchUpdate())) return;
-
-      let latest = '0.0.0';
-      try {
-        // AbortController enforces a hard timeout so a stalled CDN connection
-        // does not leave this fire-and-forget promise open indefinitely.
-        const controller = new AbortController();
-        const timeoutId  = setTimeout(() => controller.abort(), 6000);
-        try {
-          const resp = await fetch(UPDATES_URL, { cache: 'no-store', signal: controller.signal });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const data = await resp.json();
-          for (const addon of Object.values(data.addons ?? {})) {
-            for (const entry of addon.updates ?? []) {
-              if (semverGt(entry.version, latest)) latest = entry.version;
-            }
-          }
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      } catch {
-        return; // network/parse/abort failure — silently skip, don't cache anything
-      }
-
-      if (semverGt(latest, current)) {
-        await store.set({ [UPDATE_CACHE_KEY]: latest });
-        showUpdateButtons();
-      }
-
-    } catch {
-      // Unexpected error (e.g. storage unavailable) — never break the popup
-    }
   }
 
   // ─── Boot ───────────────────────────────────────────────────────────────────
@@ -1098,8 +980,6 @@
     document.getElementById('contacts-search').value = '';
     renderContacts();
     show('main');
-
-    checkForUpdate(); // fire-and-forget; only fetches if no cache exists
 
     // Load and broadcast contacts after the screen is already visible.
     // loadContacts() can fail silently (e.g. contacts key momentarily unavailable)
@@ -2381,7 +2261,7 @@
   async function bootWithDraftCheck() {
     await boot();
     // Always check — boot() may have landed on the lock screen if the vault
-    // was locked when import-helper reopened the popup.
+    // wasn't unlocked when import-helper reopened the popup.
     await checkPendingImport();
   }
 
