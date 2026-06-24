@@ -56,7 +56,7 @@ Each contact's public key is displayed as a SHAKE256 (64-byte output) fingerprin
 
 See the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest).
 
-Only Firefox supports automatic updates for extensions distributed outside its store.
+Both browsers support extension automatic updates starting with **v0.7.3+**.
 
 **🔧 Troubleshooting**
 
