@@ -70,15 +70,20 @@ For their respective licenses, see [`NOTICES.md`](https://github.com/SenseiDeEli
 
 1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
 2. Extract it;
-3. Remove unnecessary files for this build: `/icons/icon.svg`, `manifest-firefox.json`, `README.md`, `DEVELOPMENT.md`, `updates.json` and `/rustcrypto-wasm/`;
+3. Remove unnecessary files for this build: `/icons/icon.svg`, `manifest-firefox.json`, `README.md`, `DEVELOPMENT.md`, `updates.json`, `updates.xml` and `/rustcrypto-wasm/`;
 4. Rename `manifest-chromium.json` to `manifest.json`;
-5. Zip everything inside the folder.
+5. Navigate to `chrome://extensions/`;
+6. Enable `Developer mode` (if not already done);
+7. Click `Pack extension`;
+8. Browse to the extension root directory;
+9. Select a private key file or don't to generate one in the next step.
+10. Click `Pack extension` again; a `.crx` file will be generated.
 
 **Firefox**
 
 1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
 2. Extract it;
-3. Remove unnecessary files for this build: `manifest-chromium.json`, `DEVELOPMENT.md`, `README.md` and `/rustcrypto-wasm/`;
+3. Remove unnecessary files for this build: `manifest-chromium.json`, `DEVELOPMENT.md`, `README.md`, `updates.json`, `updates.xml` and `/rustcrypto-wasm/`;
 4. Rename `manifest-firefox.json` to `manifest.json`;
 5. Zip everything inside the folder;
 6. Rename the file extension to `.xpi`.
