@@ -530,7 +530,7 @@ document.addEventListener('change', async (e) => {
 }, true);
 
 // ─── paste ────────────────────────────────────────────────────────────────────
-// ClipboardEvent constructor ignores clipboardData in Firefox (bug 1567931),
+// ClipboardEvent constructor ignores clipboardData in Firefox,
 // so re-dispatching a synthetic event yields empty files. Call onChange directly,
 // identical to the drop and AGE_DO_UPLOAD paths.
 document.addEventListener('paste', async (e) => {
