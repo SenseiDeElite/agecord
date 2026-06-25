@@ -3,40 +3,8 @@
     "{19e0c78a-600a-4739-8977-56ca5741df7e}": {
       "updates": [
         {
-          "version": "0.1.0",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/0.1.0/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.2.0",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/0.2.0/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.3.0",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/0.3.0/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.4.0",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.4.0/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.5.0",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.5.0/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.5.1",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.5.1/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.6.0",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.6.0/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.7.1",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.7.1/discord-age-encryption.xpi"
-        },
-        {
-          "version": "0.7.2",
-          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.7.2/discord-age-encryption.xpi"
+          "version": "0.7.3",
+          "update_link": "https://github.com/SenseiDeElite/discord-age-encryption/releases/download/v0.7.3/discord-age-encryption.xpi"
         }
       ]
     }
