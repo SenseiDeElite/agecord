@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Discord Age Encryption",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "End-to-end post-quantum age encryption for Discord.",
   "browser_specific_settings": {
     "gecko": {
