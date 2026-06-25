@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Discord Age Encryption",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "update_url": "https://raw.githubusercontent.com/SenseiDeElite/discord-age-encryption/main/updates.xml",
   "description": "End-to-end post-quantum age encryption for Discord.",
   "icons": {
