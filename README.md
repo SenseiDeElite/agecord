@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="/icons/icon.svg" alt="Discord Age Encryption logo" width="120" />
+  <img src="/icons/icon-512.svg" alt="Discord Age Encryption logo" width="120" />
 </p>
 
 <h1 align="center">Discord Age Encryption</h1>
