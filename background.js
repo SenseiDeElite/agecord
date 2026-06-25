@@ -97,7 +97,7 @@ async function ensureIdentity() {
 }
 
 async function sendUnlockToTab(tabId) {
-  if (!(await ensureIdentity())) return;
+  if (!_identity) return;
   try {
     await chrome.tabs.sendMessage(tabId, {
       type:         'UNLOCK',
@@ -111,6 +111,9 @@ async function sendUnlockToTab(tabId) {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete') return;
   if (!tab.url?.startsWith('https://discord.com/')) return;
+  // Only relay if already live in memory — don't restore from session here.
+  // The popup's bgUnlockResume() is responsible for SW revival.
+  if (!_identity) return;
   setTimeout(() => sendUnlockToTab(tabId), 800);
 });
 
