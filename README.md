@@ -50,13 +50,11 @@ Each contact's public key is displayed as a SHAKE256 (64-byte output) fingerprin
 
 ---
 
-### ⬇️ Installation
+### ⬇️ Installation & Updates
 
 #### 🌐 Chromium & Firefox
 
 See the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest).
-
-Both browsers support extension automatic updates starting with **v0.7.3+**.
 
 **🔧 Troubleshooting**
 
