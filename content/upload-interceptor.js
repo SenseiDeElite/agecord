@@ -15,7 +15,6 @@ Object.defineProperty(window, '__ageLocked', { get: () => _locked, configurable:
 // Walk limit of 10 visits steps 0–9 (loop condition: steps < limit).
 // Exactly 10 prevents a stale fiber from a second open edit-box being returned.
 const SLATE_FIBER_WALK_LIMIT = 10;
-let _redispatching = false;
 
 // ─── Attachment-pending guard ─────────────────────────────────────────────────
 // Blocks all attachment entry-points until the upload tray clears or the
@@ -437,7 +436,7 @@ function watchTrayAndClearPending() {
 
 // ─── dragover (window) ────────────────────────────────────────────────────────
 window.addEventListener('dragover', (e) => {
-  if (_locked || !_activeEntry || _redispatching) return;
+  if (_locked || !_activeEntry) return;
   if (!(e.dataTransfer?.types ?? []).includes('Files')) return;
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
@@ -449,7 +448,7 @@ window.addEventListener('dragover', (e) => {
 // Delivery via React onChange prop — synthetic DragEvents have effectAllowed='none'
 // and are silently rejected by Discord's handler.
 window.addEventListener('drop', async (e) => {
-  if (_locked || !_activeEntry || _redispatching) return;
+  if (_locked || !_activeEntry) return;
   const files = [...(e.dataTransfer?.files ?? [])];
   if (files.length === 0) return;
 
@@ -484,7 +483,7 @@ window.addEventListener('drop', async (e) => {
 // the delete happens after consumption. Without it, the encrypted FileList from
 // the previous upload permanently shadows the native 'files' property.
 document.addEventListener('change', async (e) => {
-  if (_locked || !_activeEntry || _redispatching) return;
+  if (_locked || !_activeEntry) return;
   const input = e.target;
   if (input?.type !== 'file') return;
 
@@ -519,11 +518,9 @@ document.addEventListener('change', async (e) => {
     err('defineProperty input.files failed:', ex?.message);
   }
 
-  _redispatching = true;
   try {
     input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
   } finally {
-    _redispatching = false;
     try {
       delete input.files;
     } catch {
@@ -533,8 +530,11 @@ document.addEventListener('change', async (e) => {
 }, true);
 
 // ─── paste ────────────────────────────────────────────────────────────────────
+// ClipboardEvent constructor ignores clipboardData in Firefox (bug 1567931),
+// so re-dispatching a synthetic event yields empty files. Call onChange directly,
+// identical to the drop and AGE_DO_UPLOAD paths.
 document.addEventListener('paste', async (e) => {
-  if (_locked || !_activeEntry || _redispatching) return;
+  if (_locked || !_activeEntry) return;
   const files = [...(e.clipboardData?.files ?? [])];
   if (files.length === 0) return;
 
@@ -544,22 +544,17 @@ document.addEventListener('paste', async (e) => {
   e.preventDefault();
 
   if (_attachmentPending) {
-    // Paste is an explicit user action — same rationale as the change handler:
-    // reset rather than silently discard, in case the prior upload's tray never appeared.
     _attachmentPending = false;
     window.postMessage({ type: 'AGE_ATTACHMENT_CLEARED' }, '*');
   }
 
-  const dt = await encryptFileList(files, channelId);
-
-  _redispatching = true;
   try {
-    e.target.dispatchEvent(new ClipboardEvent('paste', {
-      bubbles:       true,
-      cancelable:    true,
-      clipboardData: dt,
-    }));
-  } finally {
-    _redispatching = false;
+    const dt = await encryptFileList(files, channelId);
+    const onChange = getFileInputOnChange();
+    onChange({ currentTarget: { files: dt.files, err: null } });
+    _attachmentPending = true;
+    watchTrayAndClearPending();
+  } catch (pasteErr) {
+    err('paste: failed — %s', pasteErr?.message ?? pasteErr);
   }
 }, true);
