@@ -529,9 +529,9 @@ async function handleEncryptClick() {
   const sendChannelId = getSendChannelId();
   if (!sendChannelId) { _sending = false; return; }
 
-  // Cap at 2000 Unicode chars — keeps file sizes predictable and prevents chat flooding.
+  // Cap at 4000 Unicode chars — keeps file sizes predictable and prevents chat flooding.
   const rawPlain = await getSlateTextViaPageContext();
-  const plain    = rawPlain ? rawPlain.slice(0, 2000) : rawPlain;
+  const plain    = rawPlain ? rawPlain.slice(0, 4000) : rawPlain;
   if (!plain || !active) { _sending = false; return; }
 
   const { entry } = active;
@@ -2900,9 +2900,9 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
     const seg = _splitLeadingEmoji(plaintext);
     wrapper.appendChild(_makeStatusBadge(seg.emoji, seg.rest));
   } else {
-    // Cap at 2 000 characters — senders already enforce this, but guard anyway
+    // Cap at 4 000 characters — senders already enforce this, but guard anyway
     // to prevent runaway DOM growth from crafted messages.
-    const displayText = plaintext.length > 2000 ? plaintext.slice(0, 2000) : plaintext;
+    const displayText = plaintext.length > 4000 ? plaintext.slice(0, 4000) : plaintext;
     const emojiSize = isJumboEmoji(displayText) ? 48 : 22;
     renderBlockContent(wrapper, displayText, true, emojiSize);
   }
