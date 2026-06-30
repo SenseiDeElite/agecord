@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 // ─── XChaCha20Poly1305 ────────────────────────────────────────────────────────
 
 use chacha20poly1305::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, Generate as AeadGenerate, KeyInit},
     XChaCha20Poly1305, XNonce,
 };
 
@@ -13,7 +13,7 @@ use chacha20poly1305::{
 pub fn xchacha20poly1305_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, JsError> {
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| JsError::new("xchacha20poly1305_encrypt: key must be exactly 32 bytes"))?;
-    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let nonce = XNonce::generate();
     let ciphertext = cipher
         .encrypt(&nonce, plaintext)
         .map_err(|_| JsError::new("xchacha20poly1305_encrypt: encryption failed"))?;
@@ -34,9 +34,10 @@ pub fn xchacha20poly1305_decrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, JsE
     }
     let cipher = XChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| JsError::new("xchacha20poly1305_decrypt: key must be exactly 32 bytes"))?;
-    let nonce = XNonce::from_slice(&data[..24]);
+    let nonce = XNonce::try_from(&data[..24])
+        .map_err(|_| JsError::new("xchacha20poly1305_decrypt: invalid nonce length"))?;
     cipher
-        .decrypt(nonce, &data[24..])
+        .decrypt(&nonce, &data[24..])
         .map_err(|_| JsError::new("xchacha20poly1305_decrypt: decryption failed (wrong key or corrupted data)"))
 }
 
@@ -93,7 +94,7 @@ pub fn argon2id(
 //   Signature:                    4627 bytes
 
 use ml_dsa::{
-    Generate, KeyExport, Keypair, MlDsa87, Signature, SignatureEncoding,
+    KeyExport, Keypair, MlDsa87, Signature, SignatureEncoding,
     SigningKey, Signer, VerifyingKey, Verifier,
 };
 
