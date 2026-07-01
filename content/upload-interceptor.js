@@ -307,8 +307,8 @@ function clearSlateTextbox() {
 // so content.js can build the correct sig prefix in split-view thread composers.
 //
 // Two-phase timeout:
-const ACK_TIMEOUT_MS    = 10_000;
-const ENCRYPT_TIMEOUT_MS = 5 * 60 * 1000;
+const ACK_TIMEOUT_MS    = 2_000;
+const ENCRYPT_TIMEOUT_MS = 20_000;
 
 function encryptFile(fileName, buffer, channelId) {
   return new Promise((resolve, reject) => {
@@ -477,11 +477,9 @@ window.addEventListener('drop', async (e) => {
 }, true);
 
 // ─── change (file picker) ─────────────────────────────────────────────────────
-// input.files is overridden via Object.defineProperty — the only way to replace
-// a FileList on an existing <input>. The override is deleted immediately after
-// dispatch: Discord reads input.files synchronously inside its React handler, so
-// the delete happens after consumption. Without it, the encrypted FileList from
-// the previous upload permanently shadows the native 'files' property.
+// Call React onChange directly. Dispatching a synthetic 'change'
+// would re-enter this capture listener, clear the files override, and swallow
+// the upload before Discord's handler. Direct invocation avoids recursion.
 document.addEventListener('change', async (e) => {
   if (_locked || !_activeEntry) return;
   const input = e.target;
@@ -505,27 +503,16 @@ document.addEventListener('change', async (e) => {
     window.postMessage({ type: 'AGE_ATTACHMENT_CLEARED' }, '*');
   }
 
-  const dt = await encryptFileList(files, channelId);
-
   try {
-    Object.defineProperty(input, 'files', {
-      value:        dt.files,
-      configurable: true,
-      writable:     false,
-      enumerable:   true,
-    });
-  } catch (ex) {
-    err('defineProperty input.files failed:', ex?.message);
-  }
+    const dt = await encryptFileList(files, channelId);
 
-  try {
-    input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-  } finally {
-    try {
-      delete input.files;
-    } catch {
-      err('change: could not delete input.files override — sticky bug may recur');
-    }
+    const onChange = getFileInputOnChange();
+    onChange({ currentTarget: { files: dt.files, err: null } });
+
+    _attachmentPending = true;
+    watchTrayAndClearPending();
+  } catch (changeErr) {
+    err('change: failed — %s', changeErr?.message ?? changeErr);
   }
 }, true);
 
