@@ -35,7 +35,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://discord.com/*"
+        "https://discord.com/channels/*"
       ],
       "js": [
         "content/upload-interceptor.js"
@@ -45,7 +45,7 @@
     },
     {
       "matches": [
-        "https://discord.com/*"
+        "https://discord.com/channels/*"
       ],
       "js": [
         "content/content-loader.js"
