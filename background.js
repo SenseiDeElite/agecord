@@ -38,14 +38,6 @@ const fromB64 = b64   => Uint8Array.fromBase64(b64);
 // Here the salt lives separately in chrome.storage.local ("contactsSaltB64").
 // Do not unify these formats — the duplication is deliberate.
 
-function _xchacha_encrypt(key, plaintext) {
-  return xchacha20poly1305_encrypt(key, plaintext);
-}
-
-function _xchacha_decrypt(key, noncePlusCt) {
-  return xchacha20poly1305_decrypt(key, noncePlusCt);
-}
-
 // Identity blob: line 0 = AGE-SECRET-KEY-1… (X25519), line 1 = mldsa87seed:<b64> (32-byte seed).
 // rustcrypto-wasm reconstructs the full ML-DSA-87 signing key from the seed on each call.
 function getMldsaSeed(identityBlob) {
@@ -62,7 +54,7 @@ const ENVELOPE_HDR_LEN = 1;
 function encryptContacts(jsonStr) {
   if (!_contactsKeyBytes) throw new Error('Contacts key not available — extension locked.');
   const plaintext   = new TextEncoder().encode(jsonStr);
-  const noncePlusCt = _xchacha_encrypt(_contactsKeyBytes, plaintext);
+  const noncePlusCt = xchacha20poly1305_encrypt(_contactsKeyBytes, plaintext);
   const envelope    = new Uint8Array(ENVELOPE_HDR_LEN + noncePlusCt.length);
   envelope[0]       = ENVELOPE_VER;
   envelope.set(noncePlusCt, ENVELOPE_HDR_LEN);
@@ -76,7 +68,7 @@ function decryptContacts(b64) {
     throw new Error(`Unknown contacts envelope version 0x${envelope[0].toString(16)}.`);
   if (envelope.length < 41)
     throw new Error('Contacts envelope too short — data may be corrupt.');
-  const plaintext = _xchacha_decrypt(_contactsKeyBytes, envelope.slice(ENVELOPE_HDR_LEN));
+  const plaintext = xchacha20poly1305_decrypt(_contactsKeyBytes, envelope.slice(ENVELOPE_HDR_LEN));
   return new TextDecoder().decode(plaintext);
 }
 
@@ -96,31 +88,51 @@ async function ensureIdentity() {
   } catch { return false; }
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Sends UNLOCK to a tab. Retries up to 3 times (100/200/300 ms) if the content
+// script isn't ready. Ignores other sendMessage failures. Payload is built once
+// to avoid repeating seed decoding across retries.
 async function sendUnlockToTab(tabId) {
   if (!_identity) return;
-  try {
-    await chrome.tabs.sendMessage(tabId, {
-      type:         'UNLOCK',
-      mldsaSeedB64: toB64(getMldsaSeed(_identity)),
-      contacts:     _contacts,
-      ageRecipient: _ageRecipient,
-    });
-  } catch {}
+  const payload = {
+    type:         'UNLOCK',
+    mldsaSeedB64: toB64(getMldsaSeed(_identity)),
+    contacts:     _contacts,
+    ageRecipient: _ageRecipient,
+  };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      await chrome.tabs.sendMessage(tabId, payload);
+      return;
+    } catch (e) {
+      if (!e?.message?.includes('Receiving end does not exist') || attempt === 3) return;
+      await sleep(100 * (attempt + 1));
+    }
+  }
 }
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+// Fire-and-forget broadcast for messages that don't need retry (RELOCK,
+// CONTACTS_UPDATED). Does not use sendUnlockToTab — those payloads have no
+// race with content script load timing.
+async function broadcastToTabs(payload) {
+  const tabs = await chrome.tabs.query({ url: 'https://discord.com/*' });
+  for (const tab of tabs)
+    chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
+}
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete') return;
   if (!tab.url?.startsWith('https://discord.com/')) return;
-  // Only relay if already live in memory — don't restore from session here.
-  // The popup's bgUnlockResume() is responsible for SW revival.
+  // SW was asleep when this tab loaded: restore identity from session so the
+  // reloaded content script gets UNLOCK without requiring a popup open.
+  if (!_identity) await ensureIdentity();
   if (!_identity) return;
-  setTimeout(() => sendUnlockToTab(tabId), 800);
+  sendUnlockToTab(tabId);
 });
 
-// ─── Message handler ──────────────────────────────────────────────────────────
-
-// Holding this port keeps the SW alive. Content script reloads on disconnect
-// (only occurs on extension reload/update, not normal SW sleep/wake).
+// Keeps the SW alive. Content script reloads on disconnect only on extension
+// reload/update — not on normal SW sleep/wake.
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'age-watchdog') return;
 });
@@ -135,18 +147,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         _identity     = msg.identity;
         _contacts     = msg.contacts     ?? _contacts;
         _ageRecipient = msg.ageRecipient ?? _ageRecipient;
-        const tabs = await chrome.tabs.query({ url: 'https://discord.com/*' });
-        for (const tab of tabs)
-          // .catch() suppresses "no listener" rejections for tabs where the
-          // content script hasn't loaded yet — expected, not an error.
-          chrome.tabs.sendMessage(tab.id, {
-            type:         'UNLOCK',
-            mldsaSeedB64: toB64(getMldsaSeed(_identity)),
-            contacts:     _contacts,
-            ageRecipient: _ageRecipient,
-          }).catch(() => {});
         if (msg.contactsKeyB64)
           _contactsKeyBytes = fromB64(msg.contactsKeyB64);
+        // Route through sendUnlockToTab so tabs that are still loading their
+        // content script get the same retry logic as the onUpdated path.
+        const tabs = await chrome.tabs.query({ url: 'https://discord.com/*' });
+        await Promise.all(tabs.map(tab => sendUnlockToTab(tab.id)));
       } catch (e) { console.info('[age] UNLOCK error:', e?.message); }
       sendResponse({ ok: true });
     })();
@@ -160,10 +166,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === 'RELOCK') {
     _identity = null; _contactsKeyBytes = null; _contacts = {}; _ageRecipient = null;
-    chrome.tabs.query({ url: 'https://discord.com/*' }).then(tabs => {
-      for (const tab of tabs)
-        chrome.tabs.sendMessage(tab.id, { type: 'RELOCK' }).catch(() => {});
-    });
+    // Clear session storage before async work so concurrent ensureIdentity() sees
+    // age_unlocked=false, aborts, and can't restore stale identity after relock.
+    chrome.storage.session.remove(
+      ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient']
+    ).catch(e => console.warn('[age] RELOCK session clear failed:', e));
+    broadcastToTabs({ type: 'RELOCK' });
     sendResponse({ ok: true });
     return false;
   }
@@ -179,12 +187,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'CONTACTS_UPDATED') {
     if (msg.contacts)     _contacts     = msg.contacts;
     if (msg.ageRecipient) _ageRecipient = msg.ageRecipient;
-    chrome.tabs.query({ url: 'https://discord.com/*' }).then(tabs => {
-      for (const tab of tabs)
-        chrome.tabs.sendMessage(tab.id, {
-          type: 'CONTACTS_UPDATED', contacts: _contacts, ageRecipient: _ageRecipient,
-        }).catch(() => {});
-    });
+    broadcastToTabs({ type: 'CONTACTS_UPDATED', contacts: _contacts, ageRecipient: _ageRecipient });
     sendResponse({ ok: true });
     return false;
   }
