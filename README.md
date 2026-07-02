@@ -58,21 +58,7 @@ See the [latest release](https://github.com/SenseiDeElite/discord-age-encryption
 
 **🔧 Troubleshooting**
 
-This extension is faster on Firefox. 🦊
-
-Make sure the `Access your data for https://discord.com` and `Access your data for https://cdn.discordapp.com` permissions are enabled on Firefox or the extension won't work!
-
-**v0.4.0+** requires **WebAssembly**. Make sure you didn't disable it through browser hardening.
-
-Chromium: `DefaultJavaScriptJitSetting` policy.
-
-Firefox: `javascript.options.wasm` preference (`about:config`).
-
-**v0.7.1+** requires **JPEG XL** support. Make sure it is enabled or **JXL** images will be rendered broken.
-
-Chromium 145+: `#enable-jxl-image-format` flag (`chrome://flags/`).
-
-Firefox 152+: `image.jxl.enabled` preference (`about:config`).
+See [`TROUBLESHOOTING.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/TROUBLESHOOTING.md).
 
 ---
 
