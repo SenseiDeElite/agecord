@@ -1,6 +1,6 @@
 [package]
 name = "rustcrypto-wasm"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Sensei <https://github.com/SenseiDeElite>"]
 description = "WebAssembly RustCrypto"
 license = "MIT"
@@ -27,4 +27,13 @@ strip = "symbols"
 panic = "abort"
 
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = ["-O4", "--enable-bulk-memory", "--enable-simd"]
+wasm-opt = [
+    "-O4",
+    "--enable-bulk-memory", 
+    "--enable-simd",
+    "--generate-global-effects",
+    "--monomorphize",
+    "-O4",
+    "--flexible-inline-max-function-size", "4294967295",
+    "--converge"
+]
