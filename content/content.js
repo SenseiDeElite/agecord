@@ -1157,6 +1157,39 @@ function renderMarkdownLine(text, lockPrefix, emojiSize = 22) {
   return wrap;
 }
 
+// Renders `url` as a clickable link if it passes the safety check, otherwise
+// appends `text` as plain text.
+function appendLinkOrText(container, url, text) {
+  const isSafe = URL.parse(url)?.protocol === 'https:' && !/%00/i.test(url);
+  if (isSafe) {
+    const a = document.createElement('a');
+    a.href   = url;
+    a.target = '_blank';
+    a.rel    = 'noopener noreferrer';
+    a.style.cssText = 'color:#5571de;text-decoration:underline;cursor:pointer;word-break:break-all;';
+    a.textContent = text;
+    container.appendChild(a);
+  } else {
+    container.appendChild(document.createTextNode(text));
+  }
+}
+
+// Anti-phishing: a label that itself looks like a URL misrepresents the real
+// destination — true regardless of where the actual href points (even a
+// same-origin/trusted host), since the visible text is what the user trusts.
+// Delegates to URL.parse() instead of a hand-rolled domain regex: catches
+// homograph/IDN look-alike domains that an
+// ASCII-only pattern would silently miss.
+function isUrlLikeLabel(label) {
+  const trimmed = label.trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  const scheme = URL.parse(trimmed)?.protocol;
+  if (scheme === 'http:' || scheme === 'https:') return true;
+  // Bare domain — prepend a scheme so the parser can
+  // validate/normalize the host instead of matching characters by hand.
+  return !!URL.parse(`https://${trimmed}`)?.hostname.includes('.');
+}
+
 function applyInlineMarkdown(container, text, emojiSize = 22) {
   const tokens = [
     { re: /\*\*(.+?)\*\*/s,  tag: 'strong'  },
@@ -1301,15 +1334,11 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
               ].join(';');
               container.appendChild(img);
               stickerHandled = true;
+            } else if (isUrlLikeLabel(label)) {
+              container.appendChild(document.createTextNode(earliest.match));
+              stickerHandled = true;
             } else {
-              const linkIsSafe = URL.parse(url)?.protocol === 'https:' && !/%00/i.test(url);
-              const a = document.createElement('a');
-              if (linkIsSafe) a.href = url;
-              a.target = '_blank';
-              a.rel    = 'noopener noreferrer';
-              a.style.cssText = 'color:#5571de;text-decoration:underline;cursor:pointer;word-break:break-all;';
-              a.textContent = label;
-              container.appendChild(a);
+              appendLinkOrText(container, url, label);
               stickerHandled = true;
             }
           }
@@ -1318,20 +1347,11 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
         }
 
         if (!stickerHandled) {
-          const mdUrlIsSafe = URL.parse(url)?.protocol === 'https:' && !/%00/i.test(url);
-          const a = document.createElement('a');
-          if (mdUrlIsSafe) a.href = url;
-          a.target = '_blank';
-          a.rel    = 'noopener noreferrer';
-          a.style.cssText = 'color:#5571de;text-decoration:underline;cursor:pointer;word-break:break-all;';
-          a.textContent = label;
-          // Anti-phishing: label that looks like a URL hides the real destination.
-          const labelIsUrl = /^https?:\/\//i.test(label) ||
-            /^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/\S*)?$/.test(label.trim());
-          if (labelIsUrl) {
+          // Anti-phishing check takes priority over the safety check below regardless of outcome.
+          if (isUrlLikeLabel(label)) {
             container.appendChild(document.createTextNode(earliest.match));
           } else {
-            container.appendChild(a);
+            appendLinkOrText(container, url, label);
           }
         }
       }
@@ -1345,9 +1365,6 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
         remaining = remaining.slice(earliest.index + earliest.match.length);
         continue;
       }
-      // URL.parse() uses the browser's parser; %00 in a valid https:// URL parses fine so the /%00/ guard is load-bearing.
-      const linkIsSafe = URL.parse(url)?.protocol === 'https:' && !/%00/i.test(url);
-
       // Bare sticker URL: only rendered at emojiSize ≥ 48 (jumbo); otherwise plain link.
       const bareStickerParsed = parseStickerUrl(url);
       if (bareStickerParsed && emojiSize >= 48) {
@@ -1373,13 +1390,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
         ].join(';');
         container.appendChild(img);
       } else {
-        const a = document.createElement('a');
-        if (linkIsSafe) a.href = url;
-        a.target = '_blank';
-        a.rel    = 'noopener noreferrer';
-        a.style.cssText = 'color:#5571de;text-decoration:underline;cursor:pointer;word-break:break-all;';
-        a.textContent = url;
-        container.appendChild(a);
+        appendLinkOrText(container, url, url);
       }
     } else {
       const el = document.createElement(earliest.tag);
