@@ -778,6 +778,13 @@ function scanExistingLocked(reason) {
 
 const _shortcodeOnlyRe = /^:[a-zA-Z0-9_+\-]+:$/;
 
+// Single source pattern shared by the tokenizer, the
+// mdlink branch's group re-exec, and isJumboEmoji's whole-string check, so the
+// URL character class can't drift out of sync between them.
+const _MDLINK_BODY   = '\\[([^\\]]+)\\]\\((https://[^\\s<>"\'()]+)\\)';
+const MDLINK_RE       = new RegExp(_MDLINK_BODY);        // unanchored: find anywhere
+const MDLINK_FULL_RE  = new RegExp(`^${_MDLINK_BODY}$`);  // anchored: whole string only
+
 // ── Nitro emoji URL parsing ───────────────────────────────────────────────────
 // Format: https://cdn.discordapp.com/emojis/<id>.<ext>?size=<N>[&animated=true]&name=<name>[&lossless=true]
 //   • animated=true present → animated; absent → static.
@@ -838,7 +845,7 @@ function parseStickerUrl(url) {
 function isJumboEmoji(plaintext) {
   const t = plaintext.trim();
   if (_shortcodeOnlyRe.test(t)) return true;
-  const mdm = /^\[([^\]]+)\]\((https:\/\/[^\s)]+)\)$/.exec(t);
+  const mdm = MDLINK_FULL_RE.exec(t);
   if (mdm) {
     const label = mdm[1];
     const url   = mdm[2];
@@ -1178,8 +1185,7 @@ function appendLinkOrText(container, url, text) {
 // destination — true regardless of where the actual href points (even a
 // same-origin/trusted host), since the visible text is what the user trusts.
 // Delegates to URL.parse() instead of a hand-rolled domain regex: catches
-// homograph/IDN look-alike domains that an
-// ASCII-only pattern would silently miss.
+// homograph/IDN look-alike domains that an ASCII-only pattern would silently miss.
 function isUrlLikeLabel(label) {
   const trimmed = label.trim();
   if (!trimmed || /\s/.test(trimmed)) return false;
@@ -1200,7 +1206,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
     { re: /\|\|(.+?)\|\|/s,  tag: 'spoiler' },
     // mdlink must come before bare link so the full [label](url) pattern is consumed
     // and the trailing ) is not left as a stray token.
-    { re: /\[([^\]]+)\]\((https:\/\/[^\s<>"'()]+)\)/, tag: 'mdlink' },
+    { re: MDLINK_RE, tag: 'mdlink' },
     // Bare URL: % permitted for percent-encoded slugs (e.g. %C3%A3); scheme-bypass
     // via percent-encoding (javascript%3A) is caught by the post-assignment href check
     // which tests the browser-normalised href. %00 rejected by a separate guard below.
@@ -1281,7 +1287,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
       container.appendChild(sp);
     } else if (earliest.tag === 'mdlink') {
       // Re-exec to extract both capture groups (label + URL); earliest only carries group 1.
-      const mdm = /^\[([^\]]+)\]\((https:\/\/[^\s<>"'()]+)\)/.exec(earliest.match);
+      const mdm = MDLINK_RE.exec(earliest.match);
       const label = mdm ? mdm[1] : earliest.inner;
       const url   = mdm ? mdm[2] : '';
 
