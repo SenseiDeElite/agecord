@@ -103,89 +103,136 @@ window.addEventListener('message', (e) => {
   // Vencord custom emoji <img> nodes are serialised as [name](url) markdown.
   if (type === 'AGE_GET_SLATE_TEXT') {
     const nonce = e.data?.nonce;
-    try {
-      const tb = getMainTextbox();
-      if (!tb) throw new Error('Slate textbox not found');
+    const tb = getMainTextbox();
+    if (!tb) throw new Error('Slate textbox not found');
 
-      const lines = [];
-      for (const block of tb.children) {
-        // Blockquote blocks render the ">" prefix as DOM structure, not text.
-        // Detect by class substring and prepend it manually after extraction.
-        const isBlockquote =
-          (typeof block.className === 'string' && block.className.includes('blockquoteContainer')) ||
-          (block.firstElementChild &&
-           typeof block.firstElementChild.className === 'string' &&
-           block.firstElementChild.className.includes('blockquoteContainer'));
+    const lines = [];
+    for (const block of tb.children) {
+      // Blockquote blocks render the ">" prefix as DOM structure, not text.
+      // Detect by class substring and prepend it manually after extraction.
+      const isBlockquote =
+        (typeof block.className === 'string' && block.className.includes('blockquoteContainer')) ||
+        (block.firstElementChild &&
+         typeof block.firstElementChild.className === 'string' &&
+         block.firstElementChild.className.includes('blockquoteContainer'));
 
-        let lineText = '';
-        const walker = document.createTreeWalker(
-          block,
-          NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-          {
-            acceptNode(node) {
-              if (node.nodeType === Node.ELEMENT_NODE) {
-                // Reject aria companion spans — they duplicate emoji names for
-                // screen readers and must not appear in serialised plaintext.
-                const cls = node.className;
-                if (typeof cls === 'string' && cls.includes('hiddenVisually'))
-                  return NodeFilter.FILTER_REJECT;
-                if (node.tagName === 'IMG') return NodeFilter.FILTER_ACCEPT;
-                return NodeFilter.FILTER_SKIP;
-              }
-              return NodeFilter.FILTER_ACCEPT;
+      let lineText = '';
+      const walker = document.createTreeWalker(
+        block,
+        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+        {
+          acceptNode(node) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              // Reject aria companion spans — they duplicate emoji names for
+              // screen readers and must not appear in serialised plaintext.
+              const cls = node.className;
+              if (typeof cls === 'string' && cls.includes('hiddenVisually'))
+                return NodeFilter.FILTER_REJECT;
+              if (node.tagName === 'IMG') return NodeFilter.FILTER_ACCEPT;
+              // Detect Slate void elements via data-slate-void. Processed in the walk below.
+              if (node.dataset?.slateVoid === 'true') return NodeFilter.FILTER_ACCEPT;
+              return NodeFilter.FILTER_SKIP;
             }
-          }
-        );
-
-        let node;
-        while ((node = walker.nextNode()) !== null) {
-          if (node.nodeType === Node.TEXT_NODE) {
-            lineText += node.textContent;
-          } else if (node.tagName === 'IMG' &&
-                     node.dataset.type === 'emoji' &&
-                     node.dataset.id) {
-            // Custom/Nitro emoji. Validate before embedding into URL/markdown.
-            // emojiId: Discord snowflake (digits, 17–20 chars).
-            // emojiName: word chars and hyphens, max 100 chars.
-            const rawId   = String(node.dataset.id);
-            const altText = node.alt ?? '';
-            const rawName = altText.replace(/^:|:$/g, '');
-
-            const emojiId   = /^\d{17,20}$/.test(rawId) ? rawId : null;
-            const emojiName = /^[\w-]{1,100}$/.test(rawName) ? rawName : null;
-
-            if (!emojiId || !emojiName) {
-              lineText += altText || `:${rawId}:`;
-            } else {
-              const isAnimated = typeof node.src === 'string' &&
-                                 node.src.includes('animated=true');
-              const emojiUrl = isAnimated
-                ? `https://cdn.discordapp.com/emojis/${emojiId}.webp?size=48&animated=true&name=${emojiName}&lossless=true`
-                : `https://cdn.discordapp.com/emojis/${emojiId}.webp?size=48&name=${emojiName}&lossless=true`;
-              lineText += `[${emojiName}](${emojiUrl})`;
-            }
-          } else if (node.tagName === 'IMG' && node.dataset.type === 'emoji') {
-            // Standard Unicode emoji rendered as <img> — alt is the raw codepoint(s).
-            const alt = node.alt ?? '';
-            if (alt) lineText += alt;
+            return NodeFilter.FILTER_ACCEPT;
           }
         }
+      );
 
-        // Slate appends a structural trailing newline to every block's last leaf.
-        const serialised = lineText.replace(/\n+$/, '');
-        lines.push(isBlockquote ? '> ' + serialised : serialised);
+      let node;
+      // Set when a void node's source has been reconstructed from its Slate
+      // element, so we skip re-emitting its rendered display text from the
+      // descendant text nodes the walker would otherwise still visit.
+      let voidBoundary = null;
+      while ((node = walker.nextNode()) !== null) {
+        if (voidBoundary) {
+          if (voidBoundary.contains(node)) continue;
+          voidBoundary = null;
+        }
+
+        if (node.nodeType === Node.TEXT_NODE) {
+          lineText += node.textContent;
+        } else if (node.nodeType === Node.ELEMENT_NODE &&
+                   node.dataset?.slateVoid === 'true') {
+          const src = _resolveVoidNodeSource(node);
+          if (src !== null) {
+            lineText += src;
+            voidBoundary = node;
+          }
+          // null = non-time void; descend and emit rendered text.
+        } else if (node.tagName === 'IMG' &&
+                   node.dataset.type === 'emoji' &&
+                   node.dataset.id) {
+          // Custom/Nitro emoji. Validate before embedding into URL/markdown.
+          // emojiId: Discord snowflake (digits, 17–20 chars).
+          // emojiName: word chars and hyphens, max 100 chars.
+          const rawId   = String(node.dataset.id);
+          const altText = node.alt ?? '';
+          const rawName = altText.replace(/^:|:$/g, '');
+
+          const emojiId   = /^\d{17,20}$/.test(rawId) ? rawId : null;
+          const emojiName = /^[\w-]{1,100}$/.test(rawName) ? rawName : null;
+
+          if (!emojiId || !emojiName) {
+            lineText += altText || `:${rawId}:`;
+          } else {
+            const isAnimated = typeof node.src === 'string' &&
+                               node.src.includes('animated=true');
+            const emojiUrl = isAnimated
+              ? `https://cdn.discordapp.com/emojis/${emojiId}.webp?size=48&animated=true&name=${emojiName}&lossless=true`
+              : `https://cdn.discordapp.com/emojis/${emojiId}.webp?size=48&name=${emojiName}&lossless=true`;
+            lineText += `[${emojiName}](${emojiUrl})`;
+          }
+        } else if (node.tagName === 'IMG' && node.dataset.type === 'emoji') {
+          // Standard Unicode emoji rendered as <img> — alt is the raw codepoint(s).
+          const alt = node.alt ?? '';
+          if (alt) lineText += alt;
+        }
       }
 
-      const text = lines.join('\n').trim() ||
-                   (tb.innerText?.trim() ?? '');
-
-      window.postMessage({ type: 'AGE_GET_SLATE_TEXT_RESULT', ok: true, text, nonce }, '*');
-    } catch (e2) {
-      const fallback = getMainTextbox()?.innerText?.trim() ?? '';
-      window.postMessage({ type: 'AGE_GET_SLATE_TEXT_RESULT', ok: true, text: fallback, nonce }, '*');
+      // Slate appends a structural trailing newline to every block's last leaf.
+      const serialised = lineText.replace(/\n+$/, '');
+      lines.push(isBlockquote ? '> ' + serialised : serialised);
     }
+
+    const text = lines.join('\n').trim() ||
+                 (tb.innerText?.trim() ?? '');
+
+    window.postMessage({ type: 'AGE_GET_SLATE_TEXT_RESULT', ok: true, text, nonce }, '*');
   }
 });
+
+// Returns the source <t:UNIX:STYLE> tag for a Slate timestamp void.
+// Non-timestamp voids return null; invalid internal structure throws.
+//
+// Expected element shape:
+// { type: 'timestamp', parsed: { originalMatch: ['<t:...>', ...] } }
+function _resolveVoidNodeSource(el) {
+  const fiberKey = Object.keys(el).find(k => k.startsWith('__reactFiber$'));
+  if (!fiberKey) throw new Error('Void node has no attached React fiber.');
+
+  let fiber = el[fiberKey];
+  for (let steps = 0; fiber && steps < SLATE_FIBER_WALK_LIMIT; steps++, fiber = fiber.return) {
+    const element = fiber.memoizedProps?.element;
+    if (!element || typeof element !== 'object') continue;
+    if (element.type !== 'timestamp') return null;
+
+    const parsed = element.parsed;
+    const original = parsed?.originalMatch?.[0];
+    if (typeof original === 'string' && /^<t:\d+(?::[RfFtTdDSs])?>$/.test(original)) {
+      return original;
+    }
+
+    const unix = parseInt(parsed?.timestamp, 10);
+    if (!Number.isNaN(unix)) {
+      const style = typeof parsed?.format === 'string' ? parsed.format : 'f';
+      return `<t:${unix}:${style}>`;
+    }
+
+    throw new Error('Timestamp element.parsed has an unrecognized shape.');
+  }
+
+  throw new Error('No Slate element prop found within fiber walk limit.');
+}
 
 // ─── Slate textbox clear ──────────────────────────────────────────────────────
 // Must run in page context: the isolated world gets a fiber proxy, not the live
@@ -281,15 +328,7 @@ function clearSlateTextbox() {
       focus:  { path: focusPath, offset: focusOffset },
     };
 
-    if (typeof editor.deleteFragment === 'function') {
-      editor.deleteFragment();
-    } else {
-      for (let i = children.length - 1; i >= 1; i--) {
-        try { editor.apply({ type: 'remove_node', path: [i], node: children[i] }); } catch (_) {}
-      }
-      try { editor.apply({ type: 'remove_node', path: [0], node: children[0] }); } catch (_) {}
-      try { editor.apply({ type: 'insert_node', path: [0], node: { type: 'paragraph', children: [{ text: '' }] } }); } catch (_) {}
-    }
+    editor.deleteFragment();
 
     try {
       editor.selection = { anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 0 } };
