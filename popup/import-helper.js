@@ -1,4 +1,5 @@
 'use strict';
+
 const statusEl = document.getElementById('status');
 function setStatus(msg, cls) {
   statusEl.textContent = msg;
