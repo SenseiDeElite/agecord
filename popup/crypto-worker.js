@@ -53,7 +53,8 @@ self.onmessage = async ({ data }) => {
     if (data.op === 'XCHACHA_ENCRYPT') {
       const key       = fromB64(data.keyB64);
       const plaintext = fromB64(data.plaintextB64);
-      const saltRaw = data.saltB64 ? fromB64(data.saltB64) : crypto.getRandomValues(new Uint8Array(SALT_LEN));
+      if (!data.saltB64) throw new Error('XCHACHA_ENCRYPT requires saltB64 — caller must supply it.');
+      const saltRaw = fromB64(data.saltB64);
       if (saltRaw.length !== SALT_LEN)
         throw new Error(`Salt must be exactly ${SALT_LEN} bytes (got ${saltRaw.length}).`);
 
