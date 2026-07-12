@@ -85,7 +85,10 @@ async function ensureIdentity() {
     if (d.age_contacts && typeof d.age_contacts === 'object') _contacts = d.age_contacts;
     if (d.age_recipient) _ageRecipient = d.age_recipient;
     return true;
-  } catch { return false; }
+  } catch (e) {
+    console.warn('[age] ensureIdentity: session read failed:', e?.message);
+    return false;
+  }
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -131,12 +134,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   sendUnlockToTab(tabId);
 });
 
-// Keeps the SW alive. Content script reloads on disconnect only on extension
-// reload/update — not on normal SW sleep/wake.
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'age-watchdog') return;
-});
-
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.type === 'UNLOCK') {
@@ -153,8 +150,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // content script get the same retry logic as the onUpdated path.
         const tabs = await chrome.tabs.query({ url: 'https://discord.com/*' });
         await Promise.all(tabs.map(tab => sendUnlockToTab(tab.id)));
-      } catch (e) { console.info('[age] UNLOCK error:', e?.message); }
-      sendResponse({ ok: true });
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.info('[age] UNLOCK error:', e?.message);
+        sendResponse({ ok: false, error: e?.message ?? String(e) });
+      }
     })();
     return true;
   }
