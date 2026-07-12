@@ -3,6 +3,6 @@
   <app appid='iabgljppdmfhopeaallblmhjpagobned'>
     <updatecheck
       codebase='https://github.com/SenseiDeElite/discord-age-encryption/releases/latest/download/discord-age-encryption.crx'
-      version='0.7.4' />
+      version='0.7.5' />
   </app>
 </gupdate>
