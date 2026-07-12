@@ -37,5 +37,11 @@ window.addEventListener('message', async (e) => {
   }
 });
 
-// Signal readiness to the parent.
-window.parent.postMessage({ type: 'AGE_IFRAME_READY' }, '*');
+// Signal readiness to the parent using its origin from the src query.
+// Avoids '*' and ancestorOrigins, which may be redacted by Referrer-Policy.
+const parentOrigin = new URLSearchParams(location.search).get('parentOrigin');
+if (parentOrigin) {
+  window.parent.postMessage({ type: 'AGE_IFRAME_READY' }, parentOrigin);
+} else {
+  console.error('[age-iframe] AGE_IFRAME_READY: parentOrigin missing from iframe src');
+}
