@@ -123,6 +123,9 @@ function _signalContextInvalidated() {
   try { _msgObserver?.disconnect();  _msgObserver  = null; } catch {}
   try { _msgObserver2?.disconnect(); _msgObserver2 = null; } catch {}
 
+  for (const { timer } of _relTimestampEls.values()) clearTimeout(timer);
+  _relTimestampEls.clear();
+
   try { showAllPlaceholders('locked'); } catch {}
 
   window.postMessage({ type: 'AGE_CONTEXT_INVALIDATED' }, '*');
@@ -173,7 +176,6 @@ function getTextbox() {
   }
   return all[0] ?? null;
 }
-function getMessageList() { return document.querySelector('ol[data-list-id="chat-messages"]'); }
 function getAllMessageLists() { return [...document.querySelectorAll('ol[data-list-id="chat-messages"]')]; }
  
 function getCurrentChannelId() {
@@ -414,7 +416,79 @@ function buildCandidateKeysB64(entry) {
 
 const toB64   = bytes => bytes.toBase64();
 const fromB64 = b64   => Uint8Array.fromBase64(b64);
- 
+
+// Discord <t:UNIX:STYLE> timestamp rendering. Requires Temporal.
+// Supports documented styles (t T d D f F R s S).
+
+const _userLocale     = new Intl.DateTimeFormat().resolvedOptions().locale;
+const _userHourCycle  = new Intl.DateTimeFormat().resolvedOptions().hourCycle; // respects OS 24h/12h clock setting
+
+const _TIMESTAMP_OPTS = {
+  f: { dateStyle: 'long',  timeStyle: 'short'  },
+  F: { dateStyle: 'full',  timeStyle: 'short'  },
+  t: { timeStyle: 'short'  },
+  T: { timeStyle: 'medium' },
+  d: { dateStyle: 'short'  },
+  D: { dateStyle: 'long'   },
+  s: { dateStyle: 'short', timeStyle: 'short'  },
+  S: { dateStyle: 'short', timeStyle: 'medium' },
+};
+
+function formatDiscordTimestamp(unixSeconds, style = 'f') {
+  const tz      = Temporal.Now.timeZoneId();
+  const instant = Temporal.Instant.fromEpochMilliseconds(unixSeconds * 1000);
+
+  if (style === 'R') {
+    const diffSecs = (instant.epochMilliseconds - Temporal.Now.instant().epochMilliseconds) / 1000;
+    const absSecs  = Math.abs(diffSecs);
+    const rtf      = new Intl.RelativeTimeFormat(_userLocale, { numeric: 'auto' });
+
+    if (absSecs < 60)       return rtf.format(Math.round(diffSecs),        'second');
+    if (absSecs < 3600)     return rtf.format(Math.round(diffSecs / 60),   'minute');
+    if (absSecs < 86400)    return rtf.format(Math.round(diffSecs / 3600), 'hour');
+    if (absSecs < 2592000)  return rtf.format(Math.round(diffSecs / 86400),'day');
+    if (absSecs < 31536000) return rtf.format(Math.round(diffSecs / 2592000), 'month');
+    return rtf.format(Math.round(diffSecs / 31536000), 'year');
+  }
+
+  const opts = _TIMESTAMP_OPTS[style] ?? _TIMESTAMP_OPTS.f;
+  return new Intl.DateTimeFormat(_userLocale, { timeZone: tz, hourCycle: _userHourCycle, ...opts })
+           .format(instant.epochMilliseconds);
+}
+
+// Live 'R'-style timestamps. Each element schedules its own update based on
+// display granularity; updates stop after 1 day.
+const _relTimestampEls = new Map();
+
+function _scheduleRelUpdate(el, unix) {
+  if (!el.isConnected) { _relTimestampEls.delete(el); return; }
+
+  el.textContent = formatDiscordTimestamp(unix, 'R');
+
+  const diffSecs = unix - Temporal.Now.instant().epochMilliseconds / 1000;
+  const absSecs  = Math.abs(diffSecs);
+
+  // Delay targets the next half-unit boundary — the point where
+  // Math.round(diffSecs / unit) (used by formatDiscordTimestamp's 'R' style)
+  // actually changes value — not the next whole-unit boundary, which would
+  // fire up to unit/2 too late and leave the label stale in the meantime.
+  let delayMs;
+  if (absSecs < 60) {
+    delayMs = 1000;
+  } else if (absSecs < 3600) {
+    const unit = 60, half = unit / 2, phase = absSecs % unit;
+    delayMs = (phase < half ? (half - phase) : (unit + half - phase)) * 1000;
+  } else if (absSecs < 86400) {
+    const unit = 3600, half = unit / 2, phase = absSecs % unit;
+    delayMs = (phase < half ? (half - phase) : (unit + half - phase)) * 1000;
+  } else {
+    _relTimestampEls.delete(el); return; // ≥1 day: no further scheduled updates
+  }
+
+  const timer = setTimeout(() => _scheduleRelUpdate(el, unix), delayMs);
+  _relTimestampEls.set(el, { unix, timer });
+}
+
 // ─── Send ─────────────────────────────────────────────────────────────────────
  
 let _sending = false;
@@ -1140,13 +1214,6 @@ function renderBlockContent(container, text, firstLineIsLock, emojiSize = 22) {
   container.appendChild(outer);
 }
 
-function renderDecrypted(el, plaintext) {
-  el.dataset.ageState = 'ok';
-  el.textContent = '';
-  const emojiSize = isJumboEmoji(plaintext) ? 48 : 22;
-  renderBlockContent(el, plaintext, true, emojiSize);
-}
-
 function renderMarkdownLine(text, lockPrefix, emojiSize = 22) {
   const wrap = document.createElement('span');
   wrap.style.cssText = 'color:#889ce6;display:inline-flex;align-items:center;gap:0 2px;';
@@ -1204,13 +1271,14 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
     { re: /~~(.+?)~~/s,      tag: 's'       },
     { re: /`([^`]+)`/,       tag: 'code'    },
     { re: /\|\|(.+?)\|\|/s,  tag: 'spoiler' },
+    { re: /<t:(\d+)(?::([RfFtTdDSs]))?>/, tag: 'timestamp' },
     // mdlink must come before bare link so the full [label](url) pattern is consumed
     // and the trailing ) is not left as a stray token.
     { re: MDLINK_RE, tag: 'mdlink' },
     // Bare URL: % permitted for percent-encoded slugs (e.g. %C3%A3); scheme-bypass
     // via percent-encoding (javascript%3A) is caught by the post-assignment href check
     // which tests the browser-normalised href. %00 rejected by a separate guard below.
-    // One level of parenthesis nesting keeps Wikipedia disambiguation URLs intact.
+    // One level of parenthesis nesting keeps URLs using them intact.
     { re: /(https:\/\/(?:[^\s<>"'()]*(?:\([^\s<>"'()]*\)[^\s<>"'()]*)*))/,  tag: 'link' },
   ];
  
@@ -1285,6 +1353,36 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
         inner.style.pointerEvents = '';
       });
       container.appendChild(sp);
+    } else if (earliest.tag === 'timestamp') {
+      // earliest.inner only carries capture group 1 (the digits); re-extract
+      // the optional style letter (group 2) from the full match.
+      const styleMatch = /^<t:\d+(?::([RfFtTdDSs]))?>$/.exec(earliest.match);
+      const style = styleMatch?.[1] ?? 'f';
+      const unix  = parseInt(earliest.inner, 10);
+
+      const formatted = formatDiscordTimestamp(unix, style);
+      const fullDate  = formatDiscordTimestamp(unix, 'F');
+
+      const timeEl = document.createElement('time');
+      timeEl.textContent = formatted;
+      timeEl.title       = fullDate; // hover = full date, regardless of display style
+      timeEl.dateTime    = Temporal.Instant.fromEpochMilliseconds(unix * 1000).toString();
+      timeEl.style.cssText = [
+        'background:#1a2236',
+        'border:1px solid #2e3d4f',
+        'border-radius:4px',
+        'padding:0 4px',
+        'color:#889ce6',
+        'font-size:0.9em',
+        'cursor:default',
+        'white-space:nowrap',
+      ].join(';');
+
+      if (style === 'R') {
+        _scheduleRelUpdate(timeEl, unix);
+      }
+
+      container.appendChild(timeEl);
     } else if (earliest.tag === 'mdlink') {
       // Re-exec to extract both capture groups (label + URL); earliest only carries group 1.
       const mdm = MDLINK_RE.exec(earliest.match);
@@ -1317,39 +1415,35 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
         // Sticker: [label](sticker-url) where label === decoded name= param.
         // Only rendered at emojiSize ≥ 48 (jumbo); otherwise falls back to plain link.
         let stickerHandled = false;
-        try {
-          const stickerParsed = parseStickerUrl(url);
-          if (stickerParsed && stickerParsed.decodedName !== null &&
-              stickerParsed.decodedName === label) {
-            if (emojiSize >= 48) {
-              const encodedName = encodeURIComponent(stickerParsed.decodedName).replace(/%20/g, '+');
-              const canonicalStickerUrl =
-                `https://media.discordapp.net/stickers/${stickerParsed.stickerId}.${stickerParsed.ext}?size=160&name=${encodedName}&lossless=true`;
-              const img = document.createElement('img');
-              img.src           = canonicalStickerUrl;
-              img.alt           = stickerParsed.decodedName;
-              img.title         = stickerParsed.decodedName;
-              img.referrerPolicy = 'no-referrer';
-              img.style.cssText = [
-                'display:block',
-                'width:160px',
-                'height:160px',
-                'object-fit:contain',
-                'margin:4px 0',
-                'pointer-events:none',
-              ].join(';');
-              container.appendChild(img);
-              stickerHandled = true;
-            } else if (isUrlLikeLabel(label)) {
-              container.appendChild(document.createTextNode(earliest.match));
-              stickerHandled = true;
-            } else {
-              appendLinkOrText(container, url, label);
-              stickerHandled = true;
-            }
+        const stickerParsed = parseStickerUrl(url);
+        if (stickerParsed && stickerParsed.decodedName !== null &&
+            stickerParsed.decodedName === label) {
+          if (emojiSize >= 48) {
+            const encodedName = encodeURIComponent(stickerParsed.decodedName).replace(/%20/g, '+');
+            const canonicalStickerUrl =
+              `https://media.discordapp.net/stickers/${stickerParsed.stickerId}.${stickerParsed.ext}?size=160&name=${encodedName}&lossless=true`;
+            const img = document.createElement('img');
+            img.src           = canonicalStickerUrl;
+            img.alt           = stickerParsed.decodedName;
+            img.title         = stickerParsed.decodedName;
+            img.referrerPolicy = 'no-referrer';
+            img.style.cssText = [
+              'display:block',
+              'width:160px',
+              'height:160px',
+              'object-fit:contain',
+              'margin:4px 0',
+              'pointer-events:none',
+            ].join(';');
+            container.appendChild(img);
+            stickerHandled = true;
+          } else if (isUrlLikeLabel(label)) {
+            container.appendChild(document.createTextNode(earliest.match));
+            stickerHandled = true;
+          } else {
+            appendLinkOrText(container, url, label);
+            stickerHandled = true;
           }
-        } catch (_stickerErr) {
-          // Malformed URL — fall through to plain mdlink below.
         }
 
         if (!stickerHandled) {
@@ -1470,7 +1564,10 @@ function getFetchIframe() {
   const shadow = host.attachShadow({ mode: 'closed' });
  
   const iframe = document.createElement('iframe');
-  iframe.src     = chrome.runtime.getURL('content/cdn-bridge.html');
+  // Pass parentOrigin via query instead of ancestorOrigins, which may be
+  // redacted by Referrer-Policy and break the READY handshake.
+  iframe.src = chrome.runtime.getURL('content/cdn-bridge.html') +
+               '?parentOrigin=' + encodeURIComponent(location.origin);
   iframe.style.cssText = 'display:none;';
   // allow-same-origin lets chrome.runtime APIs work inside the iframe (extension origin required).
   iframe.sandbox = 'allow-scripts allow-same-origin';
@@ -1769,7 +1866,7 @@ function listenForInterceptorMessages() {
       }
 
       // Without this, files in unconfigured channels encrypt only to _selfRecipient — unreadable by recipient.
-      const active = getActiveEntry?.();
+      const active = getActiveEntry();
       if (!active?.entry) {
         throw new Error(
           'No encrypted contact configured for this channel — file not encrypted.'
@@ -2909,10 +3006,7 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
   if (plaintext === null) {
     // cloneNode(true) is cheaper than rebuilding the three-node tree each time.
     wrapper.appendChild(_makeDecryptingBadge());
-  } else if (plaintext.startsWith('🔑') ||
-             plaintext.startsWith('🔒') || plaintext.startsWith('🔓') ||
-             plaintext.startsWith('🔐') || plaintext.startsWith('🚫') ||
-             plaintext.startsWith('❗') || plaintext.startsWith('🔏')) {
+  } else if (_STATUS_EMOJI_PREFIXES.some(e => plaintext.startsWith(e))) {
     // Emoji gets user-select:none; trailing text remains selectable.
     const seg = _splitLeadingEmoji(plaintext);
     wrapper.appendChild(_makeStatusBadge(seg.emoji, seg.rest));
