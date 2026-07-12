@@ -131,8 +131,6 @@ html, body {
   text-overflow: ellipsis;
 }
 
-.topbar-actions { display: flex; gap: 2px; }
-
 /* ── Icon button ─────────────────────────────────────────────────────────── */
 .icon-btn {
   width: 38px;
@@ -1145,22 +1143,4 @@ html, body {
 #member-picker-search:focus {
   border-color: var(--md-primary);
   box-shadow: 0 0 0 1px var(--md-primary);
-}
-
-/* ── Manage keypair sheet ────────────────────────────────────────────────── */
-#sheet-manage-keypair {
-  padding-bottom: 20px;
-}
-
-#sheet-manage-keypair .btn {
-  margin: 4px 16px 0;
-  width: calc(100% - 32px);
-}
-
-/* ── Update button (top-left corner, lock + main screens) ────────────────── */
-#btn-update {
-  position: fixed;
-  top: 6px;
-  left: 6px;
-  z-index: 999;
 }
