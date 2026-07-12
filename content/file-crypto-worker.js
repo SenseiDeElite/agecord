@@ -89,9 +89,12 @@ async function verifyAndDecrypt({ fileBuffer, identityLine, candidateKeysB64,
   const hintBytes = fileBytes.subarray(sigByteLen, sigByteLen + pubkeyHintLen);
   const ageBytes  = fileBytes.subarray(sigByteLen + pubkeyHintLen);
 
-  // Strip the trailing colon delimiter before matching.
+  // Strip the trailing colon delimiter before matching. Per the pubkey hint
+  // format (UTF-8(base64(senderMldsaPubKey) + ":")), the colon is always
+  // present — a missing colon means pubkeyHintLen was computed wrong upstream,
+  // which should surface as a failed key match rather than be silently patched.
   const hintStr      = _textDecoder.decode(hintBytes);
-  const senderKeyB64 = hintStr.endsWith(':') ? hintStr.slice(0, -1) : hintStr;
+  const senderKeyB64 = hintStr.slice(0, -1);
 
   // One hint per message → scan runs at most once per attachment.
   const matchedKeyB64 = candidateKeysB64.find(k => k === senderKeyB64) ?? null;
