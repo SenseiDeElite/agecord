@@ -461,32 +461,51 @@ function formatDiscordTimestamp(unixSeconds, style = 'f') {
 const _relTimestampEls = new Map();
 
 function _scheduleRelUpdate(el, unix) {
-  if (!el.isConnected) { _relTimestampEls.delete(el); return; }
-
+  // No `isConnected` check here. Initial call may occur before insertion;
+  // subsequent timer callbacks check connection state before rescheduling.
   el.textContent = formatDiscordTimestamp(unix, 'R');
 
   const diffSecs = unix - Temporal.Now.instant().epochMilliseconds / 1000;
   const absSecs  = Math.abs(diffSecs);
 
-  // Delay targets the next half-unit boundary — the point where
-  // Math.round(diffSecs / unit) (used by formatDiscordTimestamp's 'R' style)
-  // actually changes value — not the next whole-unit boundary, which would
-  // fire up to unit/2 too late and leave the label stale in the meantime.
+  // Schedule just past the Math.round(diffSecs / unit) transition (+1s) to
+  // avoid firing exactly on the old value's inclusive boundary.
+  const EPSILON_S = 1;
   let delayMs;
   if (absSecs < 60) {
     delayMs = 1000;
   } else if (absSecs < 3600) {
     const unit = 60, half = unit / 2, phase = absSecs % unit;
-    delayMs = (phase < half ? (half - phase) : (unit + half - phase)) * 1000;
+    delayMs = ((phase < half ? (half - phase) : (unit + half - phase)) + EPSILON_S) * 1000;
   } else if (absSecs < 86400) {
     const unit = 3600, half = unit / 2, phase = absSecs % unit;
-    delayMs = (phase < half ? (half - phase) : (unit + half - phase)) * 1000;
+    delayMs = ((phase < half ? (half - phase) : (unit + half - phase)) + EPSILON_S) * 1000;
   } else {
     _relTimestampEls.delete(el); return; // ≥1 day: no further scheduled updates
   }
 
-  const timer = setTimeout(() => _scheduleRelUpdate(el, unix), delayMs);
+  const timer = setTimeout(() => {
+    // Stop the chain once the element has left the live DOM (removed message,
+    // virtual-scroll recycling, etc.) instead of ticking a detached node forever.
+    if (!el.isConnected) { _relTimestampEls.delete(el); return; }
+    _scheduleRelUpdate(el, unix);
+  }, delayMs);
   _relTimestampEls.set(el, { unix, timer });
+}
+
+// Cancel active schedulers for all <time> elements in `root` (inclusive).
+// Call before detaching/replacing any timestamp wrapper to avoid orphaned
+// timers retaining detached DOM until their next scheduled tick.
+function _clearRelTimestampsIn(root) {
+  if (!root) return;
+  if (root.tagName === 'TIME') {
+    const entry = _relTimestampEls.get(root);
+    if (entry) { clearTimeout(entry.timer); _relTimestampEls.delete(root); }
+  }
+  root.querySelectorAll?.('time').forEach(t => {
+    const entry = _relTimestampEls.get(t);
+    if (entry) { clearTimeout(entry.timer); _relTimestampEls.delete(t); }
+  });
 }
 
 // ─── Send ─────────────────────────────────────────────────────────────────────
@@ -813,7 +832,7 @@ function showQuotedPlaceholder(container, reason) {
   }
   if (!hasAgeFile) return;
   container.querySelectorAll('[data-age-msg], [data-age-msg-slot], [data-age-attachment]')
-    .forEach(el => el.remove());
+    .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
   const text = reason === 'disabled' ? '🔓 Decryption disabled.' : '🔐 Extension locked.';
   renderDecryptedMessage(container, text, undefined, lastAnchor);
 }
@@ -2064,6 +2083,11 @@ function startNavObserver() {
       // li.id encodes channel ID — all existing _processedIds entries are stale on channel change.
       _processedIds.clear();
       _decryptedCache.clear();
+
+      // React replaces the old <ol>, bypassing normal timestamp cleanup. Clear the
+      // scheduler map here instead of waiting for disconnected timers to self-expire.
+      for (const { timer } of _relTimestampEls.values()) clearTimeout(timer);
+      _relTimestampEls.clear();
     }
     // Thread suffix change (panel open/close): keep caches. Main-channel messages
     // are still visible. Thread split-view opens produce two pushState calls
@@ -2153,7 +2177,7 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
   // Clear any unslotted [data-age-msg] placeholder (message.txt.age clears at decrypt-start;
   // media files clear here, just before inserting the player/image/download).
   liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-    .forEach(el => el.remove());
+    .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
  
   const wrapper = document.createElement('div');
   wrapper.dataset.ageAttachment = cardKey;
@@ -2583,7 +2607,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     // A placeholder from showAgePlaceholder (locked/disabled) has no slot key —
     // clear it now so it doesn't survive alongside the result.
     liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-      .forEach(el => el.remove());
+      .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
  
     const capturedGeneration = _generation;
     // Hoisted so the catch block can reference it for error rendering.
@@ -2877,7 +2901,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     if (!workerResult.sigValid) {
       _attachmentInProgress.delete(attachId);
       liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-        .forEach(el => el.remove());
+        .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
       renderDecryptedMessage(liElement, '❗ Signature invalid — possible tampering.', undefined, _attMosaicItem ?? fileCard);
       return;
     }
@@ -2905,7 +2929,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     if (!isContextValid()) return;
     // Replace the "Decrypting…" placeholder with an error badge.
     liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-      .forEach(el => el.remove());
+      .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
     renderDecryptedMessage(liElement, "🔓 Couldn't decrypt.", undefined, _earlyMosaicItem ?? fileCard);
   } finally {
     // Settle the in-flight promise — any concurrent awaiter unblocks and
@@ -2984,16 +3008,16 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
   if (slotKey) {
     // Remove this slot's existing wrapper.
     liElement.querySelectorAll('[data-age-msg-slot]').forEach(el => {
-      if (el.dataset.ageMsgSlot === slotKey) el.remove();
+      if (el.dataset.ageMsgSlot === slotKey) { _clearRelTimestampsIn(el); el.remove(); }
     });
     // A final result (non-spinner) also clears any unslotted wrapper so two
     // status badges never appear at the same time.
     if (plaintext !== null) {
-      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])').forEach(el => el.remove());
+      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])').forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
     }
   } else {
     // Unslotted — clear ALL [data-age-msg] wrappers including per-slot ones.
-    liElement.querySelectorAll('[data-age-msg]').forEach(el => el.remove());
+    liElement.querySelectorAll('[data-age-msg]').forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
   }
  
   const wrapper = document.createElement('div');
@@ -3068,7 +3092,7 @@ function showAgePlaceholder(li, reason) {
   if (!hasAgeFile) return;
 
   li.querySelectorAll('[data-age-msg], [data-age-msg-slot], [data-age-attachment]')
-    .forEach(el => el.remove());
+    .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
 
   const text = reason === 'disabled'
     ? '🔓 Decryption disabled.'
