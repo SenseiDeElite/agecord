@@ -2241,13 +2241,15 @@
   document.getElementById('btn-back-about').addEventListener('click', showMain);
 
   const _aboutLinks = {
-    'about-repo-link':          'https://github.com/SenseiDeElite/discord-age-encryption',
-    'about-typage-link':        'https://github.com/FiloSottile/typage/blob/main/LICENSE',
-    'about-rustcrypto-link':    'https://opensource.org/license/MIT',
-    'about-license-link':       'https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE',
+    'about-repo-link':    'https://github.com/SenseiDeElite/discord-age-encryption',
+    'about-license-link': 'https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE',
   };
   Object.entries(_aboutLinks).forEach(([id, url]) => {
     document.getElementById(id).addEventListener('click', () => { chrome.tabs.create({ url }); });
+  });
+
+  document.getElementById('about-notices-link').addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('licenses.html') });
   });
 
   function showAbout() {
