@@ -60,7 +60,31 @@ esbuild entry.js \
 
 After finishing, move the libraries to [/lib/](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib).
 
-For their respective licenses, see [`NOTICES.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/NOTICES.md).
+### Third-Party Notices
+ 
+Everything pulled in by `rustcrypto-wasm` (including transitive dependencies) is generated with [cargo-about](https://github.com/EmbarkStudios/cargo-about).
+ 
+- From `rustcrypto-wasm/`, an `about.toml` controls which SPDX licenses are allowed to appear in the output. Add the reported license identifier to the accepted list:
+
+```toml
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+]
+```
+ 
+- Generate the notices:
+```sh
+cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
+```
+ 
+  This produces an HTML report of every crate in the resolved dependency tree, grouped by license text.
+ 
+- `THIRD_PARTY_NOTICES.html` is an intermediate file, not a shipped artifact. It gets folded into two places:
+  - **[`NOTICES.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/NOTICES.md)** — Markdown notices for the repository.
+  - **`licenses.html`** — the bundled page the extension's `About` screen links to.
 
 ---
 
@@ -70,7 +94,7 @@ For their respective licenses, see [`NOTICES.md`](https://github.com/SenseiDeEli
 
 1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
 2. Extract it;
-3. Remove unnecessary files for this build: `/icons/icon-512.svg`, `manifest-firefox.json`, `README.md`, `DEVELOPMENT.md`, `updates.json`, `updates.xml`, `policies.json`, `TROUBLESHOOTING.md` and `/rustcrypto-wasm/`;
+3. Remove unnecessary files for this build: `/icons/icon-512.svg`, `manifest-firefox.json`, `README.md`, `DEVELOPMENT.md`, `updates.json`, `updates.xml`, `policies.json`, `TROUBLESHOOTING.md`, `NOTICES.md` and `/rustcrypto-wasm/`;
 4. Rename `manifest-chromium.json` to `manifest.json`;
 5. Navigate to `chrome://extensions/`;
 6. Enable `Developer mode` (if not already done);
@@ -83,7 +107,7 @@ For their respective licenses, see [`NOTICES.md`](https://github.com/SenseiDeEli
 
 1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
 2. Extract it;
-3. Remove unnecessary files for this build: `manifest-chromium.json`, `DEVELOPMENT.md`, `README.md`, `updates.json`, `updates.xml`, `/icons/icon-128.png`, `policies.json`, `TROUBLESHOOTING.md` and `/rustcrypto-wasm/`;
+3. Remove unnecessary files for this build: `manifest-chromium.json`, `DEVELOPMENT.md`, `README.md`, `updates.json`, `updates.xml`, `/icons/icon-128.png`, `policies.json`, `TROUBLESHOOTING.md`, `NOTICES.md` and `/rustcrypto-wasm/`;
 4. Rename `manifest-firefox.json` to `manifest.json`;
 5. Zip everything inside the folder;
 6. Rename the file extension to `.xpi`.
