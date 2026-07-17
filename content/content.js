@@ -97,6 +97,7 @@ const _inFlight = new Map();
 let _mldsaPrivBytes = null; // ML-DSA-87 32-byte seed, held only while unlocked
 let _selfRecipient  = null; // own age public key, received at UNLOCK time
 let _contacts     = {};
+let _contactsLoaded = false; // true once UNLOCK/CONTACTS_UPDATED has actually populated _contacts —
 let _globalOn     = true;
 let _msgObserver  = null;
 let _msgObserver2 = null; // second observer for the thread-panel ol in split view
@@ -1974,6 +1975,7 @@ function listenForMessages() {
       try {
         const localData = await localGet(['globalOn']);
         _contacts        = msg.contacts || {};
+        _contactsLoaded  = true;
         _selfRecipient   = msg.ageRecipient || null;
         _globalOn        = localData.globalOn !== false;
         _mldsaPrivBytes  = fromB64(msg.mldsaSeedB64); // 32-byte ML-DSA-87 seed
@@ -2009,6 +2011,7 @@ function listenForMessages() {
       // If _generation changed while awaiting, an UNLOCK already updated all state.
       if (_generation !== genBefore) return;
       _contacts = newContacts || _contacts;
+      _contactsLoaded = true;
       _globalOn = localData.globalOn !== false;
       // Always re-relay when contacts change while unlocked: UNLOCK carries an empty
       // contacts object (loadContacts() hasn't finished yet), so CONTACTS_UPDATED is
@@ -2534,17 +2537,13 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
   // isContextValid() calls _signalContextInvalidated() which swaps all placeholders to 'locked'.
   if (!isContextValid()) return;
 
-  // ── No-entry early exit ───────────────────────────────────────────────────────
-  // Checked synchronously, before any async work or forwarding detection, so
-  // "No entry configured" takes precedence over "forwarding not supported"
-  // when both apply, and so the "Decrypting…" placeholder never flashes when
-  // there's no entry.
-  //
-  // getActiveEntry() is safe here: _contacts is module-level state updated on
-  // UNLOCK/CONTACTS_UPDATED. This function is only called when
-  // _mldsaPrivBytes && _globalOn (enforced by callers), so the extension is
-  // unlocked and encryption enabled.
-  if (Object.keys(_contacts).length > 0 && !getActiveEntry()) {
+  // Early exit before async work/forwarding detection so "No entry configured"
+  // takes precedence and avoids showing the decrypting placeholder.
+  // getActiveEntry() is safe: _contacts is module state updated on
+  // UNLOCK/CONTACTS_UPDATED. Callers guarantee _mldsaPrivBytes && _globalOn.
+  // Gate on _contactsLoaded rather than _contacts.size() so an empty contact
+  // list is treated as loaded.
+  if (_contactsLoaded && !getActiveEntry()) {
     _attachmentInProgress.delete(liElement.id + '\0' + cdnUrl);
     const _noEntryMosaicItem = hideFileCard(fileCard);
     renderDecryptedMessage(liElement, '🔑 No entry configured for this channel.', undefined, _noEntryMosaicItem ?? fileCard);
@@ -2641,15 +2640,15 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       const capturedActive = getActiveEntry();
 
       if (!capturedActive) {
-        if (Object.keys(_contacts).length > 0) {
-          // Contacts loaded but no entry for this channel. Release so the map
-          // doesn't accumulate stale entries across channels on long sessions —
-          // CONTACTS_UPDATED/UNLOCK both clear _attachmentInProgress anyway.
+        if (_contactsLoaded) {
+        // Contacts loaded but no entry for this channel (including zero configured
+        // contacts). Release to avoid stale per-channel map entries; CONTACTS_UPDATED
+        // and UNLOCK also clear _attachmentInProgress.
           _attachmentInProgress.delete(attachId);
           mosaicItem = hideFileCard(fileCard);
           renderDecryptedMessage(liElement, '🔑 No entry configured for this channel.');
         } else {
-          // _contacts still empty — background hasn't sent contacts yet.
+          // Contacts genuinely haven't arrived from the background yet.
           // Release so the next UNLOCK/scanExisting can retry with real contacts.
           _attachmentInProgress.delete(attachId);
         }
@@ -2826,12 +2825,11 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     const capturedActive = getActiveEntry();
     if (!capturedActive) {
       _attachmentInProgress.delete(attachId);
-      if (Object.keys(_contacts).length > 0) {
-        // contacts loaded, entry missing → not a retriable error
+      if (_contactsLoaded) {
+        // contacts loaded, entry missing (including zero contacts configured) → not a retriable error
         const _noEMosaicItem = hideFileCard(fileCard);
         renderDecryptedMessage(liElement, '🔑 No entry configured for this channel.', undefined, _noEMosaicItem ?? fileCard);
       }
-      // else: _contacts still empty — release so next UNLOCK/scanExisting retries
       return;
     }
 
