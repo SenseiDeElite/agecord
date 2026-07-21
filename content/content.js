@@ -699,7 +699,7 @@ function _attachToLists(lists, onReady) {
     _msgObserver2 = null;
   }
   if (!_mldsaPrivBytes || !_globalOn) {
-    scanExistingLocked(_globalOn ? 'locked' : 'disabled');
+    scanExistingLocked(!_mldsaPrivBytes ? 'locked' : 'disabled');
   }
   scanExisting();
   onReady?.();
@@ -770,7 +770,7 @@ function attachMsgObserver(list, slot) {
           if (_mldsaPrivBytes && _globalOn) {
             processLiFull(li);
           } else {
-            showAgePlaceholder(li, _globalOn ? 'locked' : 'disabled');
+            showAgePlaceholder(li, !_mldsaPrivBytes ? 'locked' : 'disabled');
           }
         }
       }
@@ -2028,7 +2028,13 @@ function listenForMessages() {
       } else if (_globalOn) {
         // _evictStaleProcessedIds handles quoted-message entries (liId="") via DOM check.
         _evictStaleProcessedIds();
-        if (_mldsaPrivBytes) scanExisting();
+        if (_mldsaPrivBytes) {
+          // Mirrors the UNLOCK handler: a composer that mounted before encryption
+          // was enabled never received its keydown listener (attachEnterHook is
+          // idempotent, so this is a no-op for composers that already have one).
+          attachEnterHook();
+          scanExisting();
+        }
       }
       return;
     }
@@ -3175,7 +3181,7 @@ function _processQuotedContainer(container) {
       processEncryptedAttachment(container, fileCard, cdnUrl, rawName);
     }
   } else {
-    showQuotedPlaceholder(container, _globalOn ? 'locked' : 'disabled');
+    showQuotedPlaceholder(container, !_mldsaPrivBytes ? 'locked' : 'disabled');
   }
 }
 
