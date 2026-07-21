@@ -97,7 +97,6 @@ chromium_only_excludes() {
     manifest-firefox.json \
     README.md \
     DEVELOPMENT.md \
-    updates.json \
     updates.xml \
     policies.json \
     TROUBLESHOOTING.md \
@@ -111,7 +110,6 @@ firefox_only_excludes() {
     manifest-chromium.json \
     DEVELOPMENT.md \
     README.md \
-    updates.json \
     updates.xml \
     icons/icon-128.png \
     policies.json \
