@@ -83,7 +83,6 @@ require_file() {
 # possible output artifact names.
 common_excludes() {
   printf '%s\n' \
-    "$(basename -- "$0")" \
     crx3 \
     discord-age-encryption.pem \
     discord-age-encryption.crx \
@@ -93,6 +92,7 @@ common_excludes() {
 
 chromium_only_excludes() {
   printf '%s\n' \
+    "$(basename -- "$0")" \
     icons/icon-512.svg \
     manifest-firefox.json \
     README.md \
@@ -107,6 +107,7 @@ chromium_only_excludes() {
 
 firefox_only_excludes() {
   printf '%s\n' \
+    "$(basename -- "$0")" \
     manifest-chromium.json \
     DEVELOPMENT.md \
     README.md \
