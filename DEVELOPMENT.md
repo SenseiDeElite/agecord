@@ -88,9 +88,7 @@ cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
   - **[`NOTICES.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/NOTICES.md)** — Markdown notices for the repository.
   - **`licenses.html`** — the bundled page the extension's `About` screen links to.
 
----
-
-## Packaging
+### Packaging
 
 Packaging is handled by [`build.sh`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/build.sh).
 
