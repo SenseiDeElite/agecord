@@ -2,7 +2,7 @@
 
 ### Reproducibility
 
-**Build environment:** [Arch Linux](https://archlinux.org/)
+**Build environment:** [Arch Linux x86-64](https://archlinux.org/)
 
 To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib), follow the steps below.
 
@@ -10,14 +10,14 @@ To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryp
 
 *"A TypeScript implementation of the age file encryption format, available as an npm package or as a bundled .js file."*
 
-- Download the expected version. We generally bundle the [latest release](https://github.com/FiloSottile/typage/releases/latest).
+- Download [typage v0.3.0 source code](https://github.com/FiloSottile/typage/releases/tag/v0.3.0).
 - Upon unpacking it, create a `entry.js` inside the extracted folder:
   
 ```js
 export { Encrypter, Decrypter, generateHybridIdentity, identityToRecipient } from 'age-encryption';
 ```
   
-- After that, run:
+- Make sure [npm v12.0.1](https://github.com/npm/cli/releases/tag/v12.0.1) is installed, then run:
 
 ```sh
 npm ci --ignore-scripts && npm run build
@@ -40,7 +40,7 @@ esbuild entry.js \
 *"Cryptographic algorithms written in pure Rust"*
 
 - Our project provides [rustcrypto-wasm](https://github.com/SenseiDeElite/discord-age-encryption/rustcrypto-wasm), a WebAssembly wrapper around RustCrypto implementations of [Argon2id](https://github.com/RustCrypto/password-hashes/tree/master/argon2), [XChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [SHAKE256](https://github.com/RustCrypto/XOFs/tree/master/shake), and [ML-DSA-87](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), built by compiling native Rust code to WebAssembly.
-- Make dependencies: [wasm-pack](https://github.com/wasm-bindgen/wasm-pack), [rust](https://github.com/rust-lang/rust) (including rust-wasm), [wasm-bindgen](https://github.com/wasm-bindgen/wasm-bindgen) and [binaryen](https://github.com/WebAssembly/binaryen).
+- Make dependencies: [wasm-pack v0.15.0](https://github.com/wasm-bindgen/wasm-pack/releases/tag/v0.15.0), [rust 1.97.1](https://github.com/rust-lang/rust/releases/tag/1.97.1) (including rust-wasm target), [wasm-bindgen 0.2.126](https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.126) and [binaryen 130](https://github.com/WebAssembly/binaryen/releases/tag/version_130).
 - Upon obtaining them, run:
 
 ```sh
