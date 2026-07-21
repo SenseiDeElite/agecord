@@ -7,7 +7,6 @@
     "gecko": {
       "id": "{19e0c78a-600a-4739-8977-56ca5741df7e}",
       "strict_min_version": "152.0",
-      "update_url": "https://raw.githubusercontent.com/SenseiDeElite/discord-age-encryption/refs/heads/main/updates.json",
       "data_collection_permissions": {
         "required": [
           "none"
