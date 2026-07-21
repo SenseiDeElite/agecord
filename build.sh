@@ -102,7 +102,8 @@ chromium_only_excludes() {
     policies.json \
     TROUBLESHOOTING.md \
     NOTICES.md \
-    rustcrypto-wasm
+    rustcrypto-wasm \
+    LICENSE
 }
 
 firefox_only_excludes() {
@@ -116,7 +117,8 @@ firefox_only_excludes() {
     policies.json \
     TROUBLESHOOTING.md \
     NOTICES.md \
-    rustcrypto-wasm
+    rustcrypto-wasm \
+    LICENSE
 }
 
 # Reviewers need the wasm source plus the steps to reproduce the build.
@@ -125,10 +127,7 @@ source_only_excludes() {
     icons/icon-128.png \
     manifest-chromium.json \
     policies.json \
-    README.md \
-    TROUBLESHOOTING.md \
-    updates.xml \
-    NOTICES.md
+    updates.xml
 }
 
 # Excludes are pruned during the directory walk (never descended into)
