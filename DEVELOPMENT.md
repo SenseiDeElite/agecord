@@ -2,6 +2,8 @@
 
 ### Reproducibility
 
+**Build environment:** [Arch Linux](https://archlinux.org/)
+
 To reproduce the [libraries](https://github.com/SenseiDeElite/discord-age-encryption/tree/main/lib), follow the steps below.
 
 [**typage**](https://github.com/FiloSottile/typage)
@@ -90,24 +92,14 @@ cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
 
 ## Packaging
 
-**Chromium**
+Packaging is handled by [`build.sh`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/build.sh).
 
 1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
 2. Extract it;
-3. Remove unnecessary files for this build: `/icons/icon-512.svg`, `manifest-firefox.json`, `README.md`, `DEVELOPMENT.md`, `updates.json`, `updates.xml`, `policies.json`, `TROUBLESHOOTING.md`, `NOTICES.md` and `/rustcrypto-wasm/`;
-4. Rename `manifest-chromium.json` to `manifest.json`;
-5. Navigate to `chrome://extensions/`;
-6. Enable `Developer mode` (if not already done);
-7. Click `Pack extension`;
-8. Browse to the extension root directory;
-9. Select a private key file or don't to generate one in the next step.
-10. Click `Pack extension` again; a `.crx` file will be generated.
+3. From the extracted directory, run one of:
 
-**Firefox**
-
-1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
-2. Extract it;
-3. Remove unnecessary files for this build: `manifest-chromium.json`, `DEVELOPMENT.md`, `README.md`, `updates.json`, `updates.xml`, `/icons/icon-128.png`, `policies.json`, `TROUBLESHOOTING.md`, `NOTICES.md` and `/rustcrypto-wasm/`;
-4. Rename `manifest-firefox.json` to `manifest.json`;
-5. Zip everything inside the folder;
-6. Rename the file extension to `.xpi`.
+```sh
+./build.sh chromium   # -> discord-age-encryption.crx
+./build.sh firefox    # -> discord-age-encryption.xpi
+./build.sh source     # -> discord-age-encryption.zip
+```
