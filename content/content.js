@@ -93,6 +93,15 @@ const _processedIds   = new Set();
 const _decryptedCache = new Map();
 // Deduplicates concurrent decrypt tasks for the same attachment (e.g. flash-jump re-inserts).
 const _inFlight = new Map();
+
+// Revoke all blob URLs in _decryptedCache before _decryptedCache.clear().
+// Required when switching channels, RELOCK, or disabling the extension, since
+// those paths can bypass _evictStaleProcessedIds and leak blobs until tab close.
+function _revokeAllCachedMedia() {
+  for (const cached of _decryptedCache.values()) {
+    if (cached && typeof cached === 'object' && cached.url) URL.revokeObjectURL(cached.url);
+  }
+}
  
 let _mldsaPrivBytes = null; // ML-DSA-87 32-byte seed, held only while unlocked
 let _selfRecipient  = null; // own age public key, received at UNLOCK time
@@ -745,6 +754,12 @@ function _msgContentBelongsToLi(msgContentEl, li) {
 function attachMsgObserver(list, slot) {
   const observer = new MutationObserver(mutations => {
     if (_contextInvalidated) return;
+
+    // Single revoke/evict pass for this mutation batch; see
+    // _evictStaleProcessedIds. Runs before processing additions so removed ids are
+    // evicted while recycled ids retain cached URLs.
+    _evictStaleProcessedIds();
+
     let hadNodes = false;
     for (const { addedNodes } of mutations) {
       for (const node of addedNodes) {
@@ -1943,17 +1958,13 @@ function relayInterceptorState(unlocked) {
   window.postMessage({ type: 'AGE_INTERCEPTOR_STATE', unlocked: unlocked && _globalOn, activeEntry: active }, '*');
 }
 
-// Evict _processedIds/_decryptedCache entries whose li is no longer in the DOM
-// so they retry on the next scan. Cached entries for still-present li elements
-// are kept to avoid CDN round-trips.
-//
-// _processedIds keys are "liId\0cdnUrl". Only the liId portion before \0 is a
-// valid element ID — passing the full composite to getElementById always returns
-// null, evicting every entry on every call.
-//
-// Quoted-message entries use liId="" (quotedChatMessage containers have no id),
-// so getElementById("") always returns null. These are checked by querying for
-// a quotedChatMessage container whose CDN URL matches instead.
+// Evict _processedIds/_decryptedCache entries whose message is no longer in
+// the DOM. Live entries stay cached to avoid redundant CDN fetches.
+// Sole blob URL revoke path. Runs once per message-list mutation batch and
+// determines liveness from the current DOM, avoiding races with Discord's
+// virtualized list.
+// _processedIds keys are "liId\0cdnUrl"; only the liId prefix is a DOM id.
+// Quoted messages use liId="" and are matched by quotedChatMessage + CDN URL.
 function _evictStaleProcessedIds() {
   for (const attachId of [..._processedIds]) {
     const liId  = attachId.split('\0')[0];
@@ -1962,7 +1973,16 @@ function _evictStaleProcessedIds() {
       ? !!document.getElementById(liId)
       : [...document.querySelectorAll('[class*="quotedChatMessage__"]')]
           .some(c => c.querySelector(`a[href="${url}"]`));
-    if (!inDom) _processedIds.delete(attachId), _decryptedCache.delete(attachId);
+    if (!inDom) {
+      // Media entries are { url, type, originalName } — text entries are a
+      // plain plaintext string. Only media entries own a blob: URL to free.
+      const cached = _decryptedCache.get(attachId);
+      if (cached && typeof cached === 'object' && cached.url) {
+        URL.revokeObjectURL(cached.url);
+      }
+      _processedIds.delete(attachId);
+      _decryptedCache.delete(attachId);
+    }
   }
 }
  
@@ -2020,6 +2040,7 @@ function listenForMessages() {
       else if (_globalOn !== prevOn) relayInterceptorState(!!_mldsaPrivBytes);
       if (!_globalOn && prevOn) {
         _generation++;
+        _revokeAllCachedMedia();
         _processedIds.clear();
         _decryptedCache.clear();
         _inFlight.clear();
@@ -2043,6 +2064,7 @@ function listenForMessages() {
       _generation++;
       _mldsaPrivBytes = null;
       _selfRecipient  = null;
+      _revokeAllCachedMedia();
       _processedIds.clear();
       _decryptedCache.clear();
       _inFlight.clear();
@@ -2090,6 +2112,7 @@ function startNavObserver() {
 
     if (chanChanged) {
       // li.id encodes channel ID — all existing _processedIds entries are stale on channel change.
+      _revokeAllCachedMedia();
       _processedIds.clear();
       _decryptedCache.clear();
 
@@ -2148,24 +2171,8 @@ function startNavObserver() {
 // a stale guard (detached li) from a live concurrent task (same element).
 const _attachmentInProgress = new Map(); // attachId → li element
  
-// Revoke object URLs when their li is removed from the DOM.
-// Accumulated per-li as an array of URLs to revoke.
-function scheduleObjectUrlRevoke(liElement, url) {
-  if (!liElement._ageObjectUrls) liElement._ageObjectUrls = [];
-  liElement._ageObjectUrls.push(url);
- 
-  const parent = liElement.parentElement;
-  if (!parent) { URL.revokeObjectURL(url); return; }
- 
-  const obs = new MutationObserver(() => {
-    if (!liElement.isConnected) {
-      for (const u of liElement._ageObjectUrls ?? []) URL.revokeObjectURL(u);
-      liElement._ageObjectUrls = [];
-      obs.disconnect();
-    }
-  });
-  obs.observe(parent, { childList: true });
-}
+// Blob URL revocation is centralized in _evictStaleProcessedIds, the sole
+// authority for determining when cached media is safe to release.
  
 function renderDecryptedAttachment(liElement, fileCard, url, originalName, type, cdnUrl) {
   const strippedName = originalName.replace(/\.age$/i, '');
@@ -2773,7 +2780,8 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       if (liElement.querySelector('[data-age-attachment="' + cardKey + '"]')) {
         return; // wrapper present — nothing to do
       }
-      // Wrapper gone (virtual scroller recycled the li) — re-render from cache.
+      // Wrapper recycled; re-render from cache. _evictStaleProcessedIds revokes and
+      // removes cache entries atomically, so a cached entry implies a live blob URL.
       hideFileCard(fileCard);
       renderDecryptedAttachment(liElement, fileCard, cached.url, cached.originalName, cached.type, cdnUrl);
     }
@@ -2918,10 +2926,9 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     const blob = new Blob([workerResult.buffer], { type: mimeType });
     const url  = URL.createObjectURL(blob);
 
-    scheduleObjectUrlRevoke(liElement, url);
     renderDecryptedAttachment(liElement, fileCard, url, originalName, type, cdnUrl);
-    // Cache blob URL + metadata so future scanExisting() calls can re-render
-    // without a CDN round-trip.
+    // Cache blob URL + metadata for re-renders. Released by
+    // _evictStaleProcessedIds, the sole blob URL revoke path.
     _processedIds.add(attachId);
     _decryptedCache.set(attachId, { url, type, originalName });
     _attachmentInProgress.delete(attachId);
