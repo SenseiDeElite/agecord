@@ -5,7 +5,7 @@
   "description": "End-to-end post-quantum age encryption for Discord.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "{19e0c78a-600a-4739-8977-56ca5741df7e}",
+      "id": "{c069e7d0-d225-4dbf-b425-1390826a3bfe}",
       "strict_min_version": "152.0",
       "data_collection_permissions": {
         "required": [
