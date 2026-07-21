@@ -23,7 +23,7 @@ export { Encrypter, Decrypter, generateHybridIdentity, identityToRecipient } fro
 npm ci --ignore-scripts && npm run build
 ```
 
-- For bundling, use [esbuild](https://github.com/evanw/esbuild):
+- For bundling, use [esbuild v0.28.1](https://github.com/evanw/esbuild/releases/tag/v0.28.1):
   
 ```sh
 esbuild entry.js \
@@ -47,7 +47,7 @@ esbuild entry.js \
 wasm-pack build --target web --release
 ```
 
-- For bundling, use [esbuild](https://github.com/evanw/esbuild):
+- For bundling, use [esbuild v0.28.1](https://github.com/evanw/esbuild/releases/tag/v0.28.1):
   
 ```sh
 esbuild entry.js \
@@ -90,11 +90,7 @@ cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
 
 ### Packaging
 
-Packaging is handled by [`build.sh`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/build.sh).
-
-1. Download the [latest release](https://github.com/SenseiDeElite/discord-age-encryption/releases/latest) source code;
-2. Extract it;
-3. From the extracted directory, run one of:
+Packaging is handled by [`build.sh`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/build.sh):
 
 ```sh
 ./build.sh chromium   # -> discord-age-encryption.crx
