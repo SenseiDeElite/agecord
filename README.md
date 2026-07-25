@@ -15,12 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://addons.mozilla.org/en-US/firefox/addon/discord-age-encryption/">
-    <img src="https://img.shields.io/amo/v/discord-age-encryption?style=for-the-badge&color=ffb877&labelColor=6b3a00&logo=firefoxbrowser&logoColor=white" alt="Mozilla Add-on" />
-  </a>
-  <a href="https://github.com/SenseiDeElite/discord-age-encryption/releases/latest/download/discord-age-encryption.crx">
-    <img src="https://img.shields.io/badge/Chromium-Download-aac7ff?style=for-the-badge&labelColor=0a305f&logo=googlechrome&logoColor=white" alt="Chromium: Download" />
-  </a>
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/discord-age-encryption/"><img src="https://img.shields.io/amo/v/discord-age-encryption?style=for-the-badge&color=ffb877&labelColor=6b3a00&logo=firefoxbrowser&logoColor=white" alt="Mozilla Add-on" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/discord-age-encryption/releases/latest/download/discord-age-encryption.crx"><img src="https://img.shields.io/badge/Chromium-Download-aac7ff?style=for-the-badge&labelColor=0a305f&logo=googlechrome&logoColor=white" alt="Chromium: Download" /></a>
 </p>
 
 ### ✨ Features
