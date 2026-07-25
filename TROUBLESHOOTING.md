@@ -23,7 +23,7 @@ Compatibility can change at any time. Make sure your browser is up-to-date.
 
 Some proprietary Chromium-based browsers may block installation of extensions that haven't gone through the CWS (Chrome Web Store) review.
 
-This extension has been submitted to [AMO](https://addons.mozilla.org/en-US/firefox/), but not to CWS, since it requires a $5 developer account creation fee. As this is a hobby project, I don't intend to pay for that. This restriction is unrelated to the extension's actual security.
+This extension has been submitted to [AMO](https://addons.mozilla.org/en-US/firefox/addon/discord-age-encryption/), but not to CWS, since it requires a $5 developer account creation fee. As this is a hobby project, I don't intend to pay for that. This restriction is unrelated to the extension's actual security.
 
 If you trust the extension, you can bypass this check for it specifically, without needing to trust other extensions, by applying a browser policy:
 
