@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  A MV3 browser extension that adds <b>post-quantum end-to-end encryption</b> to Discord.
+  A MV3 browser extension that adds <b>end-to-end post-quantum age encryption</b> to Discord.
   <br/>Messages are <b>encrypted</b> on your device before being sent —
   <br/>Discord's servers only see <b>ciphertext.</b>
 </p>
