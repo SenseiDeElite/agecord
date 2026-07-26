@@ -64,20 +64,8 @@ After finishing, move the libraries to [/lib/](https://github.com/SenseiDeElite/
 
 ### Third-Party Notices
  
-Everything pulled in by `rustcrypto-wasm` (including transitive dependencies) is generated with [cargo-about](https://github.com/EmbarkStudios/cargo-about).
- 
-- From `rustcrypto-wasm/`, an `about.toml` controls which SPDX licenses are allowed to appear in the output. Add the reported license identifier to the accepted list:
+Everything pulled in by `rustcrypto-wasm` (including transitive dependencies) is generated with [cargo-about](https://github.com/EmbarkStudios/cargo-about):
 
-```toml
-accepted = [
-    "MIT",
-    "Apache-2.0",
-    "BSD-3-Clause",
-    "Unicode-3.0",
-]
-```
- 
-- Generate the notices:
 ```sh
 cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
 ```
