@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://addons.mozilla.org/en-US/firefox/addon/discord-age-encryption/"><img src="https://img.shields.io/amo/v/discord-age-encryption?style=for-the-badge&color=ffb877&labelColor=6b3a00&logo=firefoxbrowser&logoColor=white" alt="Mozilla Add-on" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/discord-age-encryption/releases/latest/download/discord-age-encryption.crx"><img src="https://img.shields.io/badge/Chromium-Download-aac7ff?style=for-the-badge&labelColor=0a305f&logo=googlechrome&logoColor=white" alt="Chromium: Download" /></a>
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/discord-age-encryption/"><img src="https://img.shields.io/amo/v/discord-age-encryption?style=for-the-badge&color=ffb877&labelColor=6b3a00&logo=firefoxbrowser&logoColor=white" alt="Mozilla Add-on" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE"><img src="https://img.shields.io/github/license/SenseiDeElite/discord-age-encryption?style=for-the-badge&color=ffffff&labelColor=333333&logo=gnu&logoColor=white" alt="License: GPLv3" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/discord-age-encryption/releases/latest/download/discord-age-encryption.crx"><img src="https://img.shields.io/badge/Chromium-Download-aac7ff?style=for-the-badge&labelColor=0a305f&logo=googlechrome&logoColor=white" alt="Chromium: Download" /></a>
 </p>
 
 ### ✨ Features
@@ -86,12 +86,8 @@ Received encrypted messages are decrypted and shown inline with a lock badge.
 
 ---
 
-### 📄 Licenses
+### 📜 Third-Party Notices
 
-<a href="https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE">
-  <img src="https://img.shields.io/github/license/SenseiDeElite/discord-age-encryption?style=for-the-badge&color=ffffff&labelColor=333333&logo=gnu&logoColor=white" alt="License: GPLv3" />
-</a>
-
-See [`NOTICES.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/NOTICES.md) for full third-party license texts.
+See [`NOTICES.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/NOTICES.md) for the third-party notices.
 
 Not affiliated with Discord Inc. Research project, use at your own risk.
