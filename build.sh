@@ -102,7 +102,8 @@ chromium_only_excludes() {
     TROUBLESHOOTING.md \
     NOTICES.md \
     rustcrypto-wasm \
-    LICENSE
+    LICENSE \
+    USAGE.md
 }
 
 firefox_only_excludes() {
@@ -117,7 +118,8 @@ firefox_only_excludes() {
     TROUBLESHOOTING.md \
     NOTICES.md \
     rustcrypto-wasm \
-    LICENSE
+    LICENSE \
+    USAGE.md
 }
 
 # Reviewers need the wasm source plus the steps to reproduce the build.
