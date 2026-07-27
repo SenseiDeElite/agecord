@@ -60,29 +60,9 @@ See [`TROUBLESHOOTING.md`](https://github.com/SenseiDeElite/discord-age-encrypti
 
 ---
 
-### 🏁 Getting started
+### ℹ️ Usage
 
-**⚙️ First time setup**
-
-1. Click the extension icon in your toolbar;
-2. Choose a strong passphrase (at least 20 characters, mixed case, numbers, and symbols);
-3. Click **`Generate keypair`** – your keys are created and stored locally;
-4. Click **`My public key`** and copy it to share with your contact.
-
-**➕ Adding a recipient**
-
-1. Open a contact, group or server in Discord;
-2. Click **`+ Add`** in the extension;
-3. Fill in the required details;
-4. Click **`Save`** once done.
-
-All sides need to have added each other before encrypted messaging works correctly.
-
-**📨 Sending messages**
-
-Once a given recipient is added and enabled, just type your message and press **`Enter`** – the extension intercepts and encrypts it before sending. Hit enter again to confirm.
-
-Received encrypted messages are decrypted and shown inline with a lock badge.
+See [`USAGE.md`](https://github.com/SenseiDeElite/discord-age-encryption/blob/main/USAGE.md).
 
 ---
 
