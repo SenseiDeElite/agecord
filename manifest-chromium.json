@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Discord Age Encryption",
-  "version": "0.8.0",
+  "name": "Agecord",
+  "version": "0.8.1",
   "minimum_chrome_version": "148",
-  "update_url": "https://raw.githubusercontent.com/SenseiDeElite/discord-age-encryption/main/updates.xml",
+  "update_url": "https://raw.githubusercontent.com/SenseiDeElite/agecord/main/updates.xml",
   "description": "End-to-end post-quantum age encryption for Discord.",
   "icons": {
     "128": "icons/icon-128.png"
@@ -43,7 +43,7 @@
   ],
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Discord Age Encryption"
+    "default_title": "Agecord"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none';"
