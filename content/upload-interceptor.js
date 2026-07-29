@@ -21,6 +21,17 @@ Object.defineProperty(window, '__ageLocked', { get: () => _locked, configurable:
 // Exactly 10 prevents a stale fiber from a second open edit-box being returned.
 const SLATE_FIBER_WALK_LIMIT = 10;
 
+// ─── Channel / thread path patterns ────────────────────────────────────────────
+// Split thread view: MAIN=parent channel, SECTION=thread panel.
+// The trailing `{/*}?` group makes anything after the id (e.g. a jumped-to
+// message id) optional, matching the old regexes' non-anchored trailing match.
+const THREAD_PATH_PATTERN = new URLPattern({
+  pathname: '/channels/:guildId/:channelId/threads/:threadId{/*}?',
+});
+const CHANNEL_PATH_PATTERN = new URLPattern({
+  pathname: '/channels/:guildId/:channelId{/*}?',
+});
+
 // ─── Attachment-pending guard ─────────────────────────────────────────────────
 // Blocks all attachment entry-points until the upload tray clears or the
 // 8-second safety timeout fires.
@@ -283,16 +294,14 @@ function getInterceptorChannelId() {
     }
   }
 
-  const path = location.pathname;
-
-  // Split thread view: MAIN=parent channel, SECTION=thread panel.
-  const threadMatch = path.match(/^\/channels\/([^/]+)\/([^/]+)\/threads\/([^/]+)/);
+  const threadMatch = THREAD_PATH_PATTERN.exec(location.href);
   if (threadMatch) {
-    return composerRole === 'MAIN' ? threadMatch[2] : threadMatch[3];
+    const { channelId, threadId } = threadMatch.pathname.groups;
+    return composerRole === 'MAIN' ? channelId : threadId;
   }
 
-  const chanMatch = path.match(/^\/channels\/([^/]+)\/([^/]+)(?:\/|$)/);
-  if (chanMatch) return chanMatch[2];
+  const chanMatch = CHANNEL_PATH_PATTERN.exec(location.href);
+  if (chanMatch) return chanMatch.pathname.groups.channelId;
 
   return null;
 }
