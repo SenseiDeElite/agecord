@@ -1,4 +1,9 @@
-// popup.js — Discord Age Encryption
+/*
+ * This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
+ * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
+ */
+
+// popup.js — Agecord
 //
 // Key storage : identity blob encrypted with Argon2id + XChaCha20-Poly1305,
 //               stored as base64 in chrome.storage.local (key: identity_blob).
@@ -1742,7 +1747,7 @@
 
     const a = Object.assign(document.createElement('a'), {
       href:     url,
-      download: `discord_age_contacts_${datePart}.json`,
+      download: `agecord-${datePart}.json`,
     });
     document.body.appendChild(a);
     a.click();
@@ -2241,8 +2246,8 @@
   document.getElementById('btn-back-about').addEventListener('click', showMain);
 
   const _aboutLinks = {
-    'about-repo-link':    'https://github.com/SenseiDeElite/discord-age-encryption',
-    'about-license-link': 'https://github.com/SenseiDeElite/discord-age-encryption/blob/main/LICENSE',
+    'about-repo-link':    'https://github.com/SenseiDeElite/agecord',
+    'about-license-link': 'https://github.com/SenseiDeElite/agecord/blob/main/LICENSE',
   };
   Object.entries(_aboutLinks).forEach(([id, url]) => {
     document.getElementById(id).addEventListener('click', () => { chrome.tabs.create({ url }); });
