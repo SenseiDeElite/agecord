@@ -4,7 +4,7 @@ version = "0.2.1"
 authors = ["Sensei <https://github.com/SenseiDeElite>"]
 description = "WebAssembly RustCrypto"
 license = "MIT"
-repository = "https://github.com/SenseiDeElite/discord-age-encryption/tree/main/rustcrypto-wasm"
+repository = "https://github.com/SenseiDeElite/agecord/tree/main/rustcrypto-wasm"
 edition = "2024"
 
 [lib]
