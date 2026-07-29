@@ -81,6 +81,28 @@ require_file() {
   fi
 }
 
+# Reads the "version" field out of a manifest JSON file living next to
+# this script, so build outputs can be named agecord-MANIFEST_VERSION.*
+get_manifest_version() {
+  local manifest_file="$1"
+  require_file "$manifest_file" "manifest file"
+  python3 - "$manifest_file" <<'PYEOF'
+import json
+import sys
+
+manifest_file = sys.argv[1]
+with open(manifest_file) as f:
+    data = json.load(f)
+
+version = data.get("version")
+if not version:
+    print(f"error: no \"version\" field found in {manifest_file}", file=sys.stderr)
+    sys.exit(1)
+
+print(version)
+PYEOF
+}
+
 # Paths excluded from every target's output: this script itself, the
 # crx3/ dir (crx3.py plus its LICENSE), the signing key, and all three
 # possible output artifact names.
@@ -88,9 +110,9 @@ common_excludes() {
   printf '%s\n' \
     crx3 \
     agecord.pem \
-    agecord.crx \
-    agecord.xpi \
-    agecord.zip
+    'agecord-*.crx' \
+    'agecord-*.xpi' \
+    'agecord-*.zip'
 }
 
 chromium_only_excludes() {
@@ -181,8 +203,11 @@ PYEOF
 build_chromium() {
   local crx3_py="crx3/crx3.py"
   local pem_file="agecord.pem"
-  local out_crx="./agecord.crx"
   require_file "$crx3_py" "crx3.py"
+
+  local version
+  version="$(get_manifest_version "manifest-chromium.json")"
+  local out_crx="./agecord-${version}.crx"
 
   # not `local`: the EXIT trap below runs after this function returns,
   # when a local variable would already be out of scope
@@ -214,7 +239,9 @@ build_chromium() {
 build_firefox() {
   require_file manifest-firefox.json "manifest-firefox.json"
 
-  local out_xpi="./agecord.xpi"
+  local version
+  version="$(get_manifest_version "manifest-firefox.json")"
+  local out_xpi="./agecord-${version}.xpi"
   local excludes
   mapfile -t excludes < <(common_excludes; firefox_only_excludes)
   echo "==> [firefox] Zipping extension (manifest-firefox.json as manifest.json)..."
@@ -228,7 +255,9 @@ build_firefox() {
 build_source() {
   require_file manifest-firefox.json "manifest-firefox.json"
 
-  local out_zip="./agecord.zip"
+  local version
+  version="$(get_manifest_version "manifest-firefox.json")"
+  local out_zip="./agecord-${version}.zip"
   local excludes
   mapfile -t excludes < <(common_excludes; source_only_excludes)
   echo "==> [source] Zipping source (manifest-firefox.json as manifest.json)..."
