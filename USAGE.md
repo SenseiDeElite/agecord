@@ -99,7 +99,7 @@ All sides need to have added each other before encrypted messaging works correct
 
 1. Open the import icon (upload arrow) from the main popup Contacts section.
 2. On the **Import Contacts** screen, click **Choose file**.
-3. Select your `discord_age_contacts` JSON export file.
+3. Select your `agecord` contacts JSON export file.
 
 Use the corresponding export icon (download arrow) in the main popup to export your current contacts to a JSON file.
 
