@@ -1,4 +1,9 @@
-// content.js — Discord Age Encryption
+/*
+ * This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
+ * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
+ */
+
+// content.js — Agecord
 //
 // Transport   : message.txt.age uploaded as a Discord file attachment
 // File format : [ 1 byte SIG_VERSION ][ SIG_BYTES bytes ML-DSA-87 sig ][ PUBKEY_HINT_LEN bytes sender pubkey hint ][ age ciphertext bytes ]
