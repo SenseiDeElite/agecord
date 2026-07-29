@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-# build.sh – packages discord-age-encryption into a .crx, .xpi, or source .zip
+# This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
+# See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
+
+# build.sh – packages agecord into a .crx, .xpi, or source .zip
 
 set -euo pipefail
 
@@ -84,10 +87,10 @@ require_file() {
 common_excludes() {
   printf '%s\n' \
     crx3 \
-    discord-age-encryption.pem \
-    discord-age-encryption.crx \
-    discord-age-encryption.xpi \
-    discord-age-encryption.zip
+    agecord.pem \
+    agecord.crx \
+    agecord.xpi \
+    agecord.zip
 }
 
 chromium_only_excludes() {
@@ -177,8 +180,8 @@ PYEOF
 
 build_chromium() {
   local crx3_py="crx3/crx3.py"
-  local pem_file="discord-age-encryption.pem"
-  local out_crx="./discord-age-encryption.crx"
+  local pem_file="agecord.pem"
+  local out_crx="./agecord.crx"
   require_file "$crx3_py" "crx3.py"
 
   # not `local`: the EXIT trap below runs after this function returns,
@@ -211,7 +214,7 @@ build_chromium() {
 build_firefox() {
   require_file manifest-firefox.json "manifest-firefox.json"
 
-  local out_xpi="./discord-age-encryption.xpi"
+  local out_xpi="./agecord.xpi"
   local excludes
   mapfile -t excludes < <(common_excludes; firefox_only_excludes)
   echo "==> [firefox] Zipping extension (manifest-firefox.json as manifest.json)..."
@@ -225,7 +228,7 @@ build_firefox() {
 build_source() {
   require_file manifest-firefox.json "manifest-firefox.json"
 
-  local out_zip="./discord-age-encryption.zip"
+  local out_zip="./agecord.zip"
   local excludes
   mapfile -t excludes < <(common_excludes; source_only_excludes)
   echo "==> [source] Zipping source (manifest-firefox.json as manifest.json)..."
