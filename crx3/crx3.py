@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 
-"""
-Python script to create CRX3 files (web extension package v3 format) for Chromium-based browsers.
+# This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
+# See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
 
-Ported from crx3 (https://github.com/ahwayakchih/crx3) by Marcin Konicki, MIT License.
-See NOTICES.md (https://github.com/SenseiDeElite/discord-age-encryption/blob/main/NOTICES.md#crx3) for the full license text.
+# Ported from crx3 (https://github.com/ahwayakchih/crx3) by Marcin Konicki, MIT License.
+# See NOTICES.md (https://github.com/SenseiDeElite/agecord/blob/main/NOTICES.md#crx3) for the full license text.
 
-MIT License (https://github.com/SenseiDeElite/discord-age-encryption/blob/main/crx3/LICENSE)
-Copyright (c) 2026 Sensei <https://github.com/SenseiDeElite>
-"""
+# Python script to create CRX3 files (web extension package v3 format) for Chromium-based browsers.
 
 import argparse
 import os
