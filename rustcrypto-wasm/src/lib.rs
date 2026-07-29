@@ -1,3 +1,8 @@
+/*
+ * This source code is licensed under the MIT License.
+ * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/rustcrypto-wasm/LICENSE
+ */
+
 use wasm_bindgen::prelude::*;
 
 // ─── XChaCha20Poly1305 ────────────────────────────────────────────────────────
