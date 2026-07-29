@@ -1,3 +1,8 @@
+/*
+ * This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
+ * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
+ */
+
 // file-crypto-worker.js — Dedicated Worker for file encryption and decryption
 //
 // File format (verify ops):
