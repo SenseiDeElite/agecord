@@ -1,4 +1,9 @@
-// cdn-bridge.js — Discord Age Encryption
+/*
+ * This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
+ * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
+ */
+
+// cdn-bridge.js — Agecord
 //
 // Runs inside a hidden <iframe> injected into the Discord page by content.js.
 // Fetches from cdn.discordapp.com (permitted by host_permissions on the extension
