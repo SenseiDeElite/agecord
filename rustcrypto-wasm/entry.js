@@ -1,3 +1,8 @@
+/*
+ * This source code is licensed under the MIT License.
+ * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/rustcrypto-wasm/LICENSE
+ */
+
 import wasmBytes from './pkg/rustcrypto_wasm_bg.wasm';
 import __init, { initSync as __initSync } from './pkg/rustcrypto_wasm.js';
 
