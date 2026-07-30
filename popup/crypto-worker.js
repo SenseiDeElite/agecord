@@ -50,8 +50,15 @@ self.onmessage = async ({ data }) => {
     if (data.op === 'ARGON2ID_DERIVE') {
       const passwordBytes = new TextEncoder().encode(data.password);
       const saltBytes     = fromB64(data.saltB64);
-      const derived = argon2id(passwordBytes, saltBytes, ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, ARGON2_OUT_LEN);
-      self.postMessage({ ok: true, keyB64: toB64(derived) });
+      let derived;
+      try {
+        derived = argon2id(passwordBytes, saltBytes, ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, ARGON2_OUT_LEN);
+        self.postMessage({ ok: true, keyB64: toB64(derived) });
+      } finally {
+        passwordBytes.fill(0);
+        saltBytes.fill(0);
+        derived?.fill(0);
+      }
       return;
     }
 
@@ -64,7 +71,12 @@ self.onmessage = async ({ data }) => {
         throw new Error(`Salt must be exactly ${SALT_LEN} bytes (got ${saltRaw.length}).`);
 
       // encrypt() generates the nonce internally via OsRng; returns nonce(24)||ct+tag.
-      const noncePlusCt = xchacha20poly1305_encrypt(key, plaintext);
+      let noncePlusCt;
+      try {
+        noncePlusCt = xchacha20poly1305_encrypt(key, plaintext);
+      } finally {
+        key.fill(0);
+      }
 
       const envelope = new Uint8Array(1 + SALT_LEN + noncePlusCt.length);
       envelope[0] = ENVELOPE_VERSION;
@@ -83,7 +95,12 @@ self.onmessage = async ({ data }) => {
       const key = fromB64(data.keyB64);
       // decrypt() expects nonce(24)||ct+tag and slices the nonce internally.
       const noncePlusCt = envelope.slice(1 + SALT_LEN);
-      const plaintext   = xchacha20poly1305_decrypt(key, noncePlusCt);
+      let plaintext;
+      try {
+        plaintext = xchacha20poly1305_decrypt(key, noncePlusCt);
+      } finally {
+        key.fill(0);
+      }
 
       self.postMessage({ ok: true, plaintextB64: toB64(plaintext) });
       return;
