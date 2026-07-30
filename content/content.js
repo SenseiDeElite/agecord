@@ -2022,6 +2022,7 @@ function listenForMessages() {
         _contactsLoaded  = true;
         _selfRecipient   = msg.ageRecipient || null;
         _globalOn        = localData.globalOn !== false;
+        _mldsaPrivBytes?.fill(0);
         _mldsaPrivBytes  = fromB64(msg.mldsaSeedB64); // 32-byte ML-DSA-87 seed
         _generation++;
         _inFlight.clear();
@@ -2086,6 +2087,7 @@ function listenForMessages() {
  
     if (msg.type === 'RELOCK') {
       _generation++;
+      _mldsaPrivBytes?.fill(0);
       _mldsaPrivBytes = null;
       _selfRecipient  = null;
       _revokeAllCachedMedia();
