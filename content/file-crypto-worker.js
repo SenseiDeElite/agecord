@@ -211,6 +211,7 @@ self.onmessage = async ({ data }) => {
         return;
       }
       const plaintext = await decompressToText(result.plainBytes);
+      result.plainBytes.fill(0);
       self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: true, plaintext });
       return;
     }
