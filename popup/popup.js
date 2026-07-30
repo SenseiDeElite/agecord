@@ -710,6 +710,7 @@
       // Re-derive the ML-DSA-87 verifying key deterministically from the stored seed.
       const mldsaSeed = fromB64(identityLines[1].slice('mldsa87seed:'.length));
       const mldsaPub = ml_dsa87_verifying_key_from_seed(mldsaSeed);
+      mldsaSeed.fill(0);
       const mldsaPubB64 = toB64(mldsaPub);
 
       // Rebuild the full recipient string if it was stored without the suffix
@@ -939,6 +940,7 @@
       // Re-derive the ML-DSA-87 verifying key from the stored seed.
       const mldsaSeed    = fromB64(lines[1].slice('mldsa87seed:'.length));
       const mldsaPub     = ml_dsa87_verifying_key_from_seed(mldsaSeed);
+      mldsaSeed.fill(0);
       const mldsaPubB64  = toB64(mldsaPub);
       const fullRecipient = recipient + ';mldsa87:' + mldsaPubB64;
 
