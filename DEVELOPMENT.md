@@ -67,7 +67,7 @@ After finishing, move the libraries to [/lib/](https://github.com/SenseiDeElite/
 Everything pulled in by `rustcrypto-wasm` (including transitive dependencies) is generated with [cargo-about](https://github.com/EmbarkStudios/cargo-about):
 
 ```sh
-cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
+cargo about init && cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
 ```
  
   This produces an HTML report of every crate in the resolved dependency tree, grouped by license text.
