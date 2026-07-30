@@ -24,10 +24,6 @@ const initReady = init();
 //   Do NOT unify these formats.
 //
 
-// ─── Base64 helpers ───────────────────────────────────────────────────────────
-const toB64   = bytes => bytes.toBase64();
-const fromB64 = b64   => Uint8Array.fromBase64(b64);
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 // Argon2id: RFC 9106 §4 second recommended option (memory-constrained).
@@ -47,26 +43,35 @@ self.onmessage = async ({ data }) => {
     await initReady;
     // ── Argon2id key derivation ─────────────────────────────────────────────
 
+    // Inputs are transferred ArrayBuffers. Outputs are transferred back; the
+    // caller base64-encodes only before writing to chrome.storage
+
     if (data.op === 'ARGON2ID_DERIVE') {
-      const passwordBytes = new TextEncoder().encode(data.password);
-      const saltBytes     = fromB64(data.saltB64);
-      let derived;
+      const passwordBytes = new Uint8Array(data.passwordBytes);
+      const saltBytes     = new Uint8Array(data.saltBytes);
+      let derived, out;
       try {
         derived = argon2id(passwordBytes, saltBytes, ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, ARGON2_OUT_LEN);
-        self.postMessage({ ok: true, keyB64: toB64(derived) });
+        // Copy into a tightly-sized buffer before transferring — argon2id's
+        // return value isn't guaranteed to own an exactly-sized buffer, and
+        // transferring .buffer directly could leak whatever surrounds it.
+        out = derived.slice();
+        self.postMessage({ ok: true, keyBytes: out.buffer }, [out.buffer]);
       } finally {
         passwordBytes.fill(0);
         saltBytes.fill(0);
         derived?.fill(0);
+        // `out` was just transferred and is now detached in this realm —
+        // filling it would throw, and there's nothing left to zero anyway.
       }
       return;
     }
 
     if (data.op === 'XCHACHA_ENCRYPT') {
-      const key       = fromB64(data.keyB64);
-      const plaintext = fromB64(data.plaintextB64);
-      if (!data.saltB64) throw new Error('XCHACHA_ENCRYPT requires saltB64 — caller must supply it.');
-      const saltRaw = fromB64(data.saltB64);
+      const key       = new Uint8Array(data.keyBytes);
+      const plaintext = new Uint8Array(data.plaintextBytes);
+      if (!data.saltBytes) throw new Error('XCHACHA_ENCRYPT requires saltBytes — caller must supply it.');
+      const saltRaw = new Uint8Array(data.saltBytes);
       if (saltRaw.length !== SALT_LEN)
         throw new Error(`Salt must be exactly ${SALT_LEN} bytes (got ${saltRaw.length}).`);
 
@@ -76,33 +81,40 @@ self.onmessage = async ({ data }) => {
         noncePlusCt = xchacha20poly1305_encrypt(key, plaintext);
       } finally {
         key.fill(0);
+        plaintext.fill(0);
       }
 
+      // Freshly allocated to exact size, so transferring its buffer is safe.
       const envelope = new Uint8Array(1 + SALT_LEN + noncePlusCt.length);
       envelope[0] = ENVELOPE_VERSION;
       envelope.set(saltRaw, 1);
       envelope.set(noncePlusCt, 1 + SALT_LEN);
+      noncePlusCt.fill(0);
+      saltRaw.fill(0);
 
-      self.postMessage({ ok: true, envelopeB64: toB64(envelope) });
+      self.postMessage({ ok: true, envelopeBytes: envelope.buffer }, [envelope.buffer]);
       return;
     }
 
     if (data.op === 'XCHACHA_DECRYPT') {
-      const envelope = fromB64(data.envelopeB64);
+      const envelope = new Uint8Array(data.envelopeBytes);
       if (envelope[0] !== ENVELOPE_VERSION)
         throw new Error(`Unknown envelope version 0x${envelope[0].toString(16)}.`);
 
-      const key = fromB64(data.keyB64);
+      const key = new Uint8Array(data.keyBytes);
       // decrypt() expects nonce(24)||ct+tag and slices the nonce internally.
       const noncePlusCt = envelope.slice(1 + SALT_LEN);
-      let plaintext;
+      let plaintext, out;
       try {
         plaintext = xchacha20poly1305_decrypt(key, noncePlusCt);
+        // Same tight-copy-before-transfer reasoning as ARGON2ID_DERIVE.
+        out = plaintext.slice();
       } finally {
         key.fill(0);
+        plaintext?.fill(0);
       }
 
-      self.postMessage({ ok: true, plaintextB64: toB64(plaintext) });
+      self.postMessage({ ok: true, plaintextBytes: out.buffer }, [out.buffer]);
       return;
     }
 
