@@ -149,8 +149,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         _identity     = msg.identity;
         _contacts     = msg.contacts     ?? _contacts;
         _ageRecipient = msg.ageRecipient ?? _ageRecipient;
-        if (msg.contactsKeyB64)
+        if (msg.contactsKeyB64) {
+          _contactsKeyBytes?.fill(0);
           _contactsKeyBytes = fromB64(msg.contactsKeyB64);
+        }
         // Route through sendUnlockToTab so tabs that are still loading their
         // content script get the same retry logic as the onUpdated path.
         const tabs = await chrome.tabs.query({ url: 'https://discord.com/*' });
@@ -170,7 +172,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === 'RELOCK') {
-    _identity = null; _contactsKeyBytes = null; _contacts = {}; _ageRecipient = null;
+    _identity = null;
+    _contactsKeyBytes?.fill(0);
+    _contactsKeyBytes = null;
+    _contacts = {}; _ageRecipient = null;
     // Clear session storage before async work so concurrent ensureIdentity() sees
     // age_unlocked=false, aborts, and can't restore stale identity after relock.
     chrome.storage.session.remove(
