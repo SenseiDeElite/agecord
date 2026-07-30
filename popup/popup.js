@@ -1210,17 +1210,38 @@
 
   DRAFT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveDraft));
 
-  async function inferFromTab(pattern) {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    const m = (tabs[0]?.url ?? '').match(pattern);
-    return m ? m[1] : null;
+  // hostname allows an optional subdomain (canary./ptb./www.) ahead of the
+  // apex domain; unlike a bare substring match this won't false-positive on
+  // lookalike hosts.
+  const DM_CHANNEL_URL_PATTERN = new URLPattern({
+    protocol: 'https',
+    hostname: '{*.}?discord.com',
+    pathname: '/channels/@me/:channelId(\\d+)',
+  });
+  const SERVER_CHANNEL_URL_PATTERN = new URLPattern({
+    protocol: 'https',
+    hostname: '{*.}?discord.com',
+    pathname: '/channels/:serverId(\\d+)/:channelId(\\d+)',
+  });
+
+  function inferFromTab(pattern, groupName) {
+    return async () => {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const url = tabs[0]?.url;
+      if (!url) return null;
+      // exec() throws on URLs it can't parse at all (e.g. "about:blank");
+      // treat that the same as a non-match.
+      let m;
+      try { m = pattern.exec(url); } catch { return null; }
+      return m ? m.pathname.groups[groupName] : null;
+    };
   }
 
   // inferDmChannelId: extracts the channel ID from DM URLs only
   //   (/channels/@me/<id>).  Returns null for server channel URLs
   //   (/channels/<serverId>/<channelId>) — use inferServerId for those.
-  const inferDmChannelId = () => inferFromTab(/discord\.com\/channels\/@me\/(\d+)/);
-  const inferServerId    = () => inferFromTab(/discord\.com\/channels\/(\d+)\/\d+/);
+  const inferDmChannelId = inferFromTab(DM_CHANNEL_URL_PATTERN, 'channelId');
+  const inferServerId    = inferFromTab(SERVER_CHANNEL_URL_PATTERN, 'serverId');
 
   document.getElementById('btn-back-add').addEventListener('click', async () => {
     await clearDraft();
