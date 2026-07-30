@@ -110,6 +110,10 @@ function _revokeAllCachedMedia() {
  
 let _mldsaPrivBytes = null; // ML-DSA-87 32-byte seed, held only while unlocked
 let _selfRecipient  = null; // own age public key, received at UNLOCK time
+// X25519 identity line (age secret key), fetched from background once per UNLOCK
+// and forwarded to both file-crypto-workers so they can cache a Decrypter instead
+// of re-parsing this on every VERIFY_DECRYPT[_DECOMPRESS] call. Null while locked.
+let _cachedIdentityLine = null;
 let _contacts     = {};
 let _contactsLoaded = false; // true once UNLOCK/CONTACTS_UPDATED has actually populated _contacts —
 let _globalOn     = true;
@@ -159,9 +163,9 @@ function _isContextInvalidationError(msg) {
   return typeof msg === 'string' && msg.toLowerCase().includes('invalidated');
 }
 
-// Safe wrapper around chrome.runtime.sendMessage. On context invalidation, calls
-// _signalContextInvalidated() as an error-boundary catch alongside the on-demand
-// isContextValid() checks at each crypto entry point.
+// Safe chrome.runtime.sendMessage wrapper.
+// Signals context invalidation on failure.
+// Used on UNLOCK; identity is cached and relayed to the file crypto workers.
 function bgGetIdentityLine() {
   try {
     return chrome.runtime.sendMessage({ type: 'GET_IDENTITY_LINE' })
@@ -1750,6 +1754,27 @@ function _spawnWorker(pendingMap) {
   return worker;
 }
 
+// Forwards UNLOCK so the worker can cache its Decrypter.
+// No-op if the worker doesn't exist; newly spawned workers replay cached state.
+function _sendUnlockToWorker(worker, identityLine) {
+  worker?.postMessage({ op: 'UNLOCK', identityLine });
+}
+
+function _sendRelockToWorker(worker) {
+  worker?.postMessage({ op: 'RELOCK' });
+}
+
+// Broadcasts UNLOCK/RELOCK to whichever file-crypto-workers currently exist.
+function _unlockWorkers(identityLine) {
+  _sendUnlockToWorker(_textWorker, identityLine);
+  _sendUnlockToWorker(_mediaWorker, identityLine);
+}
+
+function _relockWorkers() {
+  _sendRelockToWorker(_textWorker);
+  _sendRelockToWorker(_mediaWorker);
+}
+
 function getTextWorker() {
   if (!_textWorker) {
     _textWorker = _spawnWorker(_textWorkerPending);
@@ -1759,6 +1784,10 @@ function getTextWorker() {
       _textWorkerPending.clear();
       _textWorker = null;
     };
+    // Replay: this worker may be spawned lazily well after UNLOCK already
+    // happened. Per the worker's implicit message queue, posting immediately
+    // after construction is safe even before onmessage is wired up on its side.
+    if (_cachedIdentityLine) _sendUnlockToWorker(_textWorker, _cachedIdentityLine);
   }
   return _textWorker;
 }
@@ -1774,6 +1803,10 @@ function getMediaWorker() {
       _mediaWorkerBusy = false;
       _dispatchNextMediaOp();
     };
+    // Same replay as getTextWorker() — matters even more here, since this
+    // worker is routinely terminated on channel nav and respawned lazily
+    // while still unlocked (terminateFileCryptoWorker() does not RELOCK it).
+    if (_cachedIdentityLine) _sendUnlockToWorker(_mediaWorker, _cachedIdentityLine);
   }
   return _mediaWorker;
 }
@@ -1843,7 +1876,7 @@ function workerEncryptFile(plainBuffer, recipients) {
 // fileBuffer: payload ArrayBuffer with SIG_VERSION byte already stripped ([sig][hint][ciphertext]).
 // Transfers fileBuffer — zero-copy. Returns Promise<{ sigValid: bool, buffer?: ArrayBuffer }>.
 // Dispatched via media priority queue — smallest byteLength first.
-function workerVerifyDecrypt(fileBuffer, identityLine, prefixBytes, candidateKeysB64) {
+function workerVerifyDecrypt(fileBuffer, prefixBytes, candidateKeysB64) {
   const byteLength   = fileBuffer.byteLength;
   const prefixBuffer = prefixBytes.buffer.slice(
     prefixBytes.byteOffset, prefixBytes.byteOffset + prefixBytes.byteLength
@@ -1853,7 +1886,6 @@ function workerVerifyDecrypt(fileBuffer, identityLine, prefixBytes, candidateKey
     {
       op: 'VERIFY_DECRYPT',
       fileBuffer,
-      identityLine,
       candidateKeysB64,
       prefixBuffer,
       sigByteLen:     SIG_BYTES,
@@ -1881,7 +1913,7 @@ function workerCompressEncrypt(text, recipients) {
 // (always isolated from media ops so text messages decrypt immediately).
 // fileBuffer: payload ArrayBuffer with SIG_VERSION byte already stripped.
 // Transfers fileBuffer — zero-copy. Returns Promise<{ sigValid: bool, plaintext?: string }>.
-function workerVerifyDecryptDecompress(fileBuffer, identityLine, prefixBytes, candidateKeysB64) {
+function workerVerifyDecryptDecompress(fileBuffer, prefixBytes, candidateKeysB64) {
   return new Promise((resolve, reject) => {
     const id = _textWorkerNextId++;
     _textWorkerPending.set(id, { resolve, reject });
@@ -1890,7 +1922,6 @@ function workerVerifyDecryptDecompress(fileBuffer, identityLine, prefixBytes, ca
         op: 'VERIFY_DECRYPT_DECOMPRESS',
         id,
         fileBuffer,
-        identityLine,
         candidateKeysB64,
         prefixBuffer: prefixBytes.buffer.slice(
           prefixBytes.byteOffset, prefixBytes.byteOffset + prefixBytes.byteLength
@@ -2031,6 +2062,12 @@ function listenForMessages() {
         // Evict stale entries so they retry; still-present cached entries skip CDN re-fetch.
         _evictStaleProcessedIds();
 
+        // Fetch identity once and unlock workers before scanExisting().
+        // Ensures VERIFY_DECRYPT[_DECOMPRESS] sees cached state.
+        const identResult = await bgGetIdentityLine();
+        _cachedIdentityLine = identResult?.ok ? identResult.identityLine : null;
+        if (_cachedIdentityLine) _unlockWorkers(_cachedIdentityLine);
+
         if (_globalOn) {
           attachEnterHook();
           relayInterceptorState(true);
@@ -2090,6 +2127,8 @@ function listenForMessages() {
       _mldsaPrivBytes?.fill(0);
       _mldsaPrivBytes = null;
       _selfRecipient  = null;
+      _cachedIdentityLine = null;
+      _relockWorkers();
       _revokeAllCachedMedia();
       _processedIds.clear();
       _decryptedCache.clear();
@@ -2655,20 +2694,13 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     try {
       if (_generation !== capturedGeneration) return;
 
-      // ── Parallel: resolve identity + fetch CDN bytes ──────────────────
-      // Independent operations — run concurrently so CDN latency hides the
-      // background IPC round-trip.
-      //
-      // Both are awaited before reading _contacts / getActiveEntry() so
-      // _contacts is stable (post-UNLOCK settlement) before capturedActive
-      // is captured.
-      const [identResult, fileBuffer] = await Promise.all([
-        bgGetIdentityLine(),
-        iframePlainFetch(cdnUrl),
-      ]);
+      // ── Fetch CDN bytes ────────────────────────────────────────────────
+      // The identity line was already fetched once at UNLOCK and cached 
+      // in the file crypto workers.
+      const fileBuffer = await iframePlainFetch(cdnUrl);
       if (_generation !== capturedGeneration) return;
 
-      if (!identResult?.ok) {
+      if (!_cachedIdentityLine) {
         // Extension locked mid-flight — retriable once unlocked.
         _attachmentInProgress.delete(attachId);
         mosaicItem = hideFileCard(fileCard);
@@ -2738,7 +2770,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       // age decrypt, and deflate-raw decompress off the main thread, returning
       // { sigValid, plaintext } in one round-trip.
       const workerResult = await workerVerifyDecryptDecompress(
-        payloadBuffer, identResult.identityLine, prefix, candidateKeysB64
+        payloadBuffer, prefix, candidateKeysB64
       );
       // Checked again after the worker await — a RELOCK/UNLOCK during the
       // worker run bumps _generation; writing stale plaintext into the new
@@ -2768,11 +2800,15 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       // so the page shows the correct 'locked' state instead of a misleading
       // decrypt failure when the real cause is a context loss.
       if (!isContextValid()) return;
-      console.info('[age] message.txt.age decrypt skipped (not a valid age file or not encrypted):', e?.message ?? e);
-      // Ensure the file card is hidden — if the error was thrown before the
-      // normal hide path (e.g. "Extension context invalidated" from
-      // bgGetIdentityLine), it would still be visible alongside the error badge.
       const _errMosaicItem = hideFileCard(fileCard);
+      if ((e?.message ?? e) === 'NOT_UNLOCKED') {
+        // A RELOCK raced ahead of the worker processing this op, despite the
+        // local _cachedIdentityLine check above passing — genuinely "locked",
+        // not a decrypt failure.
+        renderDecryptedMessage(liElement, '🔐 Extension locked.', attachId, _errMosaicItem ?? fileCard);
+        return;
+      }
+      console.info('[age] message.txt.age decrypt skipped (not a valid age file or not encrypted):', e?.message ?? e);
       renderDecryptedMessage(liElement, "🔓 Couldn't decrypt.", attachId, _errMosaicItem ?? fileCard);
     } finally {
       // Settle the promise — any concurrent awaiter (e.g. a flash-jump
@@ -2844,16 +2880,13 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
   renderDecryptedMessage(liElement, null, undefined, _earlyMosaicItem ?? fileCard);
 
   try {
-    // ── Parallel: resolve identity + fetch CDN bytes ──────────────────────────
-    // Independent — run concurrently so CDN latency hides the background IPC
-    // round-trip.
-    const [identResult, fileBuffer] = await Promise.all([
-      bgGetIdentityLine(),
-      iframePlainFetch(cdnUrl),
-    ]);
+    // ── Fetch CDN bytes ────────────────────────────────────────────────
+    // The identity line was already fetched once at UNLOCK and cached 
+    // in the file crypto workers.
+    const fileBuffer = await iframePlainFetch(cdnUrl);
     if (_generation !== capturedGeneration) return;
 
-    if (!identResult?.ok) {
+    if (!_cachedIdentityLine) {
       // Extension locked mid-flight — retriable once unlocked.
       _attachmentInProgress.delete(attachId);
       const _lockedMosaicItem = hideFileCard(fileCard);
@@ -2932,7 +2965,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     // age decrypt off the main thread, returning { sigValid, buffer }.
     // No decompress step — media files are already compressed by their codecs.
     const workerResult = await workerVerifyDecrypt(
-      payloadBuffer, identResult.identityLine, prefix, candidateKeysB64
+      payloadBuffer, prefix, candidateKeysB64
     );
     // RELOCK/UNLOCK during the worker run bumps _generation.
     if (_generation !== capturedGeneration) return;
@@ -2968,6 +3001,12 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     // Replace the "Decrypting…" placeholder with an error badge.
     liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
       .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+    if ((e?.message ?? e) === 'NOT_UNLOCKED') {
+      // A RELOCK raced ahead of the worker processing this op, despite the
+      // local _cachedIdentityLine check above passing — genuinely "locked".
+      renderDecryptedMessage(liElement, '🔐 Extension locked.', undefined, _earlyMosaicItem ?? fileCard);
+      return;
+    }
     renderDecryptedMessage(liElement, "🔓 Couldn't decrypt.", undefined, _earlyMosaicItem ?? fileCard);
   } finally {
     // Settle the in-flight promise — any concurrent awaiter unblocks and
