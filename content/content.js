@@ -193,21 +193,30 @@ function getTextbox() {
 }
 function getAllMessageLists() { return [...document.querySelectorAll('ol[data-list-id="chat-messages"]')]; }
  
+// ─── Route patterns ────────────────────────────────────────────────────────────
+// Shared by the getCurrent*Id() helpers and the SPA nav-key derivation below.
+// server/channel/thread ids must be numeric, so DM routes (/channels/@me/ID)
+// never match the server- or thread-scoped patterns.
+const CHANNEL_PATH_PATTERN = new URLPattern({ pathname: '/channels/:guildId/:channelId(\\d+){/*}?' });
+const SERVER_CHANNEL_PATH_PATTERN = new URLPattern({ pathname: '/channels/:serverId(\\d+)/:channelId(\\d+){/*}?' });
+const THREAD_PATH_PATTERN = new URLPattern({ pathname: '/channels/:serverId(\\d+)/:channelId(\\d+)/threads/:threadId(\\d+){/*}?' });
+const CDN_ATTACHMENT_PATH_PATTERN = new URLPattern({ pathname: '/attachments/:channelId(\\d+)/*' });
+
 function getCurrentChannelId() {
-  const m = location.pathname.match(/\/channels\/[^/]+\/(\d+)/);
-  return m ? m[1] : null;
+  const m = CHANNEL_PATH_PATTERN.exec({ pathname: location.pathname });
+  return m ? m.pathname.groups.channelId : null;
 }
 
 function getCurrentServerId() {
-  const m = location.pathname.match(/\/channels\/(\d+)\/\d+/);
-  return m ? m[1] : null;
+  const m = SERVER_CHANNEL_PATH_PATTERN.exec({ pathname: location.pathname });
+  return m ? m.pathname.groups.serverId : null;
 }
 
 // Returns the thread ID from the URL in split-view:
 //   /channels/SERVER/CHANNEL/threads/THREAD → THREAD, otherwise null.
 function getCurrentThreadId() {
-  const m = location.pathname.match(/\/channels\/\d+\/\d+\/threads\/(\d+)/);
-  return m ? m[1] : null;
+  const m = THREAD_PATH_PATTERN.exec({ pathname: location.pathname });
+  return m ? m.pathname.groups.threadId : null;
 }
 
 // Extracts the channel ID from a Discord CDN attachment URL.
@@ -216,8 +225,9 @@ function getCurrentThreadId() {
 // thread single-view where the URL shows THREAD_ID). Both sender and receiver
 // derive the sig prefix from this same ground truth without any API call.
 function cdnChannelId(url) {
-  const m = url.match(/\/attachments\/(\d+)\//);
-  return m ? m[1] : null;
+  let m;
+  try { m = CDN_ATTACHMENT_PATH_PATTERN.exec(url); } catch { return null; }
+  return m ? m.pathname.groups.channelId : null;
 }
 
 // Returns the channel ID to bind into the outgoing sig prefix, or null to suppress encryption.
@@ -905,18 +915,23 @@ const MDLINK_FULL_RE  = new RegExp(`^${_MDLINK_BODY}$`);  // anchored: whole str
 //   • Returns { emojiId, ext, emojiName, isAnimated } or null.
 // Security: emojiId → \d+, emojiName → [A-Za-z0-9_], ext validated against RENDERABLE_IMAGE.
 //   %00 rejected — URL.parse() doesn't catch percent-encoded null bytes in path/query.
-//   URL.parse() (Chrome 126+) returns null for invalid URLs.
+//   protocol/hostname/pathname are all pinned by the URLPattern in one shot;
+//   query params still need a real parsed URL, so URL.parse() is used for those.
+const NITRO_EMOJI_URL_PATTERN = new URLPattern({
+  protocol: 'https',
+  hostname: 'cdn.discordapp.com',
+  pathname: '/emojis/:emojiId(\\d+).:ext([a-zA-Z0-9]+)',
+});
 function parseNitroEmojiUrl(url) {
   if (/%00/i.test(url)) return null;
+  let match;
+  try { match = NITRO_EMOJI_URL_PATTERN.exec(url); } catch { return null; }
+  if (!match) return null;
+  const { emojiId, ext: rawExt } = match.pathname.groups;
+  const ext = rawExt.toLowerCase();
+  if (!RENDERABLE_IMAGE.has(ext)) return null;
   const parsed = URL.parse(url);
   if (!parsed) return null;
-  if (parsed.protocol !== 'https:') return null;
-  if (parsed.hostname !== 'cdn.discordapp.com') return null;
-  const pathMatch = /^\/emojis\/(\d+)\.([a-zA-Z0-9]+)$/.exec(parsed.pathname);
-  if (!pathMatch) return null;
-  const emojiId = pathMatch[1];
-  const ext     = pathMatch[2].toLowerCase();
-  if (!RENDERABLE_IMAGE.has(ext)) return null;
   const name       = parsed.searchParams.get('name');
   const isAnimated = parsed.searchParams.get('animated') === 'true';
   if (!name || !/^[A-Za-z0-9_]+$/.test(name)) return null;
@@ -930,17 +945,21 @@ function parseNitroEmojiUrl(url) {
 // Security: stickerId → \d+, ext validated against RENDERABLE_IMAGE. %00 rejected.
 // decodeURIComponent wrapped in try/catch — can throw on malformed percent-encoding
 // independent of URL validity.
+const STICKER_URL_PATTERN = new URLPattern({
+  protocol: 'https',
+  hostname: 'media.discordapp.net',
+  pathname: '/stickers/:stickerId(\\d+).:ext([a-zA-Z0-9]+)',
+});
 function parseStickerUrl(url) {
   if (/%00/i.test(url)) return null;
+  let match;
+  try { match = STICKER_URL_PATTERN.exec(url); } catch { return null; }
+  if (!match) return null;
+  const { stickerId, ext: rawExt } = match.pathname.groups;
+  const ext = rawExt.toLowerCase();
+  if (!RENDERABLE_IMAGE.has(ext)) return null;
   const parsed = URL.parse(url);
   if (!parsed) return null;
-  if (parsed.protocol !== 'https:') return null;
-  if (parsed.hostname !== 'media.discordapp.net') return null;
-  const pathMatch = /^\/stickers\/(\d+)\.([a-zA-Z0-9]+)$/.exec(parsed.pathname);
-  if (!pathMatch) return null;
-  const stickerId = pathMatch[1];
-  const ext       = pathMatch[2].toLowerCase();
-  if (!RENDERABLE_IMAGE.has(ext)) return null;
   const rawName = parsed.searchParams.get('name');
   if (rawName === null) return { stickerId, ext, decodedName: null };
   try {
@@ -2086,8 +2105,9 @@ function listenForMessages() {
 // Strips /threads/THREAD_ID suffix so thread open/close doesn't look like a channel change.
 // Cache entries are keyed by li.id which encodes channel ID, so only SERVER_ID/CHANNEL_ID matters.
 function _navChannelKey(href) {
-  const m = href.match(/\/channels\/(\d+)\/(\d+)/);
-  return m ? m[1] + '/' + m[2] : href;
+  let m;
+  try { m = SERVER_CHANNEL_PATH_PATTERN.exec(href); } catch { return href; }
+  return m ? m.pathname.groups.serverId + '/' + m.pathname.groups.channelId : href;
 }
 
 function startNavObserver() {
