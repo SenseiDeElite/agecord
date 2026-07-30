@@ -4,6 +4,7 @@
  */
 
 use wasm_bindgen::prelude::*;
+use zeroize::Zeroizing;
 
 // ─── XChaCha20Poly1305 ────────────────────────────────────────────────────────
 
@@ -15,8 +16,9 @@ use chacha20poly1305::{
 /// Encrypt with XChaCha20Poly1305.
 /// `key`: 32 bytes. Returns `nonce (24 bytes) || ciphertext+tag`.
 #[wasm_bindgen]
-pub fn xchacha20poly1305_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, JsError> {
-    let cipher = XChaCha20Poly1305::new_from_slice(key)
+pub fn xchacha20poly1305_encrypt(key: Vec<u8>, plaintext: &[u8]) -> Result<Vec<u8>, JsError> {
+    let key = Zeroizing::new(key);
+    let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|_| JsError::new("xchacha20poly1305_encrypt: key must be exactly 32 bytes"))?;
     let nonce = XNonce::generate();
     let ciphertext = cipher
@@ -31,13 +33,14 @@ pub fn xchacha20poly1305_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>
 /// Decrypt with XChaCha20Poly1305.
 /// `key`: 32 bytes. `data`: `nonce (24 bytes) || ciphertext+tag`.
 #[wasm_bindgen]
-pub fn xchacha20poly1305_decrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, JsError> {
+pub fn xchacha20poly1305_decrypt(key: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, JsError> {
+    let key = Zeroizing::new(key);
     if data.len() < 24 {
         return Err(JsError::new(
             "xchacha20poly1305_decrypt: data too short to contain a nonce",
         ));
     }
-    let cipher = XChaCha20Poly1305::new_from_slice(key)
+    let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|_| JsError::new("xchacha20poly1305_decrypt: key must be exactly 32 bytes"))?;
     let nonce = XNonce::try_from(&data[..24])
         .map_err(|_| JsError::new("xchacha20poly1305_decrypt: invalid nonce length"))?;
@@ -75,19 +78,21 @@ use argon2::{Algorithm, Argon2, Params, Version};
 /// - `output_len`: desired output length in bytes
 #[wasm_bindgen]
 pub fn argon2id(
-    password: &[u8],
-    salt: &[u8],
+    password: Vec<u8>,
+    salt: Vec<u8>,
     m_cost: u32,
     t_cost: u32,
     p_cost: u32,
     output_len: usize,
 ) -> Result<Vec<u8>, JsError> {
+    let password = Zeroizing::new(password);
+    let salt = Zeroizing::new(salt);
     let params = Params::new(m_cost, t_cost, p_cost, Some(output_len))
         .map_err(|e| JsError::new(&format!("argon2id: invalid params: {e}")))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = vec![0u8; output_len];
     argon2
-        .hash_password_into(password, salt, &mut out)
+        .hash_password_into(&password, &salt, &mut out)
         .map_err(|e| JsError::new(&format!("argon2id: hashing failed: {e}")))?;
     Ok(out)
 }
@@ -119,8 +124,10 @@ pub fn ml_dsa87_keygen() -> Vec<u8> {
 /// Sign a message with ML-DSA-87.
 /// `seed`: 32 bytes. Returns the signature — 4627 bytes.
 #[wasm_bindgen]
-pub fn ml_dsa87_sign(seed: &[u8], message: &[u8]) -> Result<Vec<u8>, JsError> {
+pub fn ml_dsa87_sign(seed: Vec<u8>, message: &[u8]) -> Result<Vec<u8>, JsError> {
+    let seed = Zeroizing::new(seed);
     let seed_arr: &[u8; 32] = seed
+        .as_slice()
         .try_into()
         .map_err(|_| JsError::new("ml_dsa87_sign: seed must be exactly 32 bytes"))?;
     let sk = SigningKey::<MlDsa87>::from_seed(seed_arr.into());
@@ -152,8 +159,10 @@ pub fn ml_dsa87_verify(verifying_key: &[u8], message: &[u8], signature: &[u8]) -
 /// Derive the verifying key from a 32-byte seed.
 /// `seed`: 32 bytes. Returns the verifying key — 2592 bytes.
 #[wasm_bindgen]
-pub fn ml_dsa87_verifying_key_from_seed(seed: &[u8]) -> Result<Vec<u8>, JsError> {
+pub fn ml_dsa87_verifying_key_from_seed(seed: Vec<u8>) -> Result<Vec<u8>, JsError> {
+    let seed = Zeroizing::new(seed);
     let seed_arr: &[u8; 32] = seed
+        .as_slice()
         .try_into()
         .map_err(|_| JsError::new("ml_dsa87_verifying_key_from_seed: seed must be exactly 32 bytes"))?;
     let sk = SigningKey::<MlDsa87>::from_seed(seed_arr.into());
