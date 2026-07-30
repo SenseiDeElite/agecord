@@ -1179,7 +1179,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [libc 0.2.186](https://github.com/rust-lang/libc)
+## [libc 0.2.189](https://github.com/rust-lang/libc)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) The Rust Project Developers
@@ -1263,7 +1263,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTI
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## [once_cell 1.21.4](https://github.com/matklad/once_cell), [proc-macro2 1.0.106](https://github.com/dtolnay/proc-macro2), [quote 1.0.46](https://github.com/dtolnay/quote), [rustversion 1.0.23](https://github.com/dtolnay/rustversion), [syn 2.0.119](https://github.com/dtolnay/syn), [unicode-ident 1.0.24](https://github.com/dtolnay/unicode-ident)
+## [once_cell 1.21.4](https://github.com/matklad/once_cell), [proc-macro2 1.0.107](https://github.com/dtolnay/proc-macro2), [quote 1.0.47](https://github.com/dtolnay/quote), [rustversion 1.0.23](https://github.com/dtolnay/rustversion), [syn 2.0.119](https://github.com/dtolnay/syn), [unicode-ident 1.0.24](https://github.com/dtolnay/unicode-ident)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Permission is hereby granted, free of charge, to any
