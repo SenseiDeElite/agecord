@@ -1,6 +1,6 @@
 [package]
 name = "rustcrypto-wasm"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Sensei <https://github.com/SenseiDeElite>"]
 description = "WebAssembly RustCrypto"
 license = "MIT"
@@ -14,10 +14,11 @@ crate-type = ["cdylib"]
 wasm-bindgen       = "0.2.126"
 getrandom          = { version = "0.4.3", features = ["wasm_js"] }
 
-chacha20poly1305   = "0.11.0"
+chacha20poly1305   = { version = "0.11.0", features = ["getrandom"] }
 shake              = "0.1.0"
 argon2             = { version = "0.5.3", default-features = false, features = ["alloc"] }
 ml-dsa             = { version = "0.1.1", features = ["rand_core"] }
+zeroize            = "1.9.0"
 
 [profile.release]
 opt-level = 3
