@@ -72,14 +72,19 @@ function decodePubKey(b64) {
   return key;
 }
 
-// Verifies ML-DSA-87 signature and age-decrypts. Returns { sigValid: false }
-// on failure, or { sigValid: true, plainBytes } on success.
-async function verifyAndDecrypt({ fileBuffer, identityLine, candidateKeysB64,
+// Cached identity (Decrypter).
+// Set on UNLOCK, cleared on RELOCK.
+// Avoids resending on VERIFY_DECRYPT[_DECOMPRESS] hot path.
+// content.js replays UNLOCK state to workers spawned after UNLOCK.
+let _cachedDecrypter = null;
+
+// Verifies ML-DSA-87 signature and age-decrypts.
+// Returns { sigValid: false } on failure, { sigValid: true, plainBytes } on success.
+// Throws NOT_UNLOCKED if no identity is cached.
+async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
                                   prefixBuffer, sigByteLen, pubkeyHintLen, opName }) {
   if (!fileBuffer || !(fileBuffer instanceof ArrayBuffer))
     throw new Error(`${opName}: fileBuffer must be a transferred ArrayBuffer`);
-  if (!identityLine || typeof identityLine !== 'string')
-    throw new Error(`${opName}: identityLine must be a string`);
   if (!Array.isArray(candidateKeysB64) || candidateKeysB64.length === 0)
     throw new Error(`${opName}: candidateKeysB64 must be a non-empty array`);
   if (typeof sigByteLen !== 'number' || sigByteLen < 1)
@@ -88,6 +93,8 @@ async function verifyAndDecrypt({ fileBuffer, identityLine, candidateKeysB64,
     throw new Error(`${opName}: pubkeyHintLen must be a positive number`);
   if (fileBuffer.byteLength < sigByteLen + pubkeyHintLen + 1)
     throw new Error(`${opName}: fileBuffer too short`);
+  if (!_cachedDecrypter)
+    throw new Error('NOT_UNLOCKED');
 
   const fileBytes = new Uint8Array(fileBuffer);
   const sigBytes  = fileBytes.subarray(0, sigByteLen);
@@ -122,11 +129,9 @@ async function verifyAndDecrypt({ fileBuffer, identityLine, candidateKeysB64,
   if (!sigValid) return { sigValid: false };
 
   // ── age-decrypt ─────────────────────────────────────────────────────────────
-  const dec = new Decrypter();
-  dec.addIdentity(identityLine);
   // ageBytes is a live view into fileBuffer, which is fully owned inside the
   // Worker (transferred in, not neutered here). No copy needed.
-  const plainBytes = await dec.decrypt(ageBytes, 'uint8array');
+  const plainBytes = await _cachedDecrypter.decrypt(ageBytes, 'uint8array');
 
   return { sigValid: true, plainBytes };
 }
@@ -139,6 +144,24 @@ self.onmessage = async ({ data }) => {
   const { op, id } = data;
 
   try {
+    // UNLOCK/RELOCK are fire-and-forget (no `id`).
+    // Cache update is synchronous, so queued    VERIFY_DECRYPT[_DECOMPRESS]
+    // messages observe it before this handler yields.
+    if (op === 'UNLOCK') {
+      const { identityLine } = data;
+      if (!identityLine || typeof identityLine !== 'string')
+        throw new Error('UNLOCK: identityLine must be a string');
+      const dec = new Decrypter();
+      dec.addIdentity(identityLine);
+      _cachedDecrypter = dec;
+      return;
+    }
+
+    if (op === 'RELOCK') {
+      _cachedDecrypter = null;
+      return;
+    }
+
     if (op === 'ENCRYPT') {
       const { buffer, recipients } = data;
 
@@ -186,8 +209,8 @@ self.onmessage = async ({ data }) => {
 
     // VERIFY_DECRYPT: verify + decrypt signed media; return raw bytes.
     if (op === 'VERIFY_DECRYPT') {
-      const { fileBuffer, identityLine, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen } = data;
-      const result = await verifyAndDecrypt({ fileBuffer, identityLine, candidateKeysB64,
+      const { fileBuffer, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen } = data;
+      const result = await verifyAndDecrypt({ fileBuffer, candidateKeysB64,
                                               prefixBuffer, sigByteLen, pubkeyHintLen, opName: op });
       if (!result.sigValid) {
         self.postMessage({ op: 'VERIFY_DECRYPT_RESULT', id, sigValid: false });
@@ -203,8 +226,8 @@ self.onmessage = async ({ data }) => {
 
     // VERIFY_DECRYPT_DECOMPRESS: verify + decrypt signed text; decompress + UTF-8 decode.
     if (op === 'VERIFY_DECRYPT_DECOMPRESS') {
-      const { fileBuffer, identityLine, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen } = data;
-      const result = await verifyAndDecrypt({ fileBuffer, identityLine, candidateKeysB64,
+      const { fileBuffer, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen } = data;
+      const result = await verifyAndDecrypt({ fileBuffer, candidateKeysB64,
                                               prefixBuffer, sigByteLen, pubkeyHintLen, opName: op });
       if (!result.sigValid) {
         self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: false });
@@ -219,6 +242,13 @@ self.onmessage = async ({ data }) => {
     self.postMessage({ op: 'ERROR', id, error: `Unknown op: ${op}` });
 
   } catch (e) {
-    self.postMessage({ op: `${op}_ERROR`, id, error: e?.message ?? String(e) });
+    const message = e?.message ?? String(e);
+    if (id === undefined) {
+      // UNLOCK/RELOCK carry no id, so content.js's pendingMap has nowhere to
+      // route a posted error — log locally instead of failing silently.
+      console.error(`[age] file-crypto-worker ${op} error:`, message);
+      return;
+    }
+    self.postMessage({ op: `${op}_ERROR`, id, error: message });
   }
 };
