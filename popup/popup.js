@@ -337,7 +337,10 @@
   // ─── Crypto worker ───────────────────────────────────────────────────────────
   // Spawns a fresh dedicated worker per call, terminated on completion.
 
-  function runCryptoWorker(msg) {
+  // `transfer` is the list of ArrayBuffers inside `msg` to hand off by
+  // transfer rather than structured-clone copy — ownership moves to the
+  // worker and the buffer detaches in this realm immediately on send.
+  function runCryptoWorker(msg, transfer = []) {
     return new Promise((resolve, reject) => {
       const workerUrl = chrome.runtime.getURL('popup/crypto-worker.js');
       let worker;
@@ -356,39 +359,73 @@
         worker.terminate();
         reject(new Error(e.message ?? 'Worker crashed'));
       };
-      worker.postMessage(msg);
+      worker.postMessage(msg, transfer);
     });
   }
 
   // Salt length mirrors crypto-worker.js ARGON2ID_DERIVE expectations.
   const CONTACTS_SALT_LEN = 16;
 
+  // Derives a key over transferred ArrayBuffers. Returns base64 and
+  // zeroes the intermediate typed array after encoding.
+  async function deriveKeyB64(passphrase, saltBytesIn) {
+    const passwordBytes = new TextEncoder().encode(passphrase);
+    // saltBytesIn is transferred too, so hand the worker its own copy —
+    // callers may still need the original (e.g. to persist or embed it).
+    const saltBytes = saltBytesIn.slice();
+    const { keyBytes } = await runCryptoWorker(
+      { op: 'ARGON2ID_DERIVE', passwordBytes: passwordBytes.buffer, saltBytes: saltBytes.buffer },
+      [passwordBytes.buffer, saltBytes.buffer],
+    );
+    const keyArr = new Uint8Array(keyBytes);
+    const keyB64 = toB64(keyArr);
+    keyArr.fill(0);
+    return keyB64;
+  }
+
   // Returns { keyB64, saltB64 }. Generates and persists a fresh salt if none provided.
   async function deriveContactsKey(passphrase, saltB64Opt) {
     let saltB64 = saltB64Opt;
+    let saltBytes;
     if (!saltB64) {
       // Generate a fresh salt and persist it.
-      const salt = crypto.getRandomValues(new Uint8Array(CONTACTS_SALT_LEN));
-      saltB64 = toB64(salt);
+      saltBytes = crypto.getRandomValues(new Uint8Array(CONTACTS_SALT_LEN));
+      saltB64   = toB64(saltBytes);
       await store.set({ contactsSaltB64: saltB64 });
+    } else {
+      saltBytes = fromB64(saltB64);
     }
-    const { keyB64 } = await runCryptoWorker({ op: 'ARGON2ID_DERIVE', password: passphrase, saltB64 });
+    const keyB64 = await deriveKeyB64(passphrase, saltBytes);
     return { keyB64, saltB64 };
   }
 
-  // Returns base64-encoded version-0x01 envelope (Argon2id + XChaCha20-Poly1305).
+  // Returns a base64-encoded v0x01 envelope (Argon2id + XChaCha20-Poly1305).
+  // Worker IPC uses transferred bytes; base64 is applied only on return.
   async function encryptIdentityBlob(identityBlob, passphrase) {
     // Derive a fresh 32-byte key using a new random salt.
-    const salt    = crypto.getRandomValues(new Uint8Array(16));
-    const saltB64 = toB64(salt);
+    const saltBytes = crypto.getRandomValues(new Uint8Array(16));
 
-    const { keyB64 } = await runCryptoWorker({ op: 'ARGON2ID_DERIVE', password: passphrase, saltB64 });
+    const passwordBytes = new TextEncoder().encode(passphrase);
+    const { keyBytes } = await runCryptoWorker(
+      { op: 'ARGON2ID_DERIVE', passwordBytes: passwordBytes.buffer, saltBytes: saltBytes.slice().buffer },
+      [passwordBytes.buffer],
+    );
 
-    const plaintextB64 = toB64(new TextEncoder().encode(identityBlob));
+    const plaintextBytes = new TextEncoder().encode(identityBlob);
 
-    const { envelopeB64 } = await runCryptoWorker({
-      op: 'XCHACHA_ENCRYPT', keyB64, plaintextB64, saltB64,
-    });
+    const { envelopeBytes } = await runCryptoWorker(
+      {
+        op: 'XCHACHA_ENCRYPT',
+        keyBytes,
+        plaintextBytes: plaintextBytes.buffer,
+        saltBytes: saltBytes.buffer,
+      },
+      [keyBytes, plaintextBytes.buffer, saltBytes.buffer],
+    );
+
+    const envelopeArr = new Uint8Array(envelopeBytes);
+    const envelopeB64 = toB64(envelopeArr);
+    envelopeArr.fill(0);
     return envelopeB64;
   }
 
@@ -406,12 +443,22 @@
     }
 
     const saltBytes = envBytes.slice(1, 17);
-    const saltB64   = toB64(saltBytes);
 
-    const { keyB64 }       = await runCryptoWorker({ op: 'ARGON2ID_DERIVE', password: passphrase, saltB64 });
-    const { plaintextB64 } = await runCryptoWorker({ op: 'XCHACHA_DECRYPT', keyB64, envelopeB64 });
+    const passwordBytes = new TextEncoder().encode(passphrase);
+    const { keyBytes } = await runCryptoWorker(
+      { op: 'ARGON2ID_DERIVE', passwordBytes: passwordBytes.buffer, saltBytes: saltBytes.buffer },
+      [passwordBytes.buffer, saltBytes.buffer],
+    );
 
-    return new TextDecoder().decode(fromB64(plaintextB64));
+    const { plaintextBytes } = await runCryptoWorker(
+      { op: 'XCHACHA_DECRYPT', keyBytes, envelopeBytes: envBytes.buffer },
+      [keyBytes, envBytes.buffer],
+    );
+
+    const plaintextArr = new Uint8Array(plaintextBytes);
+    const identity = new TextDecoder().decode(plaintextArr);
+    plaintextArr.fill(0);
+    return identity;
   }
 
   // ─── Boot ───────────────────────────────────────────────────────────────────
