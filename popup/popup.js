@@ -1817,7 +1817,7 @@
 
     const a = Object.assign(document.createElement('a'), {
       href:     url,
-      download: `agecord-${datePart}.json`,
+      download: `agecord_${datePart}.json`,
     });
     document.body.appendChild(a);
     a.click();
