@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-# This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
-# See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
+# This source code is licensed under the MIT License.
+# See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/crx3/LICENSE
 
 # Ported from crx3 (https://github.com/ahwayakchih/crx3) by Marcin Konicki, MIT License.
 # See NOTICES.md (https://github.com/SenseiDeElite/agecord/blob/main/NOTICES.md#crx3) for the full license text.
