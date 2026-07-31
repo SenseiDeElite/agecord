@@ -48,13 +48,7 @@ Each contact's public key is displayed as a SHAKE256 (64-byte output) fingerprin
 
 ---
 
-### ⬇️ Installation & Updates
-
-#### 🌐 Chromium & Firefox
-
-See the [latest release](https://github.com/SenseiDeElite/agecord/releases/latest).
-
-**🔧 Troubleshooting**
+### 🔧 Troubleshooting
 
 See [`TROUBLESHOOTING.md`](https://github.com/SenseiDeElite/agecord/blob/main/TROUBLESHOOTING.md).
 
