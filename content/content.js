@@ -949,6 +949,13 @@ function scanExistingLocked(reason) {
 
 const _shortcodeOnlyRe = /^:[a-zA-Z0-9_+\-]+:$/;
 
+// Matches a single Unicode emoji sequence using Unicode properties.
+// Covers flags, keycaps, ZWJ sequences, modifiers, and newer emoji.
+// Requires the UnicodeSets ('v') flag.
+// Standard: Unicode Technical Standard #51 (UTS #51), RGI_Emoji property — https://unicode.org/reports/tr51/
+const EMOJI_SEQ_RE      = /\p{RGI_Emoji}/gv;   // unanchored: scan for runs
+const EMOJI_SEQ_FULL_RE = /^\p{RGI_Emoji}$/v;  // anchored: whole-string check
+
 // Single source pattern shared by the tokenizer, the
 // mdlink branch's group re-exec, and isJumboEmoji's whole-string check, so the
 // URL character class can't drift out of sync between them.
@@ -1025,6 +1032,7 @@ function parseStickerUrl(url) {
 function isJumboEmoji(plaintext) {
   const t = plaintext.trim();
   if (_shortcodeOnlyRe.test(t)) return true;
+  if (EMOJI_SEQ_FULL_RE.test(t)) return true;
   const mdm = MDLINK_FULL_RE.exec(t);
   if (mdm) {
     const label = mdm[1];
@@ -1616,26 +1624,46 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
   }
 }
  
-// Render a text segment that may contain :shortcode: emoji tokens.
-// Discord converts Unicode emoji to :shortcode: in the Slate editor, so only
-// shortcodes appear in decrypted plaintext. Known shortcodes are looked up in
-// EMOJI_MAP and rendered as font-size-controlled <span> elements to respect
-// emojiSize (22px inline / 48px jumbo), matching Nitro emoji <img> sizing.
+// Renders text containing :shortcode: tokens and/or Unicode emoji.
+// Raw emoji not converted by Discord are matched separately so all
+// emoji render with consistent sizing.
 function renderWithEmoji(container, text, emojiSize = 22) {
-  const re = /:([a-zA-Z0-9_+\-]+):/g;
-  let last = 0, m;
-  while ((m = re.exec(text)) !== null) {
+  const shortcodeRe = /:([a-zA-Z0-9_+\-]+):/g;
+  const emojiRe      = new RegExp(EMOJI_SEQ_RE.source, EMOJI_SEQ_RE.flags);
+  const emojiSpanCss = `font-size:${emojiSize}px;line-height:1;display:inline-block;vertical-align:middle;flex-shrink:0;`;
+
+  const appendGlyphSpan = (glyph) => {
+    const sp = document.createElement('span');
+    sp.textContent = glyph;
+    sp.style.cssText = emojiSpanCss;
+    container.appendChild(sp);
+  };
+
+  let last = 0;
+  while (last <= text.length) {
+    shortcodeRe.lastIndex = last;
+    emojiRe.lastIndex     = last;
+    const sm = shortcodeRe.exec(text);
+    const em = emojiRe.exec(text);
+
+    // Earliest match wins; a tie prefers the shortcode branch (it carries a
+    // curated glyph lookup, so it's the more specific/authoritative match).
+    let m, isShortcode;
+    if (sm && (!em || sm.index <= em.index)) { m = sm; isShortcode = true; }
+    else if (em)                              { m = em; isShortcode = false; }
+    else break;
+
     if (m.index > last)
       container.appendChild(document.createTextNode(text.slice(last, m.index)));
-    const glyph = EMOJI_MAP[m[1]];
-    if (glyph) {
-      const sp = document.createElement('span');
-      sp.textContent = glyph;
-      sp.style.cssText = `font-size:${emojiSize}px;line-height:1;display:inline-block;vertical-align:middle;flex-shrink:0;`;
-      container.appendChild(sp);
+
+    if (isShortcode) {
+      const glyph = EMOJI_MAP[m[1]];
+      if (glyph) appendGlyphSpan(glyph);
+      else container.appendChild(document.createTextNode(m[0]));
     } else {
-      container.appendChild(document.createTextNode(m[0]));
+      appendGlyphSpan(m[0]);
     }
+
     last = m.index + m[0].length;
   }
   if (last < text.length)
