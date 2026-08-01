@@ -22,6 +22,7 @@ dependencies = [
  "blake2",
  "cpufeatures 0.2.17",
  "password-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -61,6 +62,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -84,6 +86,7 @@ dependencies = [
  "cfg-if",
  "cipher",
  "cpufeatures 0.3.0",
+ "zeroize",
 ]
 
 [[package]]
@@ -96,6 +99,7 @@ dependencies = [
  "chacha20",
  "cipher",
  "poly1305",
+ "zeroize",
 ]
 
 [[package]]
@@ -196,7 +200,9 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
+ "block-buffer 0.12.1",
  "crypto-common 0.2.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -231,6 +237,7 @@ checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
 dependencies = [
  "ctutils",
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -274,7 +281,6 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "add6b9d92e496f16f4526d68ff29da1483aba4b119baeab8bed3b9e3544a6f3d"
 dependencies = [
- "const-oid",
  "crypto-common 0.2.2",
  "ctutils",
  "hybrid-array",
@@ -282,6 +288,7 @@ dependencies = [
  "pkcs8",
  "shake",
  "signature",
+ "zeroize",
 ]
 
 [[package]]
@@ -293,6 +300,7 @@ dependencies = [
  "ctutils",
  "hybrid-array",
  "num-traits",
+ "zeroize",
 ]
 
 [[package]]
@@ -379,7 +387,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rustcrypto-wasm"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -432,6 +440,9 @@ name = "sponge-cursor"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
+dependencies = [
+ "zeroize",
+]
 
 [[package]]
 name = "subtle"
