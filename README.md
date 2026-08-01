@@ -46,6 +46,8 @@ Each contact's public key is displayed as a SHAKE256 (64-byte output) fingerprin
 
 > ❌ **No forward secrecy.** If your private key is ever compromised, past messages encrypted to it could be read. Keep your passphrase strong and your private key safe.
 
+> 🔏 **No age compatibility.** Agecord uses a custom message format to provide additional security properties within a instant messaging software, making its encrypted files incompatible with standard age tooling.
+
 ---
 
 ### ℹ️ Usage
