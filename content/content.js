@@ -108,20 +108,51 @@ function _revokeAllCachedMedia() {
   }
 }
  
-let _mldsaPrivBytes = null; // ML-DSA-87 32-byte seed, held only while unlocked
-let _selfRecipient  = null; // own age public key, received at UNLOCK time
-// X25519 identity line (age secret key), fetched from background once per UNLOCK
-// and forwarded to both file-crypto-workers so they can cache a Decrypter instead
-// of re-parsing this on every VERIFY_DECRYPT[_DECOMPRESS] call. Null while locked.
-let _cachedIdentityLine = null;
-let _contacts     = {};
-let _contactsLoaded = false; // true once UNLOCK/CONTACTS_UPDATED has actually populated _contacts —
+// ─── Unlock session state ──────────────────────────────────────────────────
+// Single source of truth for unlock state.
+// Session is either fully initialized or null.
+// Publish atomically via _setSession()/_clearSession().
+// Gate decrypts with canDecrypt().
+let _session = null;
+
+// Bumped on state changes to invalidate stale async work.
+// Kept outside _session so it advances independently.
+let _generation = 0;
+
+// Publishes a new session in one atomic assignment. Never mutates an existing
+// session's fields in place — callers pass every field, spreading the prior
+// session first if this is a partial update (e.g. CONTACTS_UPDATED).
+function _setSession(fields) {
+  _session?.mldsaPrivBytes?.fill(0); // wipe any superseded key material
+  _session = { ...fields };
+  _generation++;
+  return _session;
+}
+
+// Reverts to locked. Clearing wipes every field at once, so there's no way
+// for a future field to be forgotten here the way _mldsaPrivBytes/
+// _selfRecipient/_cachedIdentityLine used to be reset one-by-one.
+function _clearSession() {
+  _session?.mldsaPrivBytes?.fill(0);
+  _session = null;
+  _generation++;
+}
+
+// The one place that defines "ready to attempt a decrypt." Requires both key
+// material AND the fetched identity line.
+function canDecrypt() {
+  return !!(_session?.mldsaPrivBytes && _session?.cachedIdentityLine && _globalOn);
+}
+
+// Convenience accessors — every read of contacts/selfRecipient goes through
+// these so callers never need a `_session?.x ?? default` inline.
+function currentContacts()      { return _session?.contacts ?? {}; }
+function contactsLoaded()       { return !!_session?.contactsLoaded; }
+function currentSelfRecipient() { return _session?.selfRecipient ?? null; }
+
 let _globalOn     = true;
 let _msgObserver  = null;
 let _msgObserver2 = null; // second observer for the thread-panel ol in split view
-// Incremented on every RELOCK/UNLOCK so stale async IIFEs silently no-op instead
-// of overwriting DOM from a newer cycle.
-let _generation   = 0;
  
 const sleep    = ms => new Promise(r => setTimeout(r, ms));
 const localGet = keys => chrome.storage.local.get(keys);
@@ -280,16 +311,17 @@ function getSendChannelId() {
 function getActiveEntry() {
   const channelId = getCurrentChannelId();
   const serverId  = getCurrentServerId();
+  const contacts  = currentContacts();
  
   if (serverId) {
-    for (const entry of Object.values(_contacts)) {
+    for (const entry of Object.values(contacts)) {
       if (entry.type === 'server' && entry.serverId === serverId && entry.enabled)
         return { entry, channelId };
     }
   }
  
   if (channelId) {
-    for (const entry of Object.values(_contacts)) {
+    for (const entry of Object.values(contacts)) {
       if ((entry.type === 'contact' || !entry.type) && entry.channelId === channelId && entry.enabled)
         return { entry, channelId };
       if (entry.type === 'group' && entry.channelId === channelId && entry.enabled)
@@ -300,7 +332,7 @@ function getActiveEntry() {
 }
  
 function isEncryptionActive() {
-  return !!(_mldsaPrivBytes && getActiveEntry() && _globalOn);
+  return canDecrypt() && !!getActiveEntry();
 }
  
 // ─── Enter key interception ───────────────────────────────────────────────────
@@ -375,32 +407,39 @@ function extractMldsaPubBytes(recipientString) {
   return fromB64(m[1]);
 }
 
-// Sign ageBytes and assemble the on-wire file:
-// [ SIG_VERSION ][ SIG_BYTES sig ][ PUBKEY_HINT_LEN hint ][ age ciphertext ]
-//
-// Shared by the text-send path and the AGE_ENCRYPT_FILE handler.
-// channelId must be captured before any await (see getSendChannelId).
-// Throws if _selfRecipient is not set.
+// Shared by message.txt.age and media paths in processEncryptedAttachment,
+// and by buildSignedAgeFile below. Colon delimiter is safe — Discord
+// snowflakes are digits only.
+function buildSigPrefix(entry, channelId) {
+  return (entry.type === 'server')
+    ? new TextEncoder().encode(`${entry.serverId}:${channelId}:`)
+    : new TextEncoder().encode(`${channelId}:`);
+}
+
+// Sign and assemble the output payload.
+// Format: [version][signature][pubkey hint][age ciphertext].
+// Shared by text and file encryption paths.
+// Capture channelId before awaits.
+// Requires selfRecipient.
 function buildSignedAgeFile(ageBytes, entry, channelId) {
-  if (!_selfRecipient) throw new Error('_selfRecipient not set — extension not fully unlocked');
+  const selfRecipient = currentSelfRecipient();
+  if (!selfRecipient) throw new Error('selfRecipient not set — extension not fully unlocked');
 
   // Hint lets the verifier find the matching key via linear scan instead of
   // calling ml_dsa87_verify against every member's key.
-  const senderPubKeyB64 = toB64(extractMldsaPubBytes(_selfRecipient));
+  const senderPubKeyB64 = toB64(extractMldsaPubBytes(selfRecipient));
   const hintBytes = new TextEncoder().encode(senderPubKeyB64 + ':');
-
-  // Colon delimiter is safe — Discord snowflakes are digits only.
-  const prefix = (entry.type === 'server')
-    ? new TextEncoder().encode(`${entry.serverId}:${channelId}:`)
-    : new TextEncoder().encode(`${channelId}:`);
+  const prefix    = buildSigPrefix(entry, channelId);
 
   const sigInput = new Uint8Array(prefix.length + hintBytes.length + ageBytes.length);
   sigInput.set(prefix,    0);
   sigInput.set(hintBytes, prefix.length);
   sigInput.set(ageBytes,  prefix.length + hintBytes.length);
 
-  // ml_dsa87_sign(seed, message) — deterministic from seed.
-  const sigBytes = ml_dsa87_sign(_mldsaPrivBytes, sigInput);
+  // ml_dsa87_sign(seed, message) — deterministic from seed. Only reachable
+  // once isEncryptionActive()/canDecrypt() gated the caller, so _session and
+  // its key material are guaranteed present here.
+  const sigBytes = ml_dsa87_sign(_session.mldsaPrivBytes, sigInput);
   if (sigBytes.length !== SIG_BYTES)
     throw new Error(`Unexpected ML-DSA-87 sig length: ${sigBytes.length}`);
 
@@ -413,26 +452,39 @@ function buildSignedAgeFile(ageBytes, entry, channelId) {
   return fileBytes;
 }
 
-// Shared by message.txt.age and media paths in processEncryptedAttachment.
-// Both derive the prefix from the CDN channel ID (see cdnChannelId).
-function buildSigPrefix(entry, channelId) {
-  return (entry.type === 'server')
-    ? new TextEncoder().encode(`${entry.serverId}:${channelId}:`)
-    : new TextEncoder().encode(`${channelId}:`);
+// Returns recipient strings for outbound encryption.
+// Includes all targets plus selfRecipient.
+// Shared by text and file encryption paths.
+function buildRecipientList(entry) {
+  const contacts   = currentContacts();
+  const recipients = [];
+  if (entry.type === 'contact' || !entry.type) {
+    if (entry.ageRecipient) recipients.push(entry.ageRecipient.split(';')[0]);
+  } else {
+    for (const memberUUID of (entry.memberIds ?? [])) {
+      const member = contacts[memberUUID];
+      if (member?.ageRecipient) recipients.push(member.ageRecipient.split(';')[0]);
+    }
+  }
+  const selfRecipient = currentSelfRecipient();
+  if (selfRecipient) recipients.push(selfRecipient.split(';')[0]);
+  return recipients;
 }
 
 // Returns candidate ML-DSA-87 public keys (standard-base64) that could have
-// signed an incoming .age file — the contact's key plus _selfRecipient for
+// signed an incoming .age file — the contact's key plus our own recipient for
 // contacts, or all member keys for groups/servers.
 function buildCandidateKeysB64(entry) {
+  const contacts = currentContacts();
   let keys;
   if (entry.type === 'contact' || !entry.type) {
     keys = [entry.ageRecipient];
   } else {
     const memberIds = entry.memberIds ?? [];
-    keys = memberIds.map(uuid => _contacts[uuid]?.ageRecipient ?? null);
+    keys = memberIds.map(uuid => contacts[uuid]?.ageRecipient ?? null);
   }
-  if (_selfRecipient) keys.push(_selfRecipient);
+  const selfRecipient = currentSelfRecipient();
+  if (selfRecipient) keys.push(selfRecipient);
   return keys
     .filter(Boolean)
     .map(r => { const m = r.match(/;mldsa87:([A-Za-z0-9+/]+=*)$/); return m ? m[1] : null; })
@@ -658,16 +710,7 @@ async function handleEncryptClick() {
 
   const { entry } = active;
   try {
-    const recipients = [];
-    if (entry.type === 'contact' || !entry.type) {
-      recipients.push(entry.ageRecipient.split(';')[0]);
-    } else {
-      for (const memberUUID of (entry.memberIds ?? [])) {
-        const member = _contacts[memberUUID];
-        if (member?.ageRecipient) recipients.push(member.ageRecipient.split(';')[0]);
-      }
-    }
-    if (_selfRecipient) recipients.push(_selfRecipient.split(';')[0]);
+    const recipients = buildRecipientList(entry);
 
     const ageBuffer = await workerCompressEncrypt(plain, recipients);
     const ageBytes  = new Uint8Array(ageBuffer);
@@ -726,8 +769,8 @@ function _attachToLists(lists, onReady) {
     _msgObserver2?.disconnect();
     _msgObserver2 = null;
   }
-  if (!_mldsaPrivBytes || !_globalOn) {
-    scanExistingLocked(!_mldsaPrivBytes ? 'locked' : 'disabled');
+  if (!canDecrypt()) {
+    scanExistingLocked(!_session?.mldsaPrivBytes ? 'locked' : 'disabled');
   }
   scanExisting();
   onReady?.();
@@ -801,10 +844,10 @@ function attachMsgObserver(list, slot) {
         }
 
         for (const li of lis) {
-          if (_mldsaPrivBytes && _globalOn) {
+          if (canDecrypt()) {
             processLiFull(li);
           } else {
-            showAgePlaceholder(li, !_mldsaPrivBytes ? 'locked' : 'disabled');
+            showAgePlaceholder(li, !_session?.mldsaPrivBytes ? 'locked' : 'disabled');
           }
         }
       }
@@ -887,7 +930,7 @@ function scanExistingLocked(reason) {
 (function _installComposerObserver() {
   const _composerRoot = document.querySelector('main') ?? document.body;
   new MutationObserver((mutations) => {
-    if (_contextInvalidated || !_mldsaPrivBytes) return;
+    if (_contextInvalidated || !_session) return;
     const editorAdded = mutations.some(({ addedNodes }) =>
       [...addedNodes].some(n =>
         n.nodeType === Node.ELEMENT_NODE &&
@@ -1787,7 +1830,7 @@ function getTextWorker() {
     // Replay: this worker may be spawned lazily well after UNLOCK already
     // happened. Per the worker's implicit message queue, posting immediately
     // after construction is safe even before onmessage is wired up on its side.
-    if (_cachedIdentityLine) _sendUnlockToWorker(_textWorker, _cachedIdentityLine);
+    if (_session?.cachedIdentityLine) _sendUnlockToWorker(_textWorker, _session.cachedIdentityLine);
   }
   return _textWorker;
 }
@@ -1806,7 +1849,7 @@ function getMediaWorker() {
     // Same replay as getTextWorker() — matters even more here, since this
     // worker is routinely terminated on channel nav and respawned lazily
     // while still unlocked (terminateFileCryptoWorker() does not RELOCK it).
-    if (_cachedIdentityLine) _sendUnlockToWorker(_mediaWorker, _cachedIdentityLine);
+    if (_session?.cachedIdentityLine) _sendUnlockToWorker(_mediaWorker, _session.cachedIdentityLine);
   }
   return _mediaWorker;
 }
@@ -1955,7 +1998,8 @@ function listenForInterceptorMessages() {
         throw new Error('Channel ID unavailable — file not encrypted (thread creation or forum modal).');
       }
 
-      // Without this, files in unconfigured channels encrypt only to _selfRecipient — unreadable by recipient.
+      // Without this, files in unconfigured channels encrypt only to our own
+      // recipient — unreadable by the recipient.
       const active = getActiveEntry();
       if (!active?.entry) {
         throw new Error(
@@ -1963,17 +2007,8 @@ function listenForInterceptorMessages() {
         );
       }
  
-      const recipients = [];
-      const { entry } = active;
-      if (entry.type === 'contact' || !entry.type) {
-        if (entry.ageRecipient) recipients.push(entry.ageRecipient.split(';')[0]);
-      } else {
-        for (const memberUUID of (entry.memberIds ?? [])) {
-          const member = _contacts[memberUUID];
-          if (member?.ageRecipient) recipients.push(member.ageRecipient.split(';')[0]);
-        }
-      }
-      if (_selfRecipient) recipients.push(_selfRecipient.split(';')[0]);
+      const { entry }     = active;
+      const recipients    = buildRecipientList(entry);
  
       // Secondary guard: entry found but no usable public keys (e.g. group with
       // all members removed, or contact with a malformed ageRecipient).
@@ -2049,24 +2084,35 @@ function listenForMessages() {
     if (msg.type === 'UNLOCK') {
       try {
         const localData = await localGet(['globalOn']);
-        _contacts        = msg.contacts || {};
-        _contactsLoaded  = true;
-        _selfRecipient   = msg.ageRecipient || null;
-        _globalOn        = localData.globalOn !== false;
-        _mldsaPrivBytes?.fill(0);
-        _mldsaPrivBytes  = fromB64(msg.mldsaSeedB64); // 32-byte ML-DSA-87 seed
-        _generation++;
+
+        // Clear the old session before fetching identity.
+        // Keeps stale key material out of memory.
+        // Decrypt/send stay disabled until the new session is published.
+        _clearSession();
+
+        const mldsaPrivBytes = fromB64(msg.mldsaSeedB64); // 32-byte ML-DSA-87 seed
+
+        // Fetch identity before publishing the session.
+        // Prevents partial state during the async gap.
+        const identResult        = await bgGetIdentityLine();
+        const cachedIdentityLine = identResult?.ok ? identResult.identityLine : null;
+
+        _globalOn = localData.globalOn !== false;
+        _setSession({
+          mldsaPrivBytes,
+          cachedIdentityLine,
+          selfRecipient:  msg.ageRecipient || null,
+          contacts:       msg.contacts || {},
+          contactsLoaded: true,
+        });
+
         _inFlight.clear();
         _attachmentInProgress.clear();
- 
         // Evict stale entries so they retry; still-present cached entries skip CDN re-fetch.
         _evictStaleProcessedIds();
 
-        // Fetch identity once and unlock workers before scanExisting().
         // Ensures VERIFY_DECRYPT[_DECOMPRESS] sees cached state.
-        const identResult = await bgGetIdentityLine();
-        _cachedIdentityLine = identResult?.ok ? identResult.identityLine : null;
-        if (_cachedIdentityLine) _unlockWorkers(_cachedIdentityLine);
+        if (cachedIdentityLine) _unlockWorkers(cachedIdentityLine);
 
         if (_globalOn) {
           attachEnterHook();
@@ -2086,20 +2132,24 @@ function listenForMessages() {
     if (msg.type === 'CONTACTS_UPDATED') {
       const prevOn      = _globalOn;
       // Capture before the await — UNLOCK arriving mid-await runs in a separate
-      // macrotask and would otherwise have its _contacts overwritten by our stale snapshot.
+      // macrotask and would otherwise have its contacts overwritten by our stale snapshot.
       const newContacts = msg.contacts;
       const genBefore   = _generation;
       const localData = await localGet(['globalOn']);
-      // If _generation changed while awaiting, an UNLOCK already updated all state.
+      // If _generation changed while awaiting, an UNLOCK/RELOCK already updated all state.
       if (_generation !== genBefore) return;
-      _contacts = newContacts || _contacts;
-      _contactsLoaded = true;
       _globalOn = localData.globalOn !== false;
+      // Update session contacts without bumping _generation.
+      // No-op while locked.
+      if (_session) {
+        _session.contacts       = newContacts || _session.contacts;
+        _session.contactsLoaded = true;
+      }
       // Always re-relay when contacts change while unlocked: UNLOCK carries an empty
       // contacts object (loadContacts() hasn't finished yet), so CONTACTS_UPDATED is
       // what actually sets activeEntry=true in upload-interceptor.js.
-      if (_mldsaPrivBytes && _globalOn) relayInterceptorState(true);
-      else if (_globalOn !== prevOn) relayInterceptorState(!!_mldsaPrivBytes);
+      if (canDecrypt()) relayInterceptorState(true);
+      else if (_globalOn !== prevOn) relayInterceptorState(!!_session?.mldsaPrivBytes);
       if (!_globalOn && prevOn) {
         _generation++;
         _revokeAllCachedMedia();
@@ -2111,7 +2161,7 @@ function listenForMessages() {
       } else if (_globalOn) {
         // _evictStaleProcessedIds handles quoted-message entries (liId="") via DOM check.
         _evictStaleProcessedIds();
-        if (_mldsaPrivBytes) {
+        if (_session) {
           // Mirrors the UNLOCK handler: a composer that mounted before encryption
           // was enabled never received its keydown listener (attachEnterHook is
           // idempotent, so this is a no-op for composers that already have one).
@@ -2123,11 +2173,7 @@ function listenForMessages() {
     }
  
     if (msg.type === 'RELOCK') {
-      _generation++;
-      _mldsaPrivBytes?.fill(0);
-      _mldsaPrivBytes = null;
-      _selfRecipient  = null;
-      _cachedIdentityLine = null;
+      _clearSession();
       _relockWorkers();
       _revokeAllCachedMedia();
       _processedIds.clear();
@@ -2196,8 +2242,8 @@ function startNavObserver() {
     _msgObserver2?.disconnect();
     _msgObserver2 = null;
     waitForMessageList();
-    if (_mldsaPrivBytes) attachEnterHook();
-    relayInterceptorState(!!_mldsaPrivBytes);
+    if (_session) attachEnterHook();
+    relayInterceptorState(!!_session?.mldsaPrivBytes);
   }
 
   const _origPush    = history.pushState.bind(history);
@@ -2612,17 +2658,23 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
   });
 }
 
+// Shared decrypt readiness check.
+// Call after awaits.
+// Returns: ready, locked, no-entry, or retry.
+function checkDecryptPreconditions() {
+  if (!_session?.cachedIdentityLine) return { ready: false, reason: 'locked' };
+  const active = getActiveEntry();
+  if (!active) return { ready: false, reason: contactsLoaded() ? 'no-entry' : 'retry' };
+  return { ready: true, active };
+}
+
 async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalName) {
   // isContextValid() calls _signalContextInvalidated() which swaps all placeholders to 'locked'.
   if (!isContextValid()) return;
 
-  // Early exit before async work/forwarding detection so "No entry configured"
-  // takes precedence and avoids showing the decrypting placeholder.
-  // getActiveEntry() is safe: _contacts is module state updated on
-  // UNLOCK/CONTACTS_UPDATED. Callers guarantee _mldsaPrivBytes && _globalOn.
-  // Gate on _contactsLoaded rather than _contacts.size() so an empty contact
-  // list is treated as loaded.
-  if (_contactsLoaded && !getActiveEntry()) {
+  // Exit early if no active entry.
+  // Callers guarantee canDecrypt(); gate on contactsLoaded().
+  if (contactsLoaded() && !getActiveEntry()) {
     _attachmentInProgress.delete(liElement.id + '\0' + cdnUrl);
     const _noEntryMosaicItem = hideFileCard(fileCard);
     renderDecryptedMessage(liElement, '🔑 No entry configured for this channel.', undefined, _noEntryMosaicItem ?? fileCard);
@@ -2700,19 +2752,16 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       const fileBuffer = await iframePlainFetch(cdnUrl);
       if (_generation !== capturedGeneration) return;
 
-      if (!_cachedIdentityLine) {
-        // Extension locked mid-flight — retriable once unlocked.
-        _attachmentInProgress.delete(attachId);
-        mosaicItem = hideFileCard(fileCard);
-        renderDecryptedMessage(liElement, '🔐 Extension locked.');
-        return;
-      }
+      // Capture AFTER the awaits — session/contacts are now stable.
+      const precheck = checkDecryptPreconditions();
 
-      // Capture active entry AFTER the awaits — _contacts is now stable.
-      const capturedActive = getActiveEntry();
-
-      if (!capturedActive) {
-        if (_contactsLoaded) {
+      if (!precheck.ready) {
+        if (precheck.reason === 'locked') {
+          // Extension locked mid-flight — retriable once unlocked.
+          _attachmentInProgress.delete(attachId);
+          mosaicItem = hideFileCard(fileCard);
+          renderDecryptedMessage(liElement, '🔐 Extension locked.');
+        } else if (precheck.reason === 'no-entry') {
         // Contacts loaded but no entry for this channel (including zero configured
         // contacts). Release to avoid stale per-channel map entries; CONTACTS_UPDATED
         // and UNLOCK also clear _attachmentInProgress.
@@ -2726,6 +2775,8 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
         }
         return;
       }
+      const capturedActive = precheck.active;
+      const capturedActive = precheck.active;
 
       // Contacts loaded and we have an active entry — show the decrypting
       // placeholder now that we're committed to real work.
@@ -2803,8 +2854,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       const _errMosaicItem = hideFileCard(fileCard);
       if ((e?.message ?? e) === 'NOT_UNLOCKED') {
         // A RELOCK raced ahead of the worker processing this op, despite the
-        // local _cachedIdentityLine check above passing — genuinely "locked",
-        // not a decrypt failure.
+        // checkDecryptPreconditions() call above passing — genuinely "locked".
         renderDecryptedMessage(liElement, '🔐 Extension locked.', attachId, _errMosaicItem ?? fileCard);
         return;
       }
@@ -2886,26 +2936,23 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     const fileBuffer = await iframePlainFetch(cdnUrl);
     if (_generation !== capturedGeneration) return;
 
-    if (!_cachedIdentityLine) {
-      // Extension locked mid-flight — retriable once unlocked.
+    // ── Identity + entry check — required for sig prefix and candidate key list ──
+    // Capture AFTER the awaits — session/contacts are now stable.
+    const precheck = checkDecryptPreconditions();
+    if (!precheck.ready) {
       _attachmentInProgress.delete(attachId);
-      const _lockedMosaicItem = hideFileCard(fileCard);
-      renderDecryptedMessage(liElement, '🔐 Extension locked.', undefined, _lockedMosaicItem ?? fileCard);
-      return;
-    }
-
-    // ── Entry check — required for sig prefix and candidate key list ──────────
-    // Capture AFTER the awaits — _contacts is now stable.
-    const capturedActive = getActiveEntry();
-    if (!capturedActive) {
-      _attachmentInProgress.delete(attachId);
-      if (_contactsLoaded) {
+      if (precheck.reason === 'locked') {
+        const _lockedMosaicItem = hideFileCard(fileCard);
+        renderDecryptedMessage(liElement, '🔐 Extension locked.', undefined, _lockedMosaicItem ?? fileCard);
+      } else if (precheck.reason === 'no-entry') {
         // contacts loaded, entry missing (including zero contacts configured) → not a retriable error
         const _noEMosaicItem = hideFileCard(fileCard);
         renderDecryptedMessage(liElement, '🔑 No entry configured for this channel.', undefined, _noEMosaicItem ?? fileCard);
       }
+      // reason === 'retry': contacts haven't arrived yet — release silently, matches text path.
       return;
     }
+    const capturedActive = precheck.active;
 
     if (fileBuffer.byteLength < SIG_VERSION_LEN + SIG_BYTES + 1) throw new Error('media .age file too short');
 
@@ -3003,7 +3050,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
     if ((e?.message ?? e) === 'NOT_UNLOCKED') {
       // A RELOCK raced ahead of the worker processing this op, despite the
-      // local _cachedIdentityLine check above passing — genuinely "locked".
+      // checkDecryptPreconditions() call above passing — genuinely "locked".
       renderDecryptedMessage(liElement, '🔐 Extension locked.', undefined, _earlyMosaicItem ?? fileCard);
       return;
     }
@@ -3237,7 +3284,7 @@ function processAttachmentsInLi(li) {
 // path in attachMsgObserver(). Mirrors the per-container loop in
 // processQuotedMessages() for only the containers in the current mutation batch.
 function _processQuotedContainer(container) {
-  if (_mldsaPrivBytes && _globalOn) {
+  if (canDecrypt()) {
     const nameLinks = container.querySelectorAll(FILE_LINK_SEL);
     for (const nameEl of nameLinks) {
       const rawName = nameEl.textContent?.trim() ?? '';
@@ -3254,7 +3301,7 @@ function _processQuotedContainer(container) {
       processEncryptedAttachment(container, fileCard, cdnUrl, rawName);
     }
   } else {
-    showQuotedPlaceholder(container, !_mldsaPrivBytes ? 'locked' : 'disabled');
+    showQuotedPlaceholder(container, !_session?.mldsaPrivBytes ? 'locked' : 'disabled');
   }
 }
 
@@ -3271,7 +3318,7 @@ function _processQuotedContainer(container) {
 // The container has no stable li.id, so we use a synthetic key:
 // "\0<cdnUrl>" — globally unique per attachment URL.
 function processQuotedMessages() {
-  if (!_mldsaPrivBytes || !_globalOn) return;
+  if (!canDecrypt()) return;
   const containers = document.querySelectorAll('[class*="quotedChatMessage__"]');
   for (const container of containers) {
     const nameLinks = container.querySelectorAll(FILE_LINK_SEL);
@@ -3301,7 +3348,7 @@ function processQuotedMessages() {
  
 // Called from attachMsgObserver and scanExisting.
 function processLiFull(li) {
-  if (_mldsaPrivBytes && _globalOn) processAttachmentsInLi(li);
+  if (canDecrypt()) processAttachmentsInLi(li);
 }
  
 // ─── Init ────────────────────────────────────────────────────────────────────
