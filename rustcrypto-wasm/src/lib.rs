@@ -20,10 +20,12 @@ pub fn xchacha20poly1305_encrypt(key: Vec<u8>, plaintext: &[u8]) -> Result<Vec<u
     let key = Zeroizing::new(key);
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|_| JsError::new("xchacha20poly1305_encrypt: key must be exactly 32 bytes"))?;
+    drop(key); // raw key bytes are fully expanded into `cipher` now — scrub them immediately
     let nonce = XNonce::generate();
     let ciphertext = cipher
         .encrypt(&nonce, plaintext)
         .map_err(|_| JsError::new("xchacha20poly1305_encrypt: encryption failed"))?;
+    drop(cipher); // zero the expanded key/keystream state before touching non-secret output bytes
     let mut out = Vec::with_capacity(24 + ciphertext.len());
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ciphertext);
@@ -42,11 +44,14 @@ pub fn xchacha20poly1305_decrypt(key: Vec<u8>, data: &[u8]) -> Result<Vec<u8>, J
     }
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|_| JsError::new("xchacha20poly1305_decrypt: key must be exactly 32 bytes"))?;
+    drop(key); // same as above — expanded into `cipher`, no longer needed
     let nonce = XNonce::try_from(&data[..24])
         .map_err(|_| JsError::new("xchacha20poly1305_decrypt: invalid nonce length"))?;
-    cipher
+    let result = cipher
         .decrypt(&nonce, &data[24..])
-        .map_err(|_| JsError::new("xchacha20poly1305_decrypt: decryption failed (wrong key or corrupted data)"))
+        .map_err(|_| JsError::new("xchacha20poly1305_decrypt: decryption failed (wrong key or corrupted data)"));
+    drop(cipher); // scrub before returning plaintext to caller
+    result
 }
 
 // ─── SHAKE256 ─────────────────────────────────────────────────────────────────
@@ -61,7 +66,7 @@ use shake::{
 pub fn shake256(input: &[u8], output_len: usize) -> Vec<u8> {
     let mut hasher = Shake256::default();
     hasher.update(input);
-    let mut reader = hasher.finalize_xof();
+    let mut reader = hasher.finalize_xof(); // consumes `hasher`, no lingering copy
     let mut out = vec![0u8; output_len];
     reader.read(&mut out);
     out
@@ -91,9 +96,12 @@ pub fn argon2id(
         .map_err(|e| JsError::new(&format!("argon2id: invalid params: {e}")))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = vec![0u8; output_len];
-    argon2
+    let result = argon2
         .hash_password_into(&password, &salt, &mut out)
-        .map_err(|e| JsError::new(&format!("argon2id: hashing failed: {e}")))?;
+        .map_err(|e| JsError::new(&format!("argon2id: hashing failed: {e}")));
+    drop(password);
+    drop(salt); // both consumed by the call above; nothing left to justify holding them
+    result?;
     Ok(out)
 }
 
@@ -115,6 +123,7 @@ pub fn ml_dsa87_keygen() -> Vec<u8> {
     let sk = SigningKey::<MlDsa87>::generate();
     let seed = sk.to_bytes();
     let vk = sk.verifying_key().to_bytes();
+    drop(sk); // zero the expanded lattice private-key state now that both outputs are copied out
     let mut out = Vec::with_capacity(32 + vk.len());
     out.extend_from_slice(&seed);
     out.extend_from_slice(&vk);
@@ -131,7 +140,9 @@ pub fn ml_dsa87_sign(seed: Vec<u8>, message: &[u8]) -> Result<Vec<u8>, JsError> 
         .try_into()
         .map_err(|_| JsError::new("ml_dsa87_sign: seed must be exactly 32 bytes"))?;
     let sk = SigningKey::<MlDsa87>::from_seed(seed_arr.into());
+    drop(seed); // seed_arr's borrow ends here (unused after); scrub the raw seed early
     let sig = sk.sign(message);
+    drop(sk); // scrub expanded key state before allocating/returning the signature bytes
     Ok(sig.to_bytes().to_vec())
 }
 
@@ -166,5 +177,8 @@ pub fn ml_dsa87_verifying_key_from_seed(seed: Vec<u8>) -> Result<Vec<u8>, JsErro
         .try_into()
         .map_err(|_| JsError::new("ml_dsa87_verifying_key_from_seed: seed must be exactly 32 bytes"))?;
     let sk = SigningKey::<MlDsa87>::from_seed(seed_arr.into());
-    Ok(sk.verifying_key().to_bytes().to_vec())
+    drop(seed); // same reasoning as ml_dsa87_sign
+    let vk = sk.verifying_key().to_bytes();
+    drop(sk);
+    Ok(vk.to_vec())
 }
