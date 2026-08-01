@@ -29,7 +29,7 @@ import { init as _rustcryptoInit, ml_dsa87_sign }
   from '../lib/rustcrypto-wasm.min.js';
 
 await _rustcryptoInit();
-import { EMOJI_MAP }      from './emoji_map.js';
+import   EMOJI_MAP        from './emoji_map.js';
 import { HLJS_LANGUAGES } from './highlight_map.js';
  
 // ML-DSA-87 signature size (bytes). Fixed by the standard.
