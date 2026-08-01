@@ -29,7 +29,7 @@ import { init as _rustcryptoInit, ml_dsa87_sign }
   from '../lib/rustcrypto-wasm.min.js';
 
 await _rustcryptoInit();
-import   EMOJI_MAP        from './emoji_map.js';
+import { EMOJI_MAP }      from './emoji_map.js';
 import { HLJS_LANGUAGES } from './highlight_map.js';
  
 // ML-DSA-87 signature size (bytes). Fixed by the standard.
@@ -109,14 +109,30 @@ function _revokeAllCachedMedia() {
 }
  
 // ─── Unlock session state ──────────────────────────────────────────────────
-// Single source of truth for unlock state.
-// Session is either fully initialized or null.
-// Publish atomically via _setSession()/_clearSession().
-// Gate decrypts with canDecrypt().
+// Single source of truth for "are we unlocked, and with what." A session is
+// either fully present or absent — never partially built. This matters
+// because unlocking requires an async round-trip (GET_IDENTITY_LINE to the
+// background worker) between "we have key material" and "we have the age
+// identity line the workers need." Earlier code exposed the in-between state
+// through independently-set globals, which let DOM-mutation-triggered decrypt
+// attempts race ahead of the identity fetch and render a false "locked"
+// placeholder. Fix: build the whole session in locals, publish it in one
+// assignment via _setSession()/_clearSession(), and gate every decrypt
+// attempt on canDecrypt() rather than hand-rolled flag combinations.
+//
+// Shape while unlocked: { mldsaPrivBytes, cachedIdentityLine, selfRecipient,
+//   contacts, contactsLoaded }. null while locked.
 let _session = null;
 
-// Bumped on state changes to invalidate stale async work.
-// Kept outside _session so it advances independently.
+// Incremented on UNLOCK/RELOCK, channel navigation, and context invalidation
+// so stale async IIFEs (fetches, worker round-trips, confirmation prompts)
+// can detect they belong to an outdated cycle and silently no-op instead of
+// overwriting DOM from a newer cycle. Deliberately NOT stored inside the
+// session object: it must keep advancing on events (nav, context loss) that
+// don't touch _session at all, so every existing capturedGeneration/
+// _generation comparison elsewhere in this file is unaffected by this
+// refactor — _setSession()/_clearSession() just bump the same counter
+// everything else already bumps.
 let _generation = 0;
 
 // Publishes a new session in one atomic assignment. Never mutates an existing
@@ -139,7 +155,8 @@ function _clearSession() {
 }
 
 // The one place that defines "ready to attempt a decrypt." Requires both key
-// material AND the fetched identity line.
+// material AND the fetched identity line — the two halves of UNLOCK that used
+// to be checkable independently.
 function canDecrypt() {
   return !!(_session?.mldsaPrivBytes && _session?.cachedIdentityLine && _globalOn);
 }
@@ -416,11 +433,12 @@ function buildSigPrefix(entry, channelId) {
     : new TextEncoder().encode(`${channelId}:`);
 }
 
-// Sign and assemble the output payload.
-// Format: [version][signature][pubkey hint][age ciphertext].
-// Shared by text and file encryption paths.
-// Capture channelId before awaits.
-// Requires selfRecipient.
+// Sign ageBytes and assemble the on-wire file:
+// [ SIG_VERSION ][ SIG_BYTES sig ][ PUBKEY_HINT_LEN hint ][ age ciphertext ]
+//
+// Shared by the text-send path and the AGE_ENCRYPT_FILE handler.
+// channelId must be captured before any await (see getSendChannelId).
+// Throws if the session's selfRecipient is not set.
 function buildSignedAgeFile(ageBytes, entry, channelId) {
   const selfRecipient = currentSelfRecipient();
   if (!selfRecipient) throw new Error('selfRecipient not set — extension not fully unlocked');
@@ -452,9 +470,12 @@ function buildSignedAgeFile(ageBytes, entry, channelId) {
   return fileBytes;
 }
 
-// Returns recipient strings for outbound encryption.
-// Includes all targets plus selfRecipient.
-// Shared by text and file encryption paths.
+// Returns age recipient strings ("age1…;mldsa87:…") to encrypt outgoing
+// content to: the contact's own recipient for a 1:1 contact, or every
+// member's recipient for a group/server — plus our own recipient in all
+// cases, so senders can also decrypt their own sent messages. Shared by the
+// text-send path and the AGE_ENCRYPT_FILE (upload) handler, which previously
+// each hand-rolled an identical loop.
 function buildRecipientList(entry) {
   const contacts   = currentContacts();
   const recipients = [];
@@ -2085,15 +2106,30 @@ function listenForMessages() {
       try {
         const localData = await localGet(['globalOn']);
 
-        // Clear the old session before fetching identity.
-        // Keeps stale key material out of memory.
-        // Decrypt/send stay disabled until the new session is published.
+        // Wipe and drop any old session immediately, before the identity
+        // fetch below — minimizes how long superseded key material sits in
+        // memory. Trade-off: on a re-unlock (session already existed),
+        // canDecrypt() is false for the duration of bgGetIdentityLine(), so
+        // the UI genuinely shows "locked" (and sends are blocked) until the
+        // new session publishes, rather than the old key staying usable
+        // through the gap. In practice this round-trip goes to a background
+        // worker that's already awake and already holding _identity (it's
+        // mid-handler on this same UNLOCK), so ensureIdentity() short-circuits
+        // and the gap is a same-process message round-trip — normally low
+        // single-digit milliseconds.
         _clearSession();
 
         const mldsaPrivBytes = fromB64(msg.mldsaSeedB64); // 32-byte ML-DSA-87 seed
 
-        // Fetch identity before publishing the session.
-        // Prevents partial state during the async gap.
+        // Fetch the identity line BEFORE publishing anything. This await used
+        // to sit between setting _mldsaPrivBytes and setting _cachedIdentityLine,
+        // which let a concurrent DOM mutation (MutationObserver fires on
+        // essentially every Discord message) see "key material present" and
+        // start a decrypt attempt while the identity line was still null,
+        // rendering a false "🔐 Extension locked." placeholder that only a
+        // second UNLOCK (e.g. reopening the popup) would clear. Fetching
+        // first and publishing once means canDecrypt() is never observably
+        // true until everything it needs actually is.
         const identResult        = await bgGetIdentityLine();
         const cachedIdentityLine = identResult?.ok ? identResult.identityLine : null;
 
@@ -2139,8 +2175,11 @@ function listenForMessages() {
       // If _generation changed while awaiting, an UNLOCK/RELOCK already updated all state.
       if (_generation !== genBefore) return;
       _globalOn = localData.globalOn !== false;
-      // Update session contacts without bumping _generation.
-      // No-op while locked.
+      // Contacts live on the session, but this is a lighter-weight patch than
+      // _setSession(): it doesn't bump _generation (a contacts refresh isn't a
+      // key-material change — nothing needs to invalidate in-flight decrypts
+      // over it) and it's a no-op while locked, since _session is null and the
+      // next UNLOCK's payload always carries a fresh contacts snapshot anyway.
       if (_session) {
         _session.contacts       = newContacts || _session.contacts;
         _session.contactsLoaded = true;
@@ -2658,9 +2697,17 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
   });
 }
 
-// Shared decrypt readiness check.
-// Call after awaits.
-// Returns: ready, locked, no-entry, or retry.
+// Shared precondition check for both decrypt paths (message.txt.age text and
+// media attachments) in processEncryptedAttachment below. Both paths used to
+// carry an identical copy-pasted block here; centralizing it means a future
+// change to "what counts as ready to decrypt" only needs to happen once.
+// Must be called AFTER the CDN fetch await — contacts/identity are only
+// stable to read post-await, not at the top of the function.
+// Returns:
+//   { ready: true,  active }             — proceed; active = getActiveEntry() result
+//   { ready: false, reason: 'locked' }   — identity line not cached (locked mid-flight, retriable)
+//   { ready: false, reason: 'no-entry' } — contacts loaded, nothing configured for this channel
+//   { ready: false, reason: 'retry' }    — contacts not loaded yet; caller should silently retry later
 function checkDecryptPreconditions() {
   if (!_session?.cachedIdentityLine) return { ready: false, reason: 'locked' };
   const active = getActiveEntry();
@@ -2672,8 +2719,12 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
   // isContextValid() calls _signalContextInvalidated() which swaps all placeholders to 'locked'.
   if (!isContextValid()) return;
 
-  // Exit early if no active entry.
-  // Callers guarantee canDecrypt(); gate on contactsLoaded().
+  // Early exit before async work/forwarding detection so "No entry configured"
+  // takes precedence and avoids showing the decrypting placeholder.
+  // getActiveEntry() is safe: contacts live on the session, updated on
+  // UNLOCK/CONTACTS_UPDATED. Callers guarantee canDecrypt().
+  // Gate on contactsLoaded() rather than contacts size so an empty contact
+  // list is treated as loaded.
   if (contactsLoaded() && !getActiveEntry()) {
     _attachmentInProgress.delete(liElement.id + '\0' + cdnUrl);
     const _noEntryMosaicItem = hideFileCard(fileCard);
@@ -2776,7 +2827,6 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
         return;
       }
       const capturedActive = precheck.active;
-      const capturedActive = precheck.active;
 
       // Contacts loaded and we have an active entry — show the decrypting
       // placeholder now that we're committed to real work.
@@ -2854,7 +2904,8 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
       const _errMosaicItem = hideFileCard(fileCard);
       if ((e?.message ?? e) === 'NOT_UNLOCKED') {
         // A RELOCK raced ahead of the worker processing this op, despite the
-        // checkDecryptPreconditions() call above passing — genuinely "locked".
+        // checkDecryptPreconditions() call above passing — genuinely "locked",
+        // not a decrypt failure.
         renderDecryptedMessage(liElement, '🔐 Extension locked.', attachId, _errMosaicItem ?? fileCard);
         return;
       }
