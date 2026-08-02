@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://addons.mozilla.org/en-US/firefox/addon/agecord/"><img src="https://img.shields.io/amo/v/agecord?style=for-the-badge&color=ffb877&labelColor=6b3a00&logo=firefoxbrowser&logoColor=white" alt="Mozilla Add-on" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/agecord/blob/main/LICENSE"><img src="https://img.shields.io/github/license/SenseiDeElite/agecord?style=for-the-badge&color=ffffff&labelColor=333333&logo=gnu&logoColor=white" alt="License: GPLv3" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/agecord/releases/latest"><img src="https://img.shields.io/badge/Chromium-Download-aac7ff?style=for-the-badge&labelColor=0a305f&logo=googlechrome&logoColor=white" alt="Chromium: Download" /></a>
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/agecord/"><img src="https://img.shields.io/amo/v/agecord?style=for-the-badge&color=D8D0F1&labelColor=220B65&logo=firefoxbrowser&logoColor=white&label=%20" alt="Mozilla Add-on" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/agecord/blob/main/LICENSE"><img src="https://img.shields.io/github/license/SenseiDeElite/agecord?style=for-the-badge&color=D9D9D9&labelColor=1a1a1a&logo=gnu&logoColor=white&label=%20" alt="License: GPLv3" /></a>&nbsp;<a href="https://github.com/SenseiDeElite/agecord/releases/latest"><img src="https://img.shields.io/badge/%20-Chromium-D0DEF1?style=for-the-badge&labelColor=0E3262&logo=googlechrome&logoColor=white" alt="Chromium: Download" /></a>
 </p>
 
 ### ✨ Features
