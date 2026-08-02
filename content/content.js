@@ -77,8 +77,13 @@ function _mediaCategory(ext) {
   return null;
 }
 
+// Strips the trailing .age extension from a filename, if present.
+function stripAgeSuffix(name) {
+  return name.replace(/\.age$/i, '');
+}
+
 function classifyFile(originalName) {
-  const ext = originalName.replace(/\.age$/i, '').split('.').pop().toLowerCase();
+  const ext = stripAgeSuffix(originalName).split('.').pop().toLowerCase();
   return _mediaCategory(ext) ?? 'download';
 }
  
@@ -400,7 +405,8 @@ function detachEnterHook() {
  
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
  
-// Recipient format: "age1…;mldsa87:<standard-base64>"
+// Recipient format: "age1pq1...;mldsa87:<standard-base64>"
+// Standard: RFC 4648 §4
 function extractMldsaPubBytes(recipientString) {
   const m = recipientString.match(/;mldsa87:([A-Za-z0-9+/]+=*)$/);
   if (!m) return null;
@@ -487,7 +493,9 @@ function buildCandidateKeysB64(entry) {
   if (selfRecipient) keys.push(selfRecipient);
   return keys
     .filter(Boolean)
-    .map(r => { const m = r.match(/;mldsa87:([A-Za-z0-9+/]+=*)$/); return m ? m[1] : null; })
+    // Delegates to extractMldsaPubBytes. Re-encode to base64 since extractMldsaPubBytes
+    // returns raw bytes and callers here need the base64 string.
+    .map(r => { const bytes = extractMldsaPubBytes(r); return bytes ? toB64(bytes) : null; })
     .filter(Boolean);
 }
  
@@ -956,12 +964,23 @@ const _shortcodeOnlyRe = /^:[a-zA-Z0-9_+\-]+:$/;
 const EMOJI_SEQ_RE      = /\p{RGI_Emoji}/gv;   // unanchored: scan for runs
 const EMOJI_SEQ_FULL_RE = /^\p{RGI_Emoji}$/v;  // anchored: whole-string check
 
-// Single source pattern shared by the tokenizer, the
-// mdlink branch's group re-exec, and isJumboEmoji's whole-string check, so the
-// URL character class can't drift out of sync between them.
+// Shared link pattern used by the tokenizer and related checks.
+// Intentionally supports only a restricted CommonMark link subset.
+// CommonMark spec §6.6
 const _MDLINK_BODY   = '\\[([^\\]]+)\\]\\((https://[^\\s<>"\'()]+)\\)';
 const MDLINK_RE       = new RegExp(_MDLINK_BODY);        // unanchored: find anywhere
 const MDLINK_FULL_RE  = new RegExp(`^${_MDLINK_BODY}$`);  // anchored: whole string only
+
+// Shared Discord timestamp pattern for tokenization and validation.
+// Supports documented Discord timestamp styles only.
+const _TIMESTAMP_BODY   = '<t:(\\d+)(?::([RfFtTdDSs]))?>';
+const TIMESTAMP_RE      = new RegExp(_TIMESTAMP_BODY);       // unanchored: find anywhere
+const TIMESTAMP_FULL_RE = new RegExp(`^${_TIMESTAMP_BODY}$`); // anchored: whole string only
+
+// Rejects percent-encoded null bytes in URLs, since URL.parse() does not catch these.
+function hasNullByteEscape(url) {
+  return /%00/i.test(url);
+}
 
 // ── Nitro emoji URL parsing ───────────────────────────────────────────────────
 // Format: https://cdn.discordapp.com/emojis/<id>.<ext>?size=<N>[&animated=true]&name=<name>[&lossless=true]
@@ -977,7 +996,7 @@ const NITRO_EMOJI_URL_PATTERN = new URLPattern({
   pathname: '/emojis/:emojiId(\\d+).:ext([a-zA-Z0-9]+)',
 });
 function parseNitroEmojiUrl(url) {
-  if (/%00/i.test(url)) return null;
+  if (hasNullByteEscape(url)) return null;
   let match;
   try { match = NITRO_EMOJI_URL_PATTERN.exec(url); } catch { return null; }
   if (!match) return null;
@@ -990,6 +1009,16 @@ function parseNitroEmojiUrl(url) {
   const isAnimated = parsed.searchParams.get('animated') === 'true';
   if (!name || !/^[A-Za-z0-9_]+$/.test(name)) return null;
   return { emojiId, ext, emojiName: name, isAnimated };
+}
+
+// WHATWG URL Standard §5, application/x-www-form-urlencoded serializing
+// encodeURIComponent/decodeURIComponent alone do not apply this rule.
+// Decode '+' before decodeURIComponent.
+function decodeDiscordName(rawName) {
+  return decodeURIComponent(rawName.replace(/\+/g, ' '));
+}
+function encodeDiscordName(name) {
+  return encodeURIComponent(name).replace(/%20/g, '+');
 }
 
 // ── Sticker URL parsing ───────────────────────────────────────────────────────
@@ -1005,7 +1034,7 @@ const STICKER_URL_PATTERN = new URLPattern({
   pathname: '/stickers/:stickerId(\\d+).:ext([a-zA-Z0-9]+)',
 });
 function parseStickerUrl(url) {
-  if (/%00/i.test(url)) return null;
+  if (hasNullByteEscape(url)) return null;
   let match;
   try { match = STICKER_URL_PATTERN.exec(url); } catch { return null; }
   if (!match) return null;
@@ -1017,7 +1046,7 @@ function parseStickerUrl(url) {
   const rawName = parsed.searchParams.get('name');
   if (rawName === null) return { stickerId, ext, decodedName: null };
   try {
-    const decodedName = decodeURIComponent(rawName.replace(/\+/g, ' '));
+    const decodedName = decodeDiscordName(rawName);
     return { stickerId, ext, decodedName };
   } catch {
     return null;
@@ -1196,7 +1225,10 @@ function splitBlockSegments(text) {
   function flushQuote() {
     if (quoteLines.length) { segments.push({ type: 'blockquote', lines: quoteLines }); quoteLines = []; }
   }
-
+  
+  // Standard: CommonMark spec §4.5, "Fenced code blocks"
+  // Fenced code block delimiter.
+  // Simplified: any ``` closes an open fence.
   for (const line of lines) {
     if (inCode) {
       if (/^```\s*$/.test(line.trimEnd())) {
@@ -1348,7 +1380,7 @@ function renderMarkdownLine(text, lockPrefix, emojiSize = 22) {
 // Renders `url` as a clickable link if it passes the safety check, otherwise
 // appends `text` as plain text.
 function appendLinkOrText(container, url, text) {
-  const isSafe = URL.parse(url)?.protocol === 'https:' && !/%00/i.test(url);
+  const isSafe = URL.parse(url)?.protocol === 'https:' && !hasNullByteEscape(url);
   if (isSafe) {
     const a = document.createElement('a');
     a.href   = url;
@@ -1378,6 +1410,8 @@ function isUrlLikeLabel(label) {
 }
 
 function applyInlineMarkdown(container, text, emojiSize = 22) {
+  // Discord-specific inline formatting tokens.
+  // Do not change these to CommonMark semantics.
   const tokens = [
     { re: /\*\*(.+?)\*\*/s,  tag: 'strong'  },
     { re: /\*(.+?)\*/s,      tag: 'em'      },
@@ -1385,7 +1419,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
     { re: /~~(.+?)~~/s,      tag: 's'       },
     { re: /`([^`]+)`/,       tag: 'code'    },
     { re: /\|\|(.+?)\|\|/s,  tag: 'spoiler' },
-    { re: /<t:(\d+)(?::([RfFtTdDSs]))?>/, tag: 'timestamp' },
+    { re: TIMESTAMP_RE, tag: 'timestamp' },
     // mdlink must come before bare link so the full [label](url) pattern is consumed
     // and the trailing ) is not left as a stray token.
     { re: MDLINK_RE, tag: 'mdlink' },
@@ -1470,8 +1504,8 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
     } else if (earliest.tag === 'timestamp') {
       // earliest.inner only carries capture group 1 (the digits); re-extract
       // the optional style letter (group 2) from the full match.
-      const styleMatch = /^<t:\d+(?::([RfFtTdDSs]))?>$/.exec(earliest.match);
-      const style = styleMatch?.[1] ?? 'f';
+      const styleMatch = TIMESTAMP_FULL_RE.exec(earliest.match);
+      const style = styleMatch?.[2] ?? 'f';
       const unix  = parseInt(earliest.inner, 10);
 
       const formatted = formatDiscordTimestamp(unix, style);
@@ -1533,7 +1567,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
         if (stickerParsed && stickerParsed.decodedName !== null &&
             stickerParsed.decodedName === label) {
           if (emojiSize >= 48) {
-            const encodedName = encodeURIComponent(stickerParsed.decodedName).replace(/%20/g, '+');
+            const encodedName = encodeDiscordName(stickerParsed.decodedName);
             const canonicalStickerUrl =
               `https://media.discordapp.net/stickers/${stickerParsed.stickerId}.${stickerParsed.ext}?size=160&name=${encodedName}&lossless=true`;
             const img = document.createElement('img');
@@ -1583,7 +1617,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
       const bareStickerParsed = parseStickerUrl(url);
       if (bareStickerParsed && emojiSize >= 48) {
         const encodedName = bareStickerParsed.decodedName
-          ? encodeURIComponent(bareStickerParsed.decodedName).replace(/%20/g, '+')
+          ? encodeDiscordName(bareStickerParsed.decodedName)
           : null;
         const canonicalUrl = encodedName
           ? `https://media.discordapp.net/stickers/${bareStickerParsed.stickerId}.${bareStickerParsed.ext}?size=160&name=${encodedName}&lossless=true`
@@ -2315,7 +2349,7 @@ const _attachmentInProgress = new Map(); // attachId → li element
 // authority for determining when cached media is safe to release.
  
 function renderDecryptedAttachment(liElement, fileCard, url, originalName, type, cdnUrl) {
-  const strippedName = originalName.replace(/\.age$/i, '');
+  const strippedName = stripAgeSuffix(originalName);
  
   const mosaicItem = hideFileCard(fileCard);
  
@@ -2572,7 +2606,7 @@ function isForwardedAttachment(liElement) {
 function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength, capturedGen) {
   // Always shown in MB; only invoked for files > LARGE_FILE_THRESHOLD.
   const sizeMb = (byteLength / (1024 * 1024)).toFixed(1);
-  const displayName = originalName.replace(/\.age$/i, '');
+  const displayName = stripAgeSuffix(originalName);
 
   // Repurpose the spinner wrapper as the prompt card — preserves DOM position.
   const wrapper = spinnerWrapper;
@@ -3053,7 +3087,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
     }
 
     const type     = classifyFile(originalName);
-    const ext      = originalName.replace(/\.age$/i, '').split('.').pop().toLowerCase();
+    const ext      = stripAgeSuffix(originalName).split('.').pop().toLowerCase();
     const mimeType = { image: 'image/' + ext, video: 'video/' + ext, audio: 'audio/' + ext }[type]
                   ?? 'application/octet-stream';
 
