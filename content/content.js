@@ -977,17 +977,11 @@ const _TIMESTAMP_BODY   = '<t:(\\d+)(?::([RfFtTdDSs]))?>';
 const TIMESTAMP_RE      = new RegExp(_TIMESTAMP_BODY);       // unanchored: find anywhere
 const TIMESTAMP_FULL_RE = new RegExp(`^${_TIMESTAMP_BODY}$`); // anchored: whole string only
 
-// Rejects percent-encoded null bytes in URLs, since URL.parse() does not catch these.
-function hasNullByteEscape(url) {
-  return /%00/i.test(url);
-}
-
 // ── Nitro emoji URL parsing ───────────────────────────────────────────────────
 // Format: https://cdn.discordapp.com/emojis/<id>.<ext>?size=<N>[&animated=true]&name=<name>[&lossless=true]
 //   • animated=true present → animated; absent → static.
 //   • Returns { emojiId, ext, emojiName, isAnimated } or null.
 // Security: emojiId → \d+, emojiName → [A-Za-z0-9_], ext validated against RENDERABLE_IMAGE.
-//   %00 rejected — URL.parse() doesn't catch percent-encoded null bytes in path/query.
 //   protocol/hostname/pathname are all pinned by the URLPattern in one shot;
 //   query params still need a real parsed URL, so URL.parse() is used for those.
 const NITRO_EMOJI_URL_PATTERN = new URLPattern({
@@ -996,7 +990,6 @@ const NITRO_EMOJI_URL_PATTERN = new URLPattern({
   pathname: '/emojis/:emojiId(\\d+).:ext([a-zA-Z0-9]+)',
 });
 function parseNitroEmojiUrl(url) {
-  if (hasNullByteEscape(url)) return null;
   let match;
   try { match = NITRO_EMOJI_URL_PATTERN.exec(url); } catch { return null; }
   if (!match) return null;
@@ -1025,7 +1018,7 @@ function encodeDiscordName(name) {
 // Accepts https://media.discordapp.net/stickers/<id>.<ext>[?<params>].
 // name= param decoded if present, null if absent.
 // Returns { stickerId, ext, decodedName } or null.
-// Security: stickerId → \d+, ext validated against RENDERABLE_IMAGE. %00 rejected.
+// Security: stickerId → \d+, ext validated against RENDERABLE_IMAGE.
 // decodeURIComponent wrapped in try/catch — can throw on malformed percent-encoding
 // independent of URL validity.
 const STICKER_URL_PATTERN = new URLPattern({
@@ -1034,7 +1027,6 @@ const STICKER_URL_PATTERN = new URLPattern({
   pathname: '/stickers/:stickerId(\\d+).:ext([a-zA-Z0-9]+)',
 });
 function parseStickerUrl(url) {
-  if (hasNullByteEscape(url)) return null;
   let match;
   try { match = STICKER_URL_PATTERN.exec(url); } catch { return null; }
   if (!match) return null;
@@ -1380,7 +1372,7 @@ function renderMarkdownLine(text, lockPrefix, emojiSize = 22) {
 // Renders `url` as a clickable link if it passes the safety check, otherwise
 // appends `text` as plain text.
 function appendLinkOrText(container, url, text) {
-  const isSafe = URL.parse(url)?.protocol === 'https:' && !hasNullByteEscape(url);
+  const isSafe = URL.parse(url)?.protocol === 'https:';
   if (isSafe) {
     const a = document.createElement('a');
     a.href   = url;
@@ -1425,7 +1417,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
     { re: MDLINK_RE, tag: 'mdlink' },
     // Bare URL: % permitted for percent-encoded slugs (e.g. %C3%A3); scheme-bypass
     // via percent-encoding (javascript%3A) is caught by the post-assignment href check
-    // which tests the browser-normalised href. %00 rejected by a separate guard below.
+    // which tests the browser-normalised href.
     // One level of parenthesis nesting keeps URLs using them intact.
     { re: /(https:\/\/(?:[^\s<>"'()]*(?:\([^\s<>"'()]*\)[^\s<>"'()]*)*))/,  tag: 'link' },
   ];
