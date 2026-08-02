@@ -960,7 +960,7 @@ const _shortcodeOnlyRe = /^:[a-zA-Z0-9_+\-]+:$/;
 // Matches a single Unicode emoji sequence using Unicode properties.
 // Covers flags, keycaps, ZWJ sequences, modifiers, and newer emoji.
 // Requires the UnicodeSets ('v') flag.
-// Standard: Unicode Technical Standard #51 (UTS #51), RGI_Emoji property — https://unicode.org/reports/tr51/
+// Standard: Unicode Technical Standard #51 (UTS #51), RGI_Emoji property
 const EMOJI_SEQ_RE      = /\p{RGI_Emoji}/gv;   // unanchored: scan for runs
 const EMOJI_SEQ_FULL_RE = /^\p{RGI_Emoji}$/v;  // anchored: whole-string check
 
@@ -1597,8 +1597,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
       }
     } else if (earliest.tag === 'link') {
       const url = earliest.inner;
-      // Bare-link regex greedily matches concatenated URLs as one token (e.g.
-      // "https://a.comhttps://b.com"). Render as plain text instead.
+      // Bare-link regex greedily matches concatenated URLs as one token, render as plain text instead.
       // indexOf starts at 1 to skip the leading "https://" of the match itself.
       if (url.indexOf('https://', 1) !== -1) {
         renderWithEmoji(container, url, emojiSize);
@@ -2580,8 +2579,7 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
  
 // Detects a Discord forwarded message via the header's
 // data-text-variant="text-sm/semibold" attribute (text content is always
-// exactly "Forwarded"; confirmed via DOM probe).
-//
+// exactly "Forwarded").
 // Forwarded .age files can't be verified here: the CDN channel ID reflects
 // where the message was originally sent, which may use a different signing
 // prefix than the current channel — so we hide the file card and show a
@@ -3225,7 +3223,7 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
     insertAfter.parentElement.insertBefore(wrapper, insertAfter.nextSibling);
   } else {
     // Each <li> has exactly one [id^="message-content-"] for its own text —
-    // reply quotes do not get a message-content- id (confirmed via DOM probe).
+    // reply quotes do not get a message-content- id.
     const contentEl = liElement.querySelector('[id^="message-content-"]');
     if (contentEl?.parentElement) {
       contentEl.parentElement.insertBefore(wrapper, contentEl.nextSibling);
@@ -3285,19 +3283,10 @@ function showAllPlaceholders(reason) {
 }
  
 // Scan a message li for encrypted attachments and process any found.
-//
 // Filename link selector for Discord CDN attachments.
-//
-// Confirmed stable via DOM probe:
-//   - href prefix is CDN semantics, not a class token.
-//   - rel="noreferrer noopener" is set by Discord on all CDN file links.
-//   - :not([aria-label]) excludes the "Download" hover button, which shares
-//     the same href but carries aria-label="Download".
-//
 // The file card wrapper is located via closest('div[class*="file_"]') — the
 // only stable anchor below message-accessories. closest('[class*="mosaicItem_"]')
-// is also kept. Both are isolated here so a single-line fix suffices if
-// Discord renames them.
+// is also kept. Both are isolated here so a single-line fix suffices if Discord renames them.
 const FILE_LINK_SEL =
   'a[href^="https://cdn.discordapp.com/attachments/"]' +
   '[rel="noreferrer noopener"]:not([aria-label])';
