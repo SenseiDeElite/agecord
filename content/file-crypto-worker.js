@@ -3,15 +3,13 @@
  * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
  */
 
-// file-crypto-worker.js — Dedicated Worker for file encryption and decryption
+// file-crypto-worker.js — Worker for file encryption/decryption
 //
-// File format (verify ops):
-//   [ sigByteLen bytes sig ][ pubkeyHintLen bytes hint ][ age ciphertext ]
+// Format:
+// [sigLen bytes sig][hintLen bytes hint][age ciphertext]
 //
-// Pubkey hint format: UTF-8(base64(senderMldsaPubKey) + ":")
-//   Authenticated in the sig input (prefix || hint || ageBytes).
-//   Lets the verifier find the matching candidate key via linear scan
-//   before running the single verify call.
+// Hint: UTF-8(base64(pubkey) + ":")
+// Used to locate verification key; signature covers prefix + hint + ciphertext.
 
 'use strict';
 
@@ -21,6 +19,7 @@ import { init, ml_dsa87_verify } from '../lib/rustcrypto-wasm.min.js';
 await init();
 
 // ─── Compression helpers ───────────────────────────────────────────────────────
+
 // Uses pipeThrough()/pipeTo() to keep compression/decompression inside the
 // Worker, avoiding Firefox Xray Vision on CompressionStream and keeping
 // plaintext/decrypted data off the main thread.
@@ -72,10 +71,9 @@ function decodePubKey(b64) {
   return key;
 }
 
-// Cached identity (Decrypter).
+// Cached decryption identity.
 // Set on UNLOCK, cleared on RELOCK.
-// Avoids resending on VERIFY_DECRYPT[_DECOMPRESS] hot path.
-// content.js replays UNLOCK state to workers spawned after UNLOCK.
+// Avoids resending on verify/decrypt paths.
 let _cachedDecrypter = null;
 
 // Verifies ML-DSA-87 signature and age-decrypts.
@@ -101,15 +99,13 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
   const hintBytes = fileBytes.subarray(sigByteLen, sigByteLen + pubkeyHintLen);
   const ageBytes  = fileBytes.subarray(sigByteLen + pubkeyHintLen);
 
-  // Strip the trailing colon delimiter before matching. Per the pubkey hint
-  // format (UTF-8(base64(senderMldsaPubKey) + ":")), the colon is always
-  // present — a missing colon means pubkeyHintLen was computed wrong upstream,
-  // which should surface as a failed key match rather than be silently patched.
+  // Remove trailing delimiter before key matching.
+  // Missing delimiter indicates an invalid hint length.
   const hintStr      = _textDecoder.decode(hintBytes);
   const senderKeyB64 = hintStr.slice(0, -1);
 
   // One hint per message → scan runs at most once per attachment.
-  const matchedKeyB64 = candidateKeysB64.find(k => k === senderKeyB64) ?? null;
+  const matchedKeyB64 = candidateKeysB64.find(k => k === senderKeyB64);
   if (!matchedKeyB64) return { sigValid: false };
 
   // ── Build sigInput: prefixBytes || hintBytes || ageBytes ───────────────────
@@ -120,15 +116,22 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
   sigInput.set(ageBytes,    prefixBytes.length + hintBytes.length);
 
   // ── Verify with the single matched key ─────────────────────────────────────
-  // rustcrypto-wasm arg order: ml_dsa87_verify(verifying_key, message, signature)
+  
+  // arg order: ml_dsa87_verify(verifying_key, message, signature)
   let sigValid = false;
   try {
     sigValid = ml_dsa87_verify(decodePubKey(matchedKeyB64), sigInput, sigBytes);
-  } catch { /* malformed key or sig — sigValid stays false */ }
+  } catch (e) {
+    // Malformed key or sig — sigValid stays false, but log so a real
+    // wasm-call bug (bad arg types, panic, etc.) isn't indistinguishable
+    // from an ordinary failed verification.
+    console.error(`[age] ${opName}: ml_dsa87_verify threw:`, e?.message ?? e);
+  }
 
   if (!sigValid) return { sigValid: false };
 
   // ── age-decrypt ─────────────────────────────────────────────────────────────
+  
   // ageBytes is a live view into fileBuffer, which is fully owned inside the
   // Worker (transferred in, not neutered here). No copy needed.
   const plainBytes = await _cachedDecrypter.decrypt(ageBytes, 'uint8array');
@@ -159,6 +162,10 @@ self.onmessage = async ({ data }) => {
 
     if (op === 'RELOCK') {
       _cachedDecrypter = null;
+      // Match the decrypter's lifecycle: drop cached sender keys too, so a
+      // long-lived worker doesn't accumulate every correspondent's pubkey
+      // across lock/unlock cycles.
+      _pubKeyCache.clear();
       return;
     }
 
