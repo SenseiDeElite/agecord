@@ -1314,16 +1314,21 @@ function renderBlockquote(lines, emojiSize = 22) {
   const bq = document.createElement('div');
   bq.style.cssText = [
     'display:block',
+    'width:100%',
+    'max-width:100%',
+    'min-width:0',
     'margin:4px 0',
     'padding:2px 0 2px 10px',
     `border-left:3px solid ${_codeBlockLangFg}`,  // matches code-block accent stripe
     'opacity:0.9',
     'box-sizing:border-box',
+    'overflow-wrap:anywhere',
+    'word-break:break-word',
   ].join(';');
 
   lines.forEach((line, i) => {
     const lineSpan = document.createElement('span');
-    lineSpan.style.cssText = 'display:inline-flex;align-items:center;flex-wrap:wrap;gap:0 2px;';
+    lineSpan.style.cssText = 'display:inline-flex;max-width:100%;align-items:center;flex-wrap:wrap;gap:0 2px;overflow-wrap:anywhere;word-break:break-word;';
     applyInlineMarkdown(lineSpan, line, emojiSize);
     bq.appendChild(lineSpan);
     if (i < lines.length - 1) bq.appendChild(document.createElement('br'));
@@ -1365,7 +1370,7 @@ function renderBlockContent(container, text, firstLineIsLock, emojiSize = 22) {
 
   // Single lock badge centered to the whole body block (matches image/video badge style).
   const outer = document.createElement('span');
-  outer.style.cssText = 'display:inline-flex;align-items:center;gap:0 6px;color:#889ce6;';
+  outer.style.cssText = 'display:flex;align-items:flex-start;gap:0 6px;color:#889ce6;max-width:100%;min-width:0;';
 
   const lock = document.createElement('span');
   lock.textContent   = '🔒';
@@ -1373,7 +1378,7 @@ function renderBlockContent(container, text, firstLineIsLock, emojiSize = 22) {
   outer.appendChild(lock);
 
   const body = document.createElement('span');
-  body.style.cssText = 'display:inline-block;';
+  body.style.cssText = 'display:block;min-width:0;max-width:100%;flex:1 1 auto;';
   for (const seg of segments) {
     if (seg.type === 'code') {
       body.appendChild(renderCodeBlock(seg.lang, seg.text));
