@@ -100,7 +100,7 @@ pub fn argon2id(
         .hash_password_into(&password, &salt, &mut out)
         .map_err(|e| JsError::new(&format!("argon2id: hashing failed: {e}")));
     drop(password);
-    drop(salt); // both consumed by the call above; nothing left to justify holding them
+    drop(salt); // hashing is done with these; zero them now via Zeroizing's Drop
     result?;
     Ok(out)
 }
