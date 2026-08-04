@@ -4,28 +4,32 @@
  */
 
 // cdn-bridge.js — Agecord
-//
-// Runs inside a hidden <iframe> injected into the Discord page by content.js.
-// Fetches from cdn.discordapp.com (permitted by host_permissions on the extension
-// origin) and transfers the raw ArrayBuffer back via postMessage transferables.
-// All crypto (sig verify + age decrypt) is handled by content.js / file-crypto-worker.js.
+
+// Hidden iframe bridge for extension-origin cross-origin fetches.
+// Transfers fetched ArrayBuffers to the parent via postMessage.
+// Crypto is handled by content.js and file-crypto-worker.js.
 
 'use strict';
 
+// Trusted parent origin from this iframe's src query.
+// Used exclusively for postMessage origin validation and replies.
+// Do not trust origin values supplied in message payloads.
+const expectedParentOrigin = new URLSearchParams(location.search).get('parentOrigin');
+
 window.addEventListener('message', async (e) => {
   if (e.source !== window.parent) return;
-  const { type, requestId, cdnUrl, parentOrigin } = e.data ?? {};
+  if (!expectedParentOrigin || e.origin !== expectedParentOrigin) return;
+
+  const { type, requestId, cdnUrl } = e.data ?? {};
   if (type !== 'AGE_FETCH_RAW') return;
 
   function reply(payload) {
-    window.parent.postMessage(payload, parentOrigin, payload.buffer ? [payload.buffer] : []);
+    window.parent.postMessage(payload, expectedParentOrigin, payload.buffer ? [payload.buffer] : []);
   }
 
   try {
     if (!cdnUrl || typeof cdnUrl !== 'string')
       throw new Error('AGE_FETCH_RAW: cdnUrl missing');
-    if (!parentOrigin)
-      throw new Error('AGE_FETCH_RAW: parentOrigin missing');
 
     // cache: 'no-store' — ArrayBuffer is transferred (neutered) to content.js;
     // a cached response returns an ArrayBuffer(0) on the second fetch, silently
@@ -44,9 +48,8 @@ window.addEventListener('message', async (e) => {
 
 // Signal readiness to the parent using its origin from the src query.
 // Avoids '*' and ancestorOrigins, which may be redacted by Referrer-Policy.
-const parentOrigin = new URLSearchParams(location.search).get('parentOrigin');
-if (parentOrigin) {
-  window.parent.postMessage({ type: 'AGE_IFRAME_READY' }, parentOrigin);
+if (expectedParentOrigin) {
+  window.parent.postMessage({ type: 'AGE_IFRAME_READY' }, expectedParentOrigin);
 } else {
   console.error('[age-iframe] AGE_IFRAME_READY: parentOrigin missing from iframe src');
 }
