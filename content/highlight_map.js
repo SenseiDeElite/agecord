@@ -4,9 +4,8 @@
  */
 
 // highlight_map.js
-// All valid highlight.js language aliases, used only to decide whether a
-// language header should be shown on a fenced code block.  No actual syntax
-// highlighting is performed.
+
+// highlight.js aliases used for fenced block language labels only.
 
 // Current revision: https://github.com/highlightjs/highlight.js/blob/723ba01b0abbe7ddb85b98726ad19f11be1155b8/SUPPORTED_LANGUAGES.md
 
