@@ -15,14 +15,17 @@ import { init, argon2id, xchacha20poly1305_encrypt, xchacha20poly1305_decrypt }
 // silently dropping it. Every handler awaits this promise instead.
 const initReady = init();
 
-//
-// IMPORTANT — two incompatible envelope formats share version byte 0x01:
-//   This worker (identity blobs): [ 0x01 ][ 16-byte Argon2id salt ][ nonce+ct+tag ]
-//     Salt is embedded so blobs are portable / decryptable with passphrase alone.
-//   background.js (contacts ciphertext): [ 0x01 ][ nonce+ct+tag ]
-//     Salt lives separately in chrome.storage.local as "contactsSaltB64".
-//   Do NOT unify these formats.
-//
+// IMPORTANT: Version 0x01 is shared by two incompatible envelope formats.
+
+// Identity blobs (this worker):
+//   [0x01][16-byte Argon2id salt][nonce+ct+tag]
+//   Salt is embedded for passphrase-only recovery.
+
+// Contacts ciphertext (background.js):
+//   [0x01][nonce+ct+tag]
+//   Salt is stored separately in chrome.storage.local.
+
+// Keep formats separate; they are not interchangeable.
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -35,6 +38,15 @@ const ARGON2_M_COST    = 65536;
 const ARGON2_T_COST    = 3;
 const ARGON2_P_COST    = 1;
 const ARGON2_OUT_LEN   = 32;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Zeros every provided buffer, skipping any that are null/undefined (e.g. an
+// output that was never assigned because an earlier call threw). Centralizes
+// the fill(0)-in-finally pattern repeated across every op below.
+function zeroAll(...arrays) {
+  for (const arr of arrays) arr?.fill(0);
+}
 
 // ─── Message handler ──────────────────────────────────────────────────────────
 
@@ -58,11 +70,9 @@ self.onmessage = async ({ data }) => {
         out = derived.slice();
         self.postMessage({ ok: true, keyBytes: out.buffer }, [out.buffer]);
       } finally {
-        passwordBytes.fill(0);
-        saltBytes.fill(0);
-        derived?.fill(0);
         // `out` was just transferred and is now detached in this realm —
         // filling it would throw, and there's nothing left to zero anyway.
+        zeroAll(passwordBytes, saltBytes, derived);
       }
       return;
     }
@@ -80,8 +90,7 @@ self.onmessage = async ({ data }) => {
       try {
         noncePlusCt = xchacha20poly1305_encrypt(key, plaintext);
       } finally {
-        key.fill(0);
-        plaintext.fill(0);
+        zeroAll(key, plaintext);
       }
 
       // Freshly allocated to exact size, so transferring its buffer is safe.
@@ -89,8 +98,7 @@ self.onmessage = async ({ data }) => {
       envelope[0] = ENVELOPE_VERSION;
       envelope.set(saltRaw, 1);
       envelope.set(noncePlusCt, 1 + SALT_LEN);
-      noncePlusCt.fill(0);
-      saltRaw.fill(0);
+      zeroAll(noncePlusCt, saltRaw);
 
       self.postMessage({ ok: true, envelopeBytes: envelope.buffer }, [envelope.buffer]);
       return;
@@ -98,6 +106,11 @@ self.onmessage = async ({ data }) => {
 
     if (data.op === 'XCHACHA_DECRYPT') {
       const envelope = new Uint8Array(data.envelopeBytes);
+      // Guard against truncated input before indexing — otherwise envelope[0]
+      // is undefined and the check below throws an opaque TypeError instead
+      // of this clear, intended error.
+      if (envelope.length < 1 + SALT_LEN)
+        throw new Error(`Envelope too short: expected at least ${1 + SALT_LEN} bytes, got ${envelope.length}.`);
       if (envelope[0] !== ENVELOPE_VERSION)
         throw new Error(`Unknown envelope version 0x${envelope[0].toString(16)}.`);
 
@@ -110,8 +123,7 @@ self.onmessage = async ({ data }) => {
         // Same tight-copy-before-transfer reasoning as ARGON2ID_DERIVE.
         out = plaintext.slice();
       } finally {
-        key.fill(0);
-        plaintext?.fill(0);
+        zeroAll(key, plaintext);
       }
 
       self.postMessage({ ok: true, plaintextBytes: out.buffer }, [out.buffer]);
