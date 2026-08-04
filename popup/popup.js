@@ -4,26 +4,25 @@
  */
 
 // popup.js — Agecord
-//
-// Key storage : identity blob encrypted with Argon2id + XChaCha20-Poly1305,
-//               stored as base64 in chrome.storage.local (key: identity_blob).
-// Session     : decrypted identity kept in chrome.storage.session;
-//               background service worker holds it in memory and sends only the
-//               ML-DSA-87 signing key to content scripts.
-// Crypto      : offloaded to popup/crypto-worker.js so the UI stays responsive.
-// Contacts    : Argon2id key derived in crypto-worker.js, sent to background as
-//               raw bytes; contacts ciphertext uses XChaCha20-Poly1305 envelope.
-//
-// Data model  : contacts stored as { [uuid]: ContactEntry } where uuid is a
-//               stable v4 UUID generated at creation time.  channelId is a
-//               field on the entry, not the map key.  This is the v2 model
-//               introduced in 0.4.0.
+
+// Storage: identity blob encrypted with Argon2id + XChaCha20-Poly1305,
+//          stored as base64 in chrome.storage.local (identity_blob).
+// Session: decrypted identity in chrome.storage.session; background keeps
+//          memory copy and exposes only ML-DSA-87 signing key to content.
+// Crypto:  handled by crypto-worker.js to keep UI responsive.
+// Contacts: Argon2id key derivation in crypto-worker.js; raw key bytes sent
+//           to background. Ciphertext uses XChaCha20-Poly1305 envelope.
+
+// Model: contacts stored as { [uuid]: ContactEntry }.
+//         uuid is stable v4 UUID generated on creation.
+//         channelId is an entry field, not the map key.
+//         v2 model introduced in 0.4.0.
 
 'use strict';
 
 (() => {
 
-  // age-encryption and rustcrypto-wasm named imports — resolved via dynamic import().
+  // age-encryption and wasm named imports — resolved via dynamic import().
   let Encrypter, generateHybridIdentity, identityToRecipient;
   let ml_dsa87_keygen, ml_dsa87_verifying_key_from_seed, shake256;
   const cryptoReady = Promise.all([
@@ -65,18 +64,16 @@
   }
 
   // ─── Encrypted contacts storage ──────────────────────────────────────────────
-  // Contacts are stored encrypted at rest in chrome.storage.local as "contactsEnc".
-  // The XChaCha20-Poly1305 key (derived via Argon2id) lives only in the background
-  // service worker (_contactsKeyBytes).  The popup reads/writes contacts by sending
-  // ENCRYPT_CONTACTS / DECRYPT_CONTACTS messages to the background.
-  //
-  // While unlocked, _contacts is the live in-memory object and is the source of
-  // truth.  Any write goes: mutate _contacts → saveContacts() → store.set.
-  //
-  // _sessionPassphrase: held in popup memory for the lifetime of an unlocked
-  //   session so that UNLOCK messages re-sent to the background (e.g. after a
-  //   service-worker restart) can re-derive the contacts key without re-prompting
-  //   the user.
+  
+// Contacts: encrypted at rest in chrome.storage.local (contactsEnc).
+//           XChaCha20-Poly1305 key from Argon2id stored only in background
+//           (_contactsKeyBytes). Popup uses ENCRYPT_CONTACTS / DECRYPT_CONTACTS.
+
+// State:    _contacts is the unlocked in-memory source of truth.
+//           Writes: mutate _contacts → saveContacts() → store.set.
+
+// Session:  _sessionPassphrase kept in popup memory during unlock session.
+//           Allows key re-derivation after background restart without prompt.
 
   let _sessionPassphrase = null;
 
@@ -145,10 +142,8 @@
       }
     }
 
-    // Passphrase not available (popup was closed and reopened without re-locking).
-    // Fall back to the decrypted contacts already in session storage — they were
-    // written there when the contacts were last successfully loaded or saved, and
-    // session storage has the same lifetime as the unlock session.
+    // Passphrase unavailable after popup restart.
+    // Use decrypted contacts from session storage, persisted during the unlock session.
     try {
       const s = await chrome.storage.session.get('age_contacts');
       if (s.age_contacts && typeof s.age_contacts === 'object') {
@@ -161,6 +156,7 @@
   }
 
   // ─── Background messaging ────────────────────────────────────────────────────
+  
   // All tab-relay operations go through the background service worker.
 
   function bgSend(msg) {
@@ -173,11 +169,9 @@
     });
   }
 
-  // Relay helpers: always bundle contacts + ageRecipient so content scripts
-  // receive them without needing access to chrome.storage.session.
-  // bgUnlock: full unlock — derives the Argon2id contacts key from passphrase
-  // and sends it to the background along with the identity and contacts.
-  // Used on first unlock, keygen, import, and passphrase change.
+   // Relay: bundle contacts + ageRecipient; content scripts cannot access session storage.
+   // bgUnlock: full unlock; derives Argon2id contacts key and sends identity + contacts.
+   // Used for first unlock, keygen, import, and passphrase changes.
   async function bgUnlock(identity, passphrase) {
     const ageRecipient = await getAgeRecipient();
     let contactsKeyB64 = null;
@@ -193,15 +187,12 @@
     return bgSend({ type: 'UNLOCK', identity, contactsKeyB64, contacts: _contacts, ageRecipient });
   }
 
-  // bgUnlockResume: reopen path — resyncs identity + contacts with the background
-  // without any key derivation.  The contacts key is derived lazily on first save
-  // via ensureContactsKey(), so popup reopen is always instant.
-  //
-  // Optimization: if the background still holds a live identity, the service
-  // worker never slept and all content scripts are already unlocked.  Skip the
-  // UNLOCK broadcast entirely — it would trigger scanExisting() in every Discord
-  // tab and re-render already-decrypted messages for no reason.
-  // Only send UNLOCK when the background has lost its state (SW restart).
+  // bgUnlockResume: restores identity + contacts without key derivation.
+  // Contacts key is derived lazily by ensureContactsKey() on first save.
+    
+  // Optimization: skip UNLOCK if background identity is still live.
+  // Avoids redundant scanExisting() and message re-renders.
+  // Send UNLOCK only after service-worker state loss.
   async function bgUnlockResume(identity) {
     const ping = await bgSend({ type: 'PING' }).catch(() => null);
     if (ping?.hasIdentity) return; // background still live — nothing to do
@@ -251,6 +242,7 @@
   }
 
   // ─── State ──────────────────────────────────────────────────────────────────
+  
   let _contacts        = {};   // { [uuid]: ContactEntry }
   let _globalOn        = true;
   let _selectedId      = null; // uuid of the currently open contact sheet
@@ -262,7 +254,9 @@
   // async contact-load/broadcast tail. checkPendingImport() awaits this so 
   // an import can't race loadContacts()'s reassignment of _contacts.
   let _mainReadyPromise = null;
+  
   // ─── Screen router ──────────────────────────────────────────────────────────
+  
   const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact',
                    'edit-group', 'edit-server', 'my-key', 'about'];
   const show = screenId => {
@@ -322,10 +316,8 @@
     return null;
   }
 
-  // Marks that an unlock is in progress so boot() can detect a mid-unlock
-  // dismissal and show a clean lock screen rather than the broken half-unlocked
-  // state that would result from the racing doUnlock() completing in a closed
-  // popup document.
+  // Tracks active unlock to let boot() handle mid-unlock dismissal.
+  // Prevents partial unlock state from a closed popup race.
   async function setPendingUnlock(val) {
     try {
       await (val
@@ -335,11 +327,12 @@
   }
 
   // ─── Crypto worker ───────────────────────────────────────────────────────────
-  // Spawns a fresh dedicated worker per call, terminated on completion.
+  
+  // New dedicated worker per call; terminated on completion.
 
-  // `transfer` is the list of ArrayBuffers inside `msg` to hand off by
-  // transfer rather than structured-clone copy — ownership moves to the
-  // worker and the buffer detaches in this realm immediately on send.
+
+  // transfer: ArrayBuffers moved to worker via transfer list.
+  // Ownership transfers and buffers detach after send.
   function runCryptoWorker(msg, transfer = []) {
     return new Promise((resolve, reject) => {
       const workerUrl = chrome.runtime.getURL('popup/crypto-worker.js');
@@ -487,11 +480,9 @@
           _contacts = s.age_contacts;
       } catch {}
 
-      // showMain() shows the screen immediately but its contact-load/broadcast
-      // tail is async; stash the promise so checkPendingImport() can wait 
-      // for it to fully settle before mutating _contacts — otherwise 
-      // an import could race loadContacts()'s reassignment of _contacts and 
-      // silently get reverted in memory.
+       // showMain() renders immediately; contact load/broadcast completes async.
+       // Store promise so imports wait for loadContacts() to finish.
+       // Prevents _contacts reassignment races from reverting imports.
       _mainReadyPromise = showMain();
 
       // Re-sync with the background in parallel; showMain's own loadContacts()
@@ -499,10 +490,9 @@
       bgUnlockResume(identity).catch(e =>
         console.warn('[age] bgUnlockResume failed:', e?.message));
     } else {
-      // If the popup was dismissed mid-unlock, a stale doUnlock() may still be
-      // racing in the background. Clear any partial session data it may have
-      // written before we booted, then show a clean lock screen.
-      // The user just needs to enter their passphrase once more (~1.6 s with Argon2id).
+      // Handles popup dismissal during unlock.
+      // Clears stale partial session data from racing doUnlock().
+      // Restores clean lock state; user re-enters passphrase.
       try {
         const s = await chrome.storage.session.get('pending_unlock');
         if (s.pending_unlock) await clearSession();
@@ -512,6 +502,36 @@
     }
   }
 
+  // ─── Confirm-modal helper ────────────────────────────────────────────────────
+  
+  // Requires typing CONFIRM before destructive actions.
+  // Open resets input; typing enables confirm; cancel closes; confirm runs callback.
+  // IDs are explicit because existing markup uses inconsistent naming.
+  function wireConfirmModal({ openBtn, cancelBtn, confirmBtn, modal, input, onConfirm, confirmWord = 'CONFIRM' }) {
+    const openEl    = document.getElementById(openBtn);
+    const cancelEl  = document.getElementById(cancelBtn);
+    const confirmEl = document.getElementById(confirmBtn);
+    const modalEl   = document.getElementById(modal);
+    const inputEl   = document.getElementById(input);
+
+    openEl.addEventListener('click', () => {
+      inputEl.value      = '';
+      confirmEl.disabled = true;
+      modalEl.hidden     = false;
+    });
+    cancelEl.addEventListener('click', () => {
+      inputEl.value  = '';
+      modalEl.hidden = true;
+    });
+    inputEl.addEventListener('input', e => {
+      confirmEl.disabled = (e.target.value !== confirmWord);
+    });
+    confirmEl.addEventListener('click', async () => {
+      modalEl.hidden = true;
+      await onConfirm();
+    });
+  }
+
   // ─── Lock screen ─────────────────────────────────────────────────────────────
 
   document.getElementById('btn-unlock').addEventListener('click', doUnlock);
@@ -519,18 +539,6 @@
     if (e.key === 'Enter') doUnlock();
   });
 
-  document.getElementById('btn-goto-setup').addEventListener('click', () => {
-    document.getElementById('reset-confirm-input').value  = '';
-    document.getElementById('btn-reset-confirm').disabled = true;
-    document.getElementById('modal-reset-keypair').hidden = false;
-  });
-  document.getElementById('btn-reset-cancel').addEventListener('click', () => {
-    document.getElementById('reset-confirm-input').value  = '';
-    document.getElementById('modal-reset-keypair').hidden = true;
-  });
-  document.getElementById('reset-confirm-input').addEventListener('input', e => {
-    document.getElementById('btn-reset-confirm').disabled = (e.target.value !== 'CONFIRM');
-  });
   // resetToSetupScreen: shared teardown for reset-keypair and clear-all-data.
   // clearSetupFields: true when arriving from the lock screen (setup fields visible).
   async function resetToSetupScreen(clearSetupFields = false) {
@@ -554,18 +562,21 @@
     show('setup');
   }
 
-  document.getElementById('btn-reset-confirm').addEventListener('click', async () => {
-    document.getElementById('modal-reset-keypair').hidden = true;
-    await resetToSetupScreen(true);
+  wireConfirmModal({
+    openBtn:    'btn-goto-setup',
+    cancelBtn:  'btn-reset-cancel',
+    confirmBtn: 'btn-reset-confirm',
+    modal:      'modal-reset-keypair',
+    input:      'reset-confirm-input',
+    onConfirm:  () => resetToSetupScreen(true),
   });
 
   // ─── Passphrase lockdown ──────────────────────────────────────────────────────
-  // Exactly 3 consecutive wrong attempts → 10-minute lockdown, then counter resets.
-  // No exponential escalation — every lockout is a flat 10 minutes.
-  // State is persisted in chrome.storage.local so closing/reopening the popup
-  // cannot bypass the lockout.
-  // Storage keys: unlockAttempts (int 0–2), unlockLockedUntil (ms timestamp or 0).
-
+  
+  // 3 consecutive failures → 10-minute lock.
+  // Lockout duration is fixed; counter resets after expiry.
+  // State persists in chrome.storage.local to survive popup restarts.
+  // Keys: unlockAttempts (0–2), unlockLockedUntil (ms timestamp).
   const LOCKOUT_MAX_ATTEMPTS = 3;
   const LOCKOUT_DURATION_MS  = 10 * 60 * 1000; // 10 minutes
 
@@ -598,7 +609,7 @@
 
     _isLockedOut = true;
     btn.disabled    = true;
-    btn.textContent = 'Unlock'; // reset from any in-progress label (e.g. 'Unlocking…')
+    btn.textContent = 'Unlock'; // reset from any in-progress label
     inp.disabled    = true;
 
     function tick() {
@@ -727,7 +738,7 @@
       const blobB64 = stored.identity_blob || stored.ageEncryptedIdentity;
       if (!blobB64) throw new Error('No keypair found.');
 
-      // Detect old age-scrypt format (not our 0x01 envelope).
+      // Detect old format (not our 0x01 envelope).
       if (!stored.identity_blob && stored.ageEncryptedIdentity) {
         // Old format blob — surface migration error without counting as wrong passphrase.
         throw new Error('OUTDATED_FORMAT');
@@ -761,7 +772,6 @@
       const mldsaPubB64 = toB64(mldsaPub);
 
       // Rebuild the full recipient string if it was stored without the suffix
-      // (migration: old entries may not have the ;mldsa87: component yet).
       let storedRecipient = await getAgeRecipient();
       if (storedRecipient && !storedRecipient.includes(';mldsa87:')) {
         storedRecipient = storedRecipient + ';mldsa87:' + mldsaPubB64;
@@ -859,23 +869,19 @@
       const recipient = await identityToRecipient(identity);
 
       // Generate ML-DSA-87 keypair for message authentication.
-      // ml_dsa87_keygen() returns seed(32)||verifyingKey(2592) = 2624 bytes total.
-      // We store only the seed — the verifying key is re-derived at unlock time
-      // via ml_dsa87_verifying_key_from_seed(seed).  This keeps the identity
-      // blob compact and makes the mldsa87pub: line unnecessary.
+      // Store only the 32-byte seed; derive verifying key on unlock.
+      // Keeps identity blob compact and removes mldsa87pub: storage.
       const mldsaRaw     = ml_dsa87_keygen();              // 2624 bytes: seed(32)||vk(2592)
       const mldsaSeed    = mldsaRaw.slice(0, 32);          // 32-byte seed — the private key
       const mldsaPub     = mldsaRaw.slice(32);             // 2592-byte verifying key
       const mldsaSeedB64 = toB64(mldsaSeed);
       const mldsaPubB64  = toB64(mldsaPub);
 
-      // Identity blob (2 lines):
-      //   AGE-SECRET-KEY-PQ-1… — age ML-KEM-768×X25519 hybrid private key
-      //   mldsa87seed:<b64>     — 32-byte ML-DSA-87 seed (standard base64, 44 chars)
-      //
-      // The seed is all that is stored.  At unlock the verifying key is re-derived
-      // via ml_dsa87_verifying_key_from_seed(seed), so both signing and recipient
-      // strings can always be reconstructed without storing the large keys.
+      // Identity blob: AGE-SECRET-KEY-PQ-1… — age ML-KEM-768×X25519 hybrid private key.
+      // mldsa87seed:<b64>   — 32-byte ML-DSA-87 seed.
+  
+      // Store seed only; derive ML-DSA-87 verifying key on unlock.
+      // Reconstructs signing and recipient data without large key storage.
       const identityBlob  = identity + '\nmldsa87seed:' + mldsaSeedB64;
       const fullRecipient = recipient + ';mldsa87:' + mldsaPubB64;
 
@@ -959,8 +965,8 @@
 
     try {
       // The export blob from "My Key → Export" is always encrypted with the
-      // new XChaCha20 envelope format (version 0x01).  Old age-scrypt exports
-      // will produce an OUTDATED_FORMAT error with a clear message.
+      // new XChaCha20 envelope format (version 0x01). 
+      // Old exports will produce an OUTDATED_FORMAT error with a clear message.
       let identityBlob;
       try {
         identityBlob = await decryptIdentityBlob(encryptedBlob, exportPass);
@@ -1029,7 +1035,7 @@
 
     // Show the screen immediately — never let an async failure below block the
     // transition.  The passphrase field was already cleared by doUnlock; leaving
-    // the lock screen visible after a successful crypto operation is the bug.
+    // the lock screen visible after a successful crypto operation is a bug.
     document.getElementById('global-toggle').checked = _globalOn;
     document.getElementById('contacts-search').value = '';
     renderContacts();
@@ -1070,13 +1076,11 @@
 
   // ─── Contact validation ───────────────────────────────────────────────────────
 
-  // Validate a full age recipient string (age1pq1… + ;mldsa87:… suffix).
+  // Validate age recipient (age1pq1… + ;mldsa87:...).
   // Returns null on success, error string on failure.
-  // Only X25519+MLKEM768 hybrid keys (age1pq1…) are accepted.
-  // Validates structurally — bech32 charset + length bounds for the age1pq1 portion,
-  // and the existing regex for the ML-DSA-87 suffix — without performing live
-  // key agreement.  Hybrid keys are ~1958 chars; the body allows '1' since the
-  // bech32 format uses it as an internal separator in the data payload.
+  // Accepts only X25519+ML-KEM-768 hybrid keys.
+  // Checks bech32 format, length bounds, and ML-DSA-87 suffix.
+  // Structural validation only; no key agreement performed.
   function validateRecipient(recipient) {
     if (!recipient.startsWith('age1pq1'))
       return 'Public key must start with "age1pq1…" (X25519+MLKEM768 hybrid key).';
@@ -1471,6 +1475,7 @@
   });
 
   // ─── Member picker ────────────────────────────────────────────────────────────
+  
   // Shared bottom-sheet used by both group and server creation/edit screens.
   // _pickerContext: { mode: 'add-group'|'edit-group'|'add-server'|'edit-server',
   //                   maxMembers: number, selectedUUIDs: Set<string> }
@@ -1861,9 +1866,11 @@
     }
 
     // ── Pass 1: collect file UUIDs for memberIds cross-reference ─────────────────
+    
     const fileUUIDs = new Set(entries.map(e => e?.id).filter(Boolean));
 
     // ── Pass 2: detect intra-file duplicate UUIDs ─────────────────────────────────
+    
     const seenUUIDs      = new Map();
     const dupUUIDIndices = new Set();
     entries.forEach((entry, idx) => {
@@ -1874,6 +1881,7 @@
     });
 
     // ── Pass 3: detect intra-file duplicate channelIds / serverIds ────────────────
+    
     const fileChannelIds  = new Map();
     const fileServerIds   = new Map();
     const dupFieldIndices = new Set();
@@ -1927,6 +1935,7 @@
         contactsAdded++;
 
       // ── Group ────────────────────────────────────────────────────────────────
+      
       } else if (type === 'group') {
         const { id, channelId, name, memberIds, enabled } = entry;
 
@@ -1949,6 +1958,7 @@
         groupsAdded++;
 
       // ── Server ───────────────────────────────────────────────────────────────
+      
       } else if (type === 'server') {
         const { id, serverId, name, memberIds, enabled } = entry;
 
@@ -2012,11 +2022,9 @@
           chrome.tabs.remove(data.pending_import_tab).catch(() => {});
         return;
       }
-      // showMain()'s tail reassigns _contacts from loadContacts() and
-      // broadcasts it. If we ran the import concurrently with that, 
-      // the import's mutation of _contacts could be silently clobbered by 
-      // the later reassignment. Wait for it to fully settle first so 
-      // we mutate the final, authoritative _contacts.
+      // Wait for showMain() contact load to finish before import.
+      // Prevents loadContacts() reassignment from overwriting import changes.
+      // Ensures mutation targets the final _contacts state.
       if (_mainReadyPromise) {
         await _mainReadyPromise.catch(() => {});
         _mainReadyPromise = null;
@@ -2144,19 +2152,7 @@
 
   // ─── Keypair regeneration ─────────────────────────────────────────────────────
 
-  document.getElementById('btn-regen').addEventListener('click', () => {
-    document.getElementById('regen-confirm-input').value   = '';
-    document.getElementById('btn-regen-confirm').disabled  = true;
-    document.getElementById('modal-regen').hidden          = false;
-  });
-  document.getElementById('btn-regen-cancel').addEventListener('click', () => {
-    document.getElementById('modal-regen').hidden = true;
-  });
-  document.getElementById('regen-confirm-input').addEventListener('input', e => {
-    document.getElementById('btn-regen-confirm').disabled = (e.target.value !== 'CONFIRM');
-  });
-  document.getElementById('btn-regen-confirm').addEventListener('click', async () => {
-    document.getElementById('modal-regen').hidden = true;
+  async function regenerateKeypair() {
     Object.values(_contacts).forEach(c => { c.enabled = false; });
     // Contacts are intentionally discarded on keypair regeneration — the new
     // identity is a new encryption context and all prior public keys are stale.
@@ -2171,25 +2167,26 @@
     document.getElementById('setup-passphrase2').value = '';
     document.getElementById('setup-error').hidden      = true;
     show('setup');
+  }
+
+  wireConfirmModal({
+    openBtn:    'btn-regen',
+    cancelBtn:  'btn-regen-cancel',
+    confirmBtn: 'btn-regen-confirm',
+    modal:      'modal-regen',
+    input:      'regen-confirm-input',
+    onConfirm:  regenerateKeypair,
   });
 
   // ─── Clear all data (from My Key screen) ─────────────────────────────────────
 
-  document.getElementById('btn-clear-data').addEventListener('click', () => {
-    document.getElementById('clear-data-confirm-input').value  = '';
-    document.getElementById('btn-clear-data-confirm').disabled = true;
-    document.getElementById('modal-clear-data').hidden         = false;
-  });
-  document.getElementById('btn-clear-data-cancel').addEventListener('click', () => {
-    document.getElementById('clear-data-confirm-input').value = '';
-    document.getElementById('modal-clear-data').hidden        = true;
-  });
-  document.getElementById('clear-data-confirm-input').addEventListener('input', e => {
-    document.getElementById('btn-clear-data-confirm').disabled = (e.target.value !== 'CONFIRM');
-  });
-  document.getElementById('btn-clear-data-confirm').addEventListener('click', async () => {
-    document.getElementById('modal-clear-data').hidden = true;
-    await resetToSetupScreen(false);
+  wireConfirmModal({
+    openBtn:    'btn-clear-data',
+    cancelBtn:  'btn-clear-data-cancel',
+    confirmBtn: 'btn-clear-data-confirm',
+    modal:      'modal-clear-data',
+    input:      'clear-data-confirm-input',
+    onConfirm:  () => resetToSetupScreen(false),
   });
 
   // ─── Change passphrase ────────────────────────────────────────────────────────
