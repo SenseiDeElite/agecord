@@ -9,14 +9,11 @@
   <meta charset="UTF-8">
   <title>Agecord – CDN Bridge</title>
   <!--
-    This page is intentionally blank and hidden.
-    It exists solely to provide an extension-origin context
-    so that cdn-bridge.js can fetch from cdn.discordapp.com using the
-    extension's host_permissions, bypassing the CORB restriction that blocks
-    cross-origin fetches from content scripts running in the page renderer.
+  Hidden extension page providing an extension-origin context for
+  cross-origin fetches to cdn.discordapp.com via host_permissions.
 
-    Decrypted bytes are transferred back to the parent content script via
-    window.parent.postMessage with an ArrayBuffer transferable — zero-copy.
+  Returns decrypted data to the parent content script using
+  postMessage(ArrayBuffer) with zero-copy transfer.
   -->
 </head>
 <body>
