@@ -105,32 +105,27 @@ async function ensureIdentity() {
   }
 }
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-// Sends UNLOCK with up to 3 retries (100/200/300 ms).
-// Builds payload once to avoid repeated seed decoding.
-
-// Message errors are not classified by e.message; browser text is unstable.
-// Retry all failures as potentially transient, then log final failure.
-async function sendUnlockToTab(tabId) {
-  if (!_identity) return;
-  const payload = {
-    type:         'UNLOCK',
+// Shared by the tab-push path (sendUnlockToTab) and the pull-response path
+// (handleRequestUnlock) so the two payload shapes can't drift apart.
+// Returns null when locked.
+function buildUnlockPayload() {
+  if (!_identity) return null;
+  return {
     mldsaSeedB64: toB64(getMldsaSeed(_identity)),
     contacts:     _contacts,
     ageRecipient: _ageRecipient,
   };
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      await chrome.tabs.sendMessage(tabId, payload);
-      return;
-    } catch (e) {
-      if (attempt === 3) {
-        console.error(`[age] sendUnlockToTab: giving up on tab ${tabId}:`, e?.message);
-        return;
-      }
-      await sleep(100 * (attempt + 1));
-    }
+}
+
+// Best-effort push to an open, initialized, idle tab. A single failed
+// attempt is sufficient; init-time REQUEST_UNLOCK handles missed pushes.
+async function sendUnlockToTab(tabId) {
+  const payload = buildUnlockPayload();
+  if (!payload) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'UNLOCK', ...payload });
+  } catch (e) {
+    console.info(`[age] sendUnlockToTab: tab ${tabId} not reachable, will self-heal via its own pull:`, e?.message);
   }
 }
 
@@ -148,16 +143,6 @@ async function broadcastToTabs(payload) {
   }
 }
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status !== 'complete') return;
-  if (!tab.url?.startsWith('https://discord.com/')) return;
-  // SW was asleep when this tab loaded: restore identity from session so the
-  // reloaded content script gets UNLOCK without requiring a popup open.
-  if (!_identity) await ensureIdentity();
-  if (!_identity) return;
-  sendUnlockToTab(tabId);
-});
-
 // ─── Message handlers ──────────────────────────────────────────────────────────
 
 function handleUnlock(msg, _sender, sendResponse) {
@@ -172,8 +157,10 @@ function handleUnlock(msg, _sender, sendResponse) {
         _contactsKeyBytes?.fill(0);
         _contactsKeyBytes = fromB64(msg.contactsKeyB64);
       }
-      // Route through sendUnlockToTab so tabs that are still loading their
-      // content script get the same retry logic as the onUpdated path.
+      // Best-effort push to every open Discord tab. Only load-bearing for
+      // tabs that are already fully loaded and idle — a tab that's still
+      // loading will get this same state itself via its own boot-time
+      // REQUEST_UNLOCK pull, whether or not this push reaches it in time.
       const tabs = await getDiscordTabs();
       await Promise.all(tabs.map(tab => sendUnlockToTab(tab.id)));
       sendResponse({ ok: true });
@@ -260,6 +247,24 @@ function handleGetIdentityLine(_msg, _sender, sendResponse) {
   return true;
 }
 
+// Pull-based counterpart to sendUnlockToTab. Called at content-script init;
+// responds on the request/response channel, avoiding a second sendMessage
+// and any listener-readiness race.
+function handleRequestUnlock(_msg, _sender, sendResponse) {
+  (async () => {
+    try {
+      if (!(await ensureIdentity())) { sendResponse({ ok: false }); return; }
+      const payload = buildUnlockPayload();
+      if (!payload) { sendResponse({ ok: false }); return; }
+      sendResponse({ ok: true, ...payload });
+    } catch (e) {
+      console.error('[age] REQUEST_UNLOCK error:', e?.message);
+      sendResponse({ ok: false, error: e?.message ?? String(e) });
+    }
+  })();
+  return true;
+}
+
 const handlers = {
   UNLOCK:               handleUnlock,
   PING:                 handlePing,
@@ -269,6 +274,7 @@ const handlers = {
   ENCRYPT_CONTACTS:     handleEncryptContacts,
   DECRYPT_CONTACTS:     handleDecryptContacts,
   GET_IDENTITY_LINE:    handleGetIdentityLine,
+  REQUEST_UNLOCK:       handleRequestUnlock,
 };
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
