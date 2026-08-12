@@ -174,7 +174,6 @@ let _globalOn     = true;
 let _msgObserver  = null;
 let _msgObserver2 = null; // second observer for the thread-panel ol in split view
  
-const sleep    = ms => new Promise(r => setTimeout(r, ms));
 const localGet = keys => chrome.storage.local.get(keys);
 
 // ─── Context invalidation ─────────────────────────────────────────────────────
@@ -2214,54 +2213,60 @@ function _evictStaleProcessedIds() {
 }
  
 // ─── Extension messages ───────────────────────────────────────────────────────
- 
+
+// Applies an unlock payload to session state. Shared by push and boot-time
+// pull paths to keep state handling consistent.
+async function applyUnlockPayload(payload) {
+  try {
+    const localData = await localGet(['globalOn']);
+
+    // Clear the old session before fetching identity.
+    // Keeps stale key material out of memory.
+    // Decrypt/send stay disabled until the new session is published.
+    _clearSession();
+
+    const mldsaPrivBytes = fromB64(payload.mldsaSeedB64); // 32-byte ML-DSA-87 seed
+
+    // Fetch identity before publishing the session.
+    // Prevents partial state during the async gap.
+    const identResult        = await bgGetIdentityLine();
+    const cachedIdentityLine = identResult?.ok ? identResult.identityLine : null;
+
+    _globalOn = localData.globalOn !== false;
+    _setSession({
+      mldsaPrivBytes,
+      cachedIdentityLine,
+      selfRecipient:  payload.ageRecipient || null,
+      contacts:       payload.contacts || {},
+      contactsLoaded: true,
+    });
+
+    _wipeAttachmentState({ includeCache: false });
+    // Evict stale entries so they retry; still-present cached entries skip CDN re-fetch.
+    _evictStaleProcessedIds();
+
+    // Ensures VERIFY_DECRYPT[_DECOMPRESS] sees cached state.
+    if (cachedIdentityLine) _unlockWorkers(cachedIdentityLine);
+
+    if (_globalOn) {
+      attachEnterHook();
+      relayInterceptorState(true);
+      scanExisting();
+    } else {
+      // Unlocked but globally disabled — replace any stale 'locked' placeholders with 'disabled'.
+      relayInterceptorState(false);
+      showAllPlaceholders('disabled');
+    }
+  } catch (e) {
+    console.error('[age] unlock error:', e);
+  }
+}
+
 function listenForMessages() {
   chrome.runtime.onMessage.addListener(async (msg) => {
  
     if (msg.type === 'UNLOCK') {
-      try {
-        const localData = await localGet(['globalOn']);
-
-        // Clear the old session before fetching identity.
-        // Keeps stale key material out of memory.
-        // Decrypt/send stay disabled until the new session is published.
-        _clearSession();
-
-        const mldsaPrivBytes = fromB64(msg.mldsaSeedB64); // 32-byte ML-DSA-87 seed
-
-        // Fetch identity before publishing the session.
-        // Prevents partial state during the async gap.
-        const identResult        = await bgGetIdentityLine();
-        const cachedIdentityLine = identResult?.ok ? identResult.identityLine : null;
-
-        _globalOn = localData.globalOn !== false;
-        _setSession({
-          mldsaPrivBytes,
-          cachedIdentityLine,
-          selfRecipient:  msg.ageRecipient || null,
-          contacts:       msg.contacts || {},
-          contactsLoaded: true,
-        });
-
-        _wipeAttachmentState({ includeCache: false });
-        // Evict stale entries so they retry; still-present cached entries skip CDN re-fetch.
-        _evictStaleProcessedIds();
-
-        // Ensures VERIFY_DECRYPT[_DECOMPRESS] sees cached state.
-        if (cachedIdentityLine) _unlockWorkers(cachedIdentityLine);
-
-        if (_globalOn) {
-          attachEnterHook();
-          relayInterceptorState(true);
-          scanExisting();
-        } else {
-          // Unlocked but globally disabled — replace any stale 'locked' placeholders with 'disabled'.
-          relayInterceptorState(false);
-          showAllPlaceholders('disabled');
-        }
-      } catch (e) {
-        console.error('[age] unlock error:', e);
-      }
+      await applyUnlockPayload(msg);
       return;
     }
  
@@ -2313,6 +2318,17 @@ function listenForMessages() {
       showAllPlaceholders('locked');
     }
   });
+}
+
+// Pulls unlock state from background during boot. The direct request/response
+// path avoids a second sendMessage round trip and listener-timing races.
+async function requestUnlock() {
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: 'REQUEST_UNLOCK' });
+    if (resp?.ok) await applyUnlockPayload(resp);
+  } catch (e) {
+    console.info('[age] REQUEST_UNLOCK failed:', e?.message);
+  }
 }
  
 // ─── SPA navigation ──────────────────────────────────────────────────────────
@@ -3415,6 +3431,7 @@ function processLiFull(li) {
  
 async function init() {
   listenForMessages();
+  requestUnlock();
   listenForInterceptorMessages();
   startNavObserver();
   const localData = await localGet(['globalOn']);
