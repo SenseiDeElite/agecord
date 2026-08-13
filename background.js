@@ -28,6 +28,9 @@ let _contactsKeyBytes  = null; // raw Uint8Array, derived by popup's crypto-work
 let _contacts          = {};
 let _ageRecipient      = null;
 
+// Incremented by handleUnlock/handleRelock. Invalidates in-flight async restores.
+let _epoch = 0;
+
 // ─── Base64 helpers ───────────────────────────────────────────────────────────
 const toB64   = bytes => bytes.toBase64();
 const fromB64 = b64   => Uint8Array.fromBase64(b64);
@@ -86,18 +89,27 @@ function decryptContacts(b64) {
 
 // Keys held in chrome.storage.session; shared by ensureIdentity's read and
 // RELOCK's clear so the two can't silently drift out of sync.
-const SESSION_KEYS = ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient'];
 
-// _contactsKeyBytes is not persisted to session — it is passed only via UNLOCK
-// and lost on SW sleep/wake. PING's hasContactsKey reflects this.
+// age_contacts_key mirrors _contactsKeyBytes and is written atomically with
+// identity so service-worker wake cannot restore them independently.
+const SESSION_KEYS = ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient', 'age_contacts_key'];
+
+// Restores identity, contacts, and key from session storage.
+// Discards stale results superseded by RELOCK or a newer UNLOCK.
 async function ensureIdentity() {
   if (_identity) return true;
+  const myEpoch = _epoch;
   try {
     const d = await chrome.storage.session.get(SESSION_KEYS);
+    if (_epoch !== myEpoch) return _identity !== null; // superseded mid-read
     if (!d.age_unlocked || !d.age_identity) return false;
     _identity = d.age_identity;
     if (d.age_contacts && typeof d.age_contacts === 'object') _contacts = d.age_contacts;
     if (d.age_recipient) _ageRecipient = d.age_recipient;
+    if (d.age_contacts_key) {
+      _contactsKeyBytes?.fill(0);
+      _contactsKeyBytes = fromB64(d.age_contacts_key);
+    }
     return true;
   } catch (e) {
     console.error('[age] ensureIdentity: session read failed:', e?.message);
@@ -150,6 +162,7 @@ function handleUnlock(msg, _sender, sendResponse) {
     try {
       // State is set directly here (not via ensureIdentity) because the
       // popup is the authoritative source at unlock time — no session read needed.
+      _epoch++; // supersede any in-flight ensureIdentity()/RELOCK race
       _identity     = msg.identity;
       _contacts     = msg.contacts     ?? _contacts;
       _ageRecipient = msg.ageRecipient ?? _ageRecipient;
@@ -157,6 +170,14 @@ function handleUnlock(msg, _sender, sendResponse) {
         _contactsKeyBytes?.fill(0);
         _contactsKeyBytes = fromB64(msg.contactsKeyB64);
       }
+      // Atomic session write: identity, contacts, recipient, and key stay consistent.
+      await chrome.storage.session.set({
+        age_unlocked:     true,
+        age_identity:     _identity,
+        age_contacts:     _contacts,
+        age_recipient:    _ageRecipient,
+        age_contacts_key: _contactsKeyBytes ? toB64(_contactsKeyBytes) : null,
+      });
       // Best-effort push to every open Discord tab. Only load-bearing for
       // tabs that are already fully loaded and idle — a tab that's still
       // loading will get this same state itself via its own boot-time
@@ -173,17 +194,24 @@ function handleUnlock(msg, _sender, sendResponse) {
 }
 
 function handlePing(_msg, _sender, sendResponse) {
-  sendResponse({ ok: true, hasContactsKey: _contactsKeyBytes !== null, hasIdentity: _identity !== null });
-  return false;
+  (async () => {
+    await ensureIdentity();
+    sendResponse({ ok: true, hasContactsKey: _contactsKeyBytes !== null, hasIdentity: _identity !== null });
+  })();
+  return true;
 }
 
 function handleRelock(_msg, _sender, sendResponse) {
+  _epoch++; // supersede any in-flight ensureIdentity() read from an UNLOCK/PING/etc.
   _identity = null;
   _contactsKeyBytes?.fill(0);
   _contactsKeyBytes = null;
   _contacts = {}; _ageRecipient = null;
   // Clear session storage before async work so concurrent ensureIdentity() sees
   // age_unlocked=false, aborts, and can't restore stale identity after relock.
+  
+  // The epoch bump above additionally covers reads that already passed that
+  // check and are waiting on their own .get() to resolve.
   chrome.storage.session.remove(SESSION_KEYS)
     .catch(e => console.error('[age] RELOCK session clear failed:', e?.message));
   broadcastToTabs({ type: 'RELOCK' });
@@ -203,6 +231,11 @@ function handleContactsUpdated(msg, _sender, sendResponse) {
   if (msg.contacts)     _contacts     = msg.contacts;
   if (msg.ageRecipient) _ageRecipient = msg.ageRecipient;
   broadcastToTabs({ type: 'CONTACTS_UPDATED', contacts: _contacts, ageRecipient: _ageRecipient });
+  // Sync session storage while unlocked; abort if RELOCK superseded this update.
+  if (_identity) {
+    chrome.storage.session.set({ age_contacts: _contacts, age_recipient: _ageRecipient })
+      .catch(e => console.error('[age] CONTACTS_UPDATED session write failed:', e?.message));
+  }
   sendResponse({ ok: true });
   return false;
 }
@@ -211,6 +244,7 @@ function handleEncryptContacts(msg, _sender, sendResponse) {
   (async () => {
     try {
       await _wasmReady;
+      await ensureIdentity(); // restore contacts key too if the SW just woke up
       sendResponse({ ok: true, ciphertextB64: encryptContacts(msg.json) });
     } catch (e) {
       console.error('[age] ENCRYPT_CONTACTS error:', e?.message);
@@ -224,6 +258,7 @@ function handleDecryptContacts(msg, _sender, sendResponse) {
   (async () => {
     try {
       await _wasmReady;
+      await ensureIdentity(); // restore contacts key too if the SW just woke up
       sendResponse({ ok: true, json: decryptContacts(msg.ciphertextB64) });
     } catch (e) {
       console.error('[age] DECRYPT_CONTACTS error:', e?.message);
