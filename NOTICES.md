@@ -189,7 +189,7 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
 ```
 
-## [cfg-if 1.0.4](https://github.com/rust-lang/cfg-if), [js-sys 0.3.103](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys), [wasm-bindgen-macro-support 0.2.126](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support), [wasm-bindgen-macro 0.2.126](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro), [wasm-bindgen-shared 0.2.126](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared), [wasm-bindgen 0.2.126](https://github.com/wasm-bindgen/wasm-bindgen)
+## [cfg-if 1.0.4](https://github.com/rust-lang/cfg-if), [js-sys 0.3.104](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys), [wasm-bindgen-macro-support 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support), [wasm-bindgen-macro 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro), [wasm-bindgen-shared 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared), [wasm-bindgen 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2014 Alex Crichton
@@ -492,36 +492,6 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [keccak 0.2.0](https://github.com/RustCrypto/sponges)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright (c) 2018-2022 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
 ## [block-buffer 0.12.1](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
@@ -612,7 +582,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [zeroize 1.9.0](https://github.com/RustCrypto/utils)
+## [keccak 0.2.1](https://github.com/RustCrypto/sponges), [zeroize 1.9.0](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2018-2026 The RustCrypto Project Developers
@@ -975,7 +945,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [cmov 0.5.4](https://github.com/RustCrypto/utils), [hybrid-array 0.4.13](https://github.com/RustCrypto/hybrid-array)
+## [cmov 0.5.4](https://github.com/RustCrypto/utils), [hybrid-array 0.4.14](https://github.com/RustCrypto/hybrid-array)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2022-2026 The RustCrypto Project Developers
