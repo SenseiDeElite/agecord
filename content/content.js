@@ -2456,7 +2456,9 @@ function _buildImageAttachment(url, strippedName) {
     a.rel    = 'noopener noreferrer';
     a.click();
   });
-  // No contextmenu listener — native right-click menu (save/copy/open image) is preserved.
+  // Stop propagation before Discord's delegated handler sees the event.
+  // Do not preventDefault; this preserves the browser's native context menu.
+  img.addEventListener('contextmenu', (e) => e.stopPropagation());
   const imgWrap = document.createElement('div');
   imgWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
   const imgLock = document.createElement('span');
@@ -2482,7 +2484,6 @@ function _buildVideoAttachment(url) {
     'height:auto',
     'border-radius:4px',
   ].join(';');
-  // Preserves native media context menu actions.
   // Sets intrinsic aspect ratio before rendering to prevent layout shift.
   video.addEventListener('loadedmetadata', () => {
     const w = video.videoWidth;
@@ -2491,6 +2492,9 @@ function _buildVideoAttachment(url) {
       video.style.aspectRatio = w + ' / ' + h;
     }
   }, { once: true });
+  // Stop propagation before Discord's delegated handler sees the event.
+  // Do not preventDefault; this preserves the browser's native context menu.
+  video.addEventListener('contextmenu', (e) => e.stopPropagation());
 
   const videoWrap = document.createElement('div');
   videoWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
@@ -2508,6 +2512,9 @@ function _buildAudioAttachment(url) {
   audio.controls = true;
   audio.autoplay = false;
   audio.style.cssText = 'width:300px;display:block;';
+  // Stop propagation before Discord's delegated handler sees the event.
+  // Do not preventDefault; this preserves the browser's native context menu.
+  audio.addEventListener('contextmenu', (e) => e.stopPropagation());
 
   const audioWrap = document.createElement('div');
   audioWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
