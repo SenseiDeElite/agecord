@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agecord",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "End-to-end post-quantum age encryption for Discord.",
   "browser_specific_settings": {
     "gecko": {
