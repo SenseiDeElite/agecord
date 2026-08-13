@@ -195,6 +195,10 @@ function _signalContextInvalidated() {
   for (const { timer } of _relTimestampEls.values()) clearTimeout(timer);
   _relTimestampEls.clear();
 
+  // Dead contexts cannot receive further UNLOCK/RELOCK. Clear private key
+  // material immediately instead of retaining it during the reload window.
+  _clearSession();
+ 
   try { showAllPlaceholders('locked'); } catch {}
 
   window.postMessage({ type: 'AGE_CONTEXT_INVALIDATED' }, '*');
