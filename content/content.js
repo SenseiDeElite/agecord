@@ -164,6 +164,11 @@ function canDecrypt() {
   return !!(_session?.mldsaPrivBytes && _session?.cachedIdentityLine && _globalOn);
 }
 
+// Match canDecrypt() exactly: 'disabled' only for globalOff; otherwise 'locked'.
+function _lockReason() {
+  return (_session?.mldsaPrivBytes && _session?.cachedIdentityLine) ? 'disabled' : 'locked';
+}
+
 // Convenience accessors — every read of contacts/selfRecipient goes through
 // these so callers never need a `_session?.x ?? default` inline.
 function currentContacts()      { return _session?.contacts ?? {}; }
@@ -213,28 +218,6 @@ function isContextValid() {
   return true;
 }
 
-function _isContextInvalidationError(msg) {
-  return typeof msg === 'string' && msg.toLowerCase().includes('invalidated');
-}
-
-// Safe chrome.runtime.sendMessage wrapper.
-// Signals context invalidation on failure.
-// Used on UNLOCK; identity is cached and relayed to the file crypto workers.
-function bgGetIdentityLine() {
-  try {
-    return chrome.runtime.sendMessage({ type: 'GET_IDENTITY_LINE' })
-      .catch(e => {
-        const msg = e?.message ?? String(e);
-        if (_isContextInvalidationError(msg)) _signalContextInvalidated();
-        return { ok: false, error: msg };
-      });
-  } catch (e) {
-    const msg = e?.message ?? String(e);
-    if (_isContextInvalidationError(msg)) _signalContextInvalidated();
-    return Promise.resolve({ ok: false, error: msg });
-  }
-}
- 
 // ─── DOM helpers ─────────────────────────────────────────────────────────────
  
 // Returns the primary composer textbox. Edit-box editors are excluded — main
@@ -841,7 +824,7 @@ function _attachToLists(lists, onReady) {
     _msgObserver2 = null;
   }
   if (!canDecrypt()) {
-    scanExistingLocked(!_session?.mldsaPrivBytes ? 'locked' : 'disabled');
+    scanExistingLocked(_lockReason());
   }
   scanExisting();
   onReady?.();
@@ -917,7 +900,7 @@ function attachMsgObserver(list, slot) {
           if (canDecrypt()) {
             processLiFull(li);
           } else {
-            showAgePlaceholder(li, !_session?.mldsaPrivBytes ? 'locked' : 'disabled');
+            showAgePlaceholder(li, _lockReason());
           }
         }
       }
@@ -1899,7 +1882,18 @@ function _spawnWorker(pendingMap) {
   const worker = new Worker(shimUrl, { type: 'module' });
   URL.revokeObjectURL(shimUrl);
 
+  // Buffer messages until WORKER_READY confirms the imported worker is listening.
+  worker.__ageReady   = false;
+  worker.__agePending = [];
+
   worker.onmessage = ({ data }) => {
+    if (data?.op === 'WORKER_READY') {
+      worker.__ageReady = true;
+      const pending = worker.__agePending;
+      worker.__agePending = [];
+      for (const { message, transfer } of pending) worker.postMessage(message, transfer);
+      return;
+    }
     const { op, id } = data;
     const entry = pendingMap.get(id);
     if (!entry) return;
@@ -1917,14 +1911,21 @@ function _spawnWorker(pendingMap) {
   return worker;
 }
 
+// Route all worker messages through the readiness-safe send path.
+function _postToWorker(worker, message, transfer) {
+  if (!worker) return;
+  if (worker.__ageReady) worker.postMessage(message, transfer);
+  else                   worker.__agePending.push({ message, transfer });
+}
+
 // Forwards UNLOCK so the worker can cache its Decrypter.
 // No-op if the worker doesn't exist; newly spawned workers replay cached state.
 function _sendUnlockToWorker(worker, identityLine) {
-  worker?.postMessage({ op: 'UNLOCK', identityLine });
+  _postToWorker(worker, { op: 'UNLOCK', identityLine });
 }
 
 function _sendRelockToWorker(worker) {
-  worker?.postMessage({ op: 'RELOCK' });
+  _postToWorker(worker, { op: 'RELOCK' });
 }
 
 // Broadcasts UNLOCK/RELOCK to whichever file crypto workers currently exist.
@@ -1942,14 +1943,13 @@ function getTextWorker() {
   if (!_textWorker) {
     _textWorker = _spawnWorker(_textWorkerPending);
     _textWorker.onerror = (e) => {
+      console.error('[age] file-crypto-worker (text) crashed:', e.message);
       for (const { reject } of _textWorkerPending.values())
         reject(new Error(`file-crypto-worker (text) crashed: ${e.message}`));
       _textWorkerPending.clear();
       _textWorker = null;
     };
-    // Replay: this worker may be spawned lazily well after UNLOCK already
-    // happened. Per the worker's implicit message queue, posting immediately
-    // after construction is safe even before onmessage is wired up on its side.
+    // Replay UNLOCK state via the readiness-safe worker send path.
     if (_session?.cachedIdentityLine) _sendUnlockToWorker(_textWorker, _session.cachedIdentityLine);
   }
   return _textWorker;
@@ -1959,6 +1959,7 @@ function getMediaWorker() {
   if (!_mediaWorker) {
     _mediaWorker = _spawnWorker(_mediaWorkerPending);
     _mediaWorker.onerror = (e) => {
+      console.error('[age] file-crypto-worker (media) crashed:', e.message);
       for (const { reject } of _mediaWorkerPending.values())
         reject(new Error(`file-crypto-worker (media) crashed: ${e.message}`));
       _mediaWorkerPending.clear();
@@ -1993,7 +1994,7 @@ function _dispatchNextMediaOp() {
     reject:  (err)  => { _mediaWorkerBusy = false; _dispatchNextMediaOp(); reject(err);  },
   });
   msgArgs.id = id;
-  getMediaWorker().postMessage(msgArgs, transfers);
+  _postToWorker(getMediaWorker(), msgArgs, transfers);
 }
 
 // byteLength used only for priority ordering — not the transfer size.
@@ -2063,7 +2064,7 @@ function workerCompressEncrypt(text, recipients) {
       resolve: (data) => resolve(data.buffer),
       reject,
     });
-    getTextWorker().postMessage({ op: 'COMPRESS_ENCRYPT', id, text, recipients });
+    _postToWorker(getTextWorker(), { op: 'COMPRESS_ENCRYPT', id, text, recipients });
   });
 }
 
@@ -2073,7 +2074,8 @@ function workerVerifyDecryptDecompress(fileBuffer, prefixBytes, candidateKeysB64
   return new Promise((resolve, reject) => {
     const id = _textWorkerNextId++;
     _textWorkerPending.set(id, { resolve, reject });
-    getTextWorker().postMessage(
+    _postToWorker(
+      getTextWorker(),
       {
         op: 'VERIFY_DECRYPT_DECOMPRESS',
         id,
@@ -2218,51 +2220,72 @@ function _evictStaleProcessedIds() {
  
 // ─── Extension messages ───────────────────────────────────────────────────────
 
+// Reconcile visible messages after worker unlock so decrypt dispatch sees current state.
+function _syncDisplayToSession() {
+  if (_globalOn) scanExisting();
+  else           showAllPlaceholders('disabled');
+}
+
 // Applies an unlock payload to session state. Shared by push and boot-time
 // pull paths to keep state handling consistent.
+
+// All unlock state arrives in one payload, avoiding partial-session async gaps.
 async function applyUnlockPayload(payload) {
+  let localData;
   try {
-    const localData = await localGet(['globalOn']);
+    localData = await localGet(['globalOn']);
+  } catch (e) {
+    console.error('[age] unlock error: globalOn read failed:', e?.message);
+    localData = {};
+  }
 
-    // Clear the old session before fetching identity.
-    // Keeps stale key material out of memory.
-    // Decrypt/send stay disabled until the new session is published.
-    _clearSession();
+  let mldsaPrivBytes;
+  try {
+    mldsaPrivBytes = fromB64(payload.mldsaSeedB64); // 32-byte ML-DSA-87 seed
+  } catch (e) {
+    // Malformed payload — leave whatever session already existed untouched
+    // rather than half-apply a broken one.
+    console.error('[age] unlock error: malformed mldsaSeedB64:', e?.message);
+    return;
+  }
 
-    const mldsaPrivBytes = fromB64(payload.mldsaSeedB64); // 32-byte ML-DSA-87 seed
+  // Single atomic publish: the prior session (if any) stays valid right up
+  // until this call, and the new one is complete the instant it lands —
+  // there is never a window where _session is null or partially filled in.
+  _globalOn = localData.globalOn !== false;
+  _setSession({
+    mldsaPrivBytes,
+    cachedIdentityLine: payload.identityLine ?? null,
+    selfRecipient:      payload.ageRecipient || null,
+    contacts:           payload.contacts || {},
+    contactsLoaded:     true,
+  });
 
-    // Fetch identity before publishing the session.
-    // Prevents partial state during the async gap.
-    const identResult        = await bgGetIdentityLine();
-    const cachedIdentityLine = identResult?.ok ? identResult.identityLine : null;
-
-    _globalOn = localData.globalOn !== false;
-    _setSession({
-      mldsaPrivBytes,
-      cachedIdentityLine,
-      selfRecipient:  payload.ageRecipient || null,
-      contacts:       payload.contacts || {},
-      contactsLoaded: true,
-    });
-
+  try {
     _wipeAttachmentState({ includeCache: false });
     // Evict stale entries so they retry; still-present cached entries skip CDN re-fetch.
     _evictStaleProcessedIds();
 
-    // Ensures VERIFY_DECRYPT[_DECOMPRESS] sees cached state.
-    if (cachedIdentityLine) _unlockWorkers(cachedIdentityLine);
+    // Ensures VERIFY_DECRYPT[_DECOMPRESS] sees cached state. Must happen
+    // before _syncDisplayToSession()'s scanExisting() call below.
+    if (_session.cachedIdentityLine) {
+      _unlockWorkers(_session.cachedIdentityLine);
+    } else {
+      // identityLine must accompany mldsaSeedB64; fail loudly if absent.
+      console.error('[age] applyUnlockPayload: unlock payload had no identityLine — decrypt will stay locked until the next unlock.');
+    }
 
     if (_globalOn) {
       attachEnterHook();
       relayInterceptorState(true);
-      scanExisting();
     } else {
       // Unlocked but globally disabled — replace any stale 'locked' placeholders with 'disabled'.
       relayInterceptorState(false);
-      showAllPlaceholders('disabled');
     }
   } catch (e) {
     console.error('[age] unlock error:', e);
+  } finally {
+    _syncDisplayToSession();
   }
 }
 
@@ -2282,7 +2305,10 @@ function listenForMessages() {
       const genBefore   = _generation;
       const localData = await localGet(['globalOn']);
       // If _generation changed while awaiting, an UNLOCK/RELOCK already updated all state.
-      if (_generation !== genBefore) return;
+      if (_generation !== genBefore) {
+        console.warn('[age] CONTACTS_UPDATED: generation changed mid-await, discarding this update (an UNLOCK/RELOCK should have already superseded it)');
+        return;
+      }
       _globalOn = localData.globalOn !== false;
       // Update session contacts without bumping _generation.
       // No-op while locked.
@@ -3008,8 +3034,8 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
       if (!isContextValid()) return;
       const _errMosaicItem = hideFileCard(fileCard);
       if ((e?.message ?? e) === 'NOT_UNLOCKED') {
-        // A RELOCK raced ahead of the worker processing this op, despite the
-        // checkDecryptPreconditions() call above passing — genuinely "locked".
+        // NOT_UNLOCKED indicates a worker-state race; otherwise treat it as a regression.
+        console.error('[age] NOT_UNLOCKED decrypting text attachment — worker desynced from session state:', { attachId });
         renderDecryptedMessage(liElement, '🔐 Extension locked.', attachId, _errMosaicItem ?? fileCard);
         return;
       }
@@ -3201,8 +3227,7 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
       .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
     if ((e?.message ?? e) === 'NOT_UNLOCKED') {
-      // A RELOCK raced ahead of the worker processing this op, despite the
-      // checkDecryptPreconditions() call above passing — genuinely "locked".
+      // Only expected for a RELOCK race; already logged by the catch handler.
       renderDecryptedMessage(liElement, '🔐 Extension locked.', undefined, _earlyMosaicItem ?? fileCard);
       return;
     }
@@ -3418,7 +3443,7 @@ function _processQuotedContainer(container) {
   if (canDecrypt()) {
     _scanForEncryptedAttachments(container, cdnUrl => _attachId(container, cdnUrl), { checkExtraGuards: true });
   } else {
-    showQuotedPlaceholder(container, !_session?.mldsaPrivBytes ? 'locked' : 'disabled');
+    showQuotedPlaceholder(container, _lockReason());
   }
 }
 
