@@ -191,8 +191,8 @@
   // Contacts key is derived lazily by ensureContactsKey() on first save.
     
   // Optimization: skip UNLOCK if background identity is still live.
-  // Avoids redundant scanExisting() and message re-renders.
-  // Send UNLOCK only after service-worker state loss.
+
+  // Re-prime background state only after service-worker loss; tabs sync via REQUEST_UNLOCK.
   async function bgUnlockResume(identity) {
     const ping = await bgSend({ type: 'PING' }).catch(() => null);
     if (ping?.hasIdentity) return; // background still live — nothing to do
