@@ -7,8 +7,7 @@
 
 // Key flow:
 // popup → background: identity blob + contacts key.
-// background → content: ML-DSA-87 seed.
-// content → background: age identity line.
+// background → content: ML-DSA-87 seed + age identity line.
 // popup ↔ background: contacts JSON ↔ ciphertext.
 
 // Message decryption runs in content script (file-crypto-worker.js);
@@ -120,10 +119,18 @@ async function ensureIdentity() {
 // Shared by the tab-push path (sendUnlockToTab) and the pull-response path
 // (handleRequestUnlock) so the two payload shapes can't drift apart.
 // Returns null when locked.
+
+// Include identityLine directly to avoid a second request during session restoration.
 function buildUnlockPayload() {
   if (!_identity) return null;
+  const identityLine = _identity.split('\n')[0];
+  if (!identityLine) {
+    // Empty identityLine means malformed identity, not a locked state.
+    console.error('[age] buildUnlockPayload: identityLine is empty — identity blob is malformed');
+  }
   return {
     mldsaSeedB64: toB64(getMldsaSeed(_identity)),
+    identityLine,
     contacts:     _contacts,
     ageRecipient: _ageRecipient,
   };
@@ -268,27 +275,14 @@ function handleDecryptContacts(msg, _sender, sendResponse) {
   return true;
 }
 
-// Returns age X25519xMLKEM768 identity line for file-crypto-worker.js per-message decryption.
-function handleGetIdentityLine(_msg, _sender, sendResponse) {
-  (async () => {
-    try {
-      if (!(await ensureIdentity())) { sendResponse({ ok: false, error: 'locked' }); return; }
-      sendResponse({ ok: true, identityLine: _identity.split('\n')[0] });
-    } catch (e) {
-      console.error('[age] GET_IDENTITY_LINE error:', e?.message);
-      sendResponse({ ok: false, error: e?.message ?? String(e) });
-    }
-  })();
-  return true;
-}
-
 // Pull-based counterpart to sendUnlockToTab. Called at content-script init;
 // responds on the request/response channel, avoiding a second sendMessage
 // and any listener-readiness race.
 function handleRequestUnlock(_msg, _sender, sendResponse) {
   (async () => {
     try {
-      if (!(await ensureIdentity())) { sendResponse({ ok: false }); return; }
+      const hasIdentity = await ensureIdentity();
+      if (!hasIdentity) { sendResponse({ ok: false }); return; }
       const payload = buildUnlockPayload();
       if (!payload) { sendResponse({ ok: false }); return; }
       sendResponse({ ok: true, ...payload });
@@ -308,7 +302,6 @@ const handlers = {
   CONTACTS_UPDATED:     handleContactsUpdated,
   ENCRYPT_CONTACTS:     handleEncryptContacts,
   DECRYPT_CONTACTS:     handleDecryptContacts,
-  GET_IDENTITY_LINE:    handleGetIdentityLine,
   REQUEST_UNLOCK:       handleRequestUnlock,
 };
 
