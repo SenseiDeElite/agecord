@@ -139,9 +139,7 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
   return { sigValid: true, plainBytes };
 }
 
-// Per spec, a dedicated worker's implicit port message queue is enabled at
-// construction — messages posted before onmessage is assigned are queued,
-// never dropped. No WORKER_READY handshake needed.
+// Blob shim completes before this module's init/onmessage setup; buffer sends until WORKER_READY.
 
 self.onmessage = async ({ data }) => {
   const { op, id } = data;
@@ -259,3 +257,6 @@ self.onmessage = async ({ data }) => {
     self.postMessage({ op: `${op}_ERROR`, id, error: message });
   }
 };
+
+// Signal readiness after registering self.onmessage.
+self.postMessage({ op: 'WORKER_READY' });
