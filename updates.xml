@@ -2,7 +2,7 @@
 <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
   <app appid='iabgljppdmfhopeaallblmhjpagobned'>
     <updatecheck
-      codebase='https://github.com/SenseiDeElite/agecord/releases/download/v0.8.2/agecord-0.8.2.crx'
-      version='0.8.2' />
+      codebase='https://github.com/SenseiDeElite/agecord/releases/download/v0.8.3/agecord-0.8.3.crx'
+      version='0.8.3' />
   </app>
 </gupdate>
