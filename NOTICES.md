@@ -155,40 +155,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## [subtle 2.6.1](https://github.com/dalek-cryptography/subtle)
-[BSD 3-Clause "New" or "Revised" License](https://opensource.org/license/BSD-3-Clause)
-```
-Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.
-Copyright (c) 2016-2024 Isis Agora Lovecruft. All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are
-met:
-
-1. Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-
-3. Neither the name of the copyright holder nor the names of its
-contributors may be used to endorse or promote products derived from
-this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
-IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
-TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
-PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
-TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
-```
-
 ## [cfg-if 1.0.4](https://github.com/rust-lang/cfg-if), [js-sys 0.3.104](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys), [wasm-bindgen-macro-support 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support), [wasm-bindgen-macro 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro), [wasm-bindgen-shared 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared), [wasm-bindgen 0.2.127](https://github.com/wasm-bindgen/wasm-bindgen)
 [MIT License](https://opensource.org/license/MIT)
 ```
@@ -280,11 +246,12 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [blake2 0.10.6](https://github.com/RustCrypto/hashes)
+## [blake2 0.11.0](https://github.com/RustCrypto/hashes)
 [MIT License](https://opensource.org/license/MIT)
 ```
-Copyright (c) 2015-2016 The blake2-rfc Developers, Cesar Barros
+Copyright (c) 2017-2026 The RustCrypto Project Developers
 Copyright (c) 2017 Artyom Pavlov
+Copyright (c) 2015-2016 The blake2-rfc Developers, Cesar Barros
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -371,36 +338,6 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [digest 0.10.7](https://github.com/RustCrypto/traits)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright (c) 2017 Artyom Pavlov
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
 ## [digest 0.11.3](https://github.com/RustCrypto/traits)
 [MIT License](https://opensource.org/license/MIT)
 ```
@@ -436,36 +373,6 @@ DEALINGS IN THE SOFTWARE.
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2018 Josh Stone
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-## [block-buffer 0.10.4](https://github.com/RustCrypto/utils)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright (c) 2018-2019 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -764,37 +671,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [password-hash 0.5.0](https://github.com/RustCrypto/traits/tree/master/password-hash)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright (c) 2020-2023 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-## [cpufeatures 0.2.17](https://github.com/RustCrypto/utils), [cpufeatures 0.3.0](https://github.com/RustCrypto/utils)
+## [cpufeatures 0.3.0](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2020-2025 The RustCrypto Project Developers
@@ -824,40 +701,10 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [crypto-common 0.1.7](https://github.com/RustCrypto/traits)
+## [argon2 0.6.0](https://github.com/RustCrypto/password-hashes/tree/master/argon2)
 [MIT License](https://opensource.org/license/MIT)
 ```
-Copyright (c) 2021 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-## [argon2 0.5.3](https://github.com/RustCrypto/password-hashes/tree/master/argon2)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright (c) 2021-2024 The RustCrypto Project Developers
+Copyright (c) 2021-2026 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1119,37 +966,6 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [rand_core 0.6.4](https://github.com/rust-random/rand)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright 2018 Developers of the Rand project
-Copyright (c) 2014 The Rust Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
 ## [r-efi 6.0.0](https://github.com/r-efi/r-efi)
 [MIT License](https://opensource.org/license/MIT)
 ```
@@ -1207,56 +1023,6 @@ DEALINGS IN THE SOFTWARE.
 The MIT License (MIT)
 
 Copyright (c) 2014 Paho Lurie-Gregg
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## [version_check 0.9.5](https://github.com/SergioBenitez/version_check)
-[MIT License](https://opensource.org/license/MIT)
-```
-The MIT License (MIT)
-Copyright (c) 2017-2018 Sergio Benitez
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
-## [generic-array 0.14.7](https://github.com/fizyk20/generic-array.git)
-[MIT License](https://opensource.org/license/MIT)
-```
-The MIT License (MIT)
-
-Copyright (c) 2015 Bartłomiej Kamiński
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
