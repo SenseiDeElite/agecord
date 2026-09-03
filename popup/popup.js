@@ -540,8 +540,9 @@
   });
 
   // resetToSetupScreen: shared teardown for reset-keypair and clear-all-data.
-  // clearSetupFields: true when arriving from the lock screen (setup fields visible).
-  async function resetToSetupScreen(clearSetupFields = false) {
+  
+  // Clear passphrase fields unconditionally, including hidden fields.
+  async function resetToSetupScreen() {
     await store.remove(['ageRecipient', 'identity_blob', 'ageEncryptedIdentity',
                         'contactsEnc', 'contactsSaltB64', 'contacts', 'globalOn',
                         'unlockAttempts', 'unlockLockedUntil', 'format_version']);
@@ -554,11 +555,9 @@
     document.getElementById('btn-goto-setup').hidden   = true;
     document.getElementById('passphrase-input').value  = '';
     document.getElementById('unlock-error').hidden     = true;
-    if (clearSetupFields) {
-      document.getElementById('setup-passphrase').value  = '';
-      document.getElementById('setup-passphrase2').value = '';
-      document.getElementById('setup-error').hidden      = true;
-    }
+    document.getElementById('setup-passphrase').value  = '';
+    document.getElementById('setup-passphrase2').value = '';
+    document.getElementById('setup-error').hidden      = true;
     show('setup');
   }
 
@@ -568,7 +567,7 @@
     confirmBtn: 'btn-reset-confirm',
     modal:      'modal-reset-keypair',
     input:      'reset-confirm-input',
-    onConfirm:  () => resetToSetupScreen(true),
+    onConfirm:  () => resetToSetupScreen(),
   });
 
   // ─── Passphrase lockdown ──────────────────────────────────────────────────────
@@ -798,7 +797,8 @@
           'Your identity format is outdated. Please regenerate your key or re-import from a backup.');
         await store.remove(['contactsSaltB64', 'contactsEnc']);
       } else if (_decryptFailed) {
-        // Wrong passphrase — record against lockdown counter.
+        // Wrong passphrase — record against lockdown counter and clear the field.
+        document.getElementById('passphrase-input').value = '';
         await recordFailedAttempt();
       } else {
         showErr(errEl, 'Unlock failed: ' + e.message);
@@ -858,7 +858,12 @@
 
     const passErr = validatePassphrase(pass);
     if (passErr)        { showErr(errEl, passErr); return; }
-    if (pass !== pass2) { showErr(errEl, 'Passphrases do not match.'); return; }
+    if (pass !== pass2) {
+      showErr(errEl, 'Passphrases do not match.');
+      setupPassEl.value = '';
+      document.getElementById('setup-passphrase2').value = '';
+      return;
+    }
 
     document.getElementById('btn-generate').hidden  = true;
     document.getElementById('btn-show-import').hidden = true;
@@ -899,6 +904,13 @@
       await bgUnlock(identityBlob, pass);
       await saveContacts({});
       await bgSend({ type: 'RELOAD_DISCORD_TABS' });
+
+      // The passphrase has now been consumed (used to encrypt the identity
+      // blob) — clear it from the DOM immediately rather than leaving it
+      // sitting in these fields for the rest of the session.
+      setupPassEl.value = '';
+      document.getElementById('setup-passphrase2').value = '';
+
       await showMain();
 
     } catch (e) {
@@ -912,7 +924,7 @@
 
   // ─── Import existing keypair ─────────────────────────────────────────────────
 
-  const DRAFT_TTL = 10 * 60 * 1000;
+  const DRAFT_TTL = 5 * 60 * 1000; // aligned with SENSITIVE_FIELD_TTL below
 
   function makeDraftManager(sessionKey, fieldIds) {
     async function save() {
@@ -941,7 +953,14 @@
 
   IMPORT_DRAFT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveImportDraft));
   document.getElementById('btn-show-import').addEventListener('click', () => show('import'));
-  document.getElementById('btn-back-import').addEventListener('click', () => show('setup'));
+  document.getElementById('btn-back-import').addEventListener('click', () => {
+    // Explicit cancel — the passphrases typed so far no longer serve any
+    // purpose, so wipe both the visible fields and the autosaved draft
+    // rather than letting them linger in session storage for the full TTL.
+    IMPORT_DRAFT_FIELDS.forEach(id => { document.getElementById(id).value = ''; });
+    clearImportDraft();
+    show('setup');
+  });
 
   document.getElementById('btn-import').addEventListener('click', async () => {
     await cryptoReady;
@@ -957,11 +976,21 @@
 
     const passErr = validatePassphrase(newPass);
     if (passErr)           { showErr(errEl, passErr); return; }
-    if (newPass !== newPass2) { showErr(errEl, 'Passphrases do not match.'); return; }
+    if (newPass !== newPass2) {
+      showErr(errEl, 'Passphrases do not match.');
+      document.getElementById('import-passphrase').value  = '';
+      document.getElementById('import-passphrase2').value = '';
+      saveImportDraft();
+      return;
+    }
 
     const btn = document.getElementById('btn-import');
     btn.hidden = true;
     document.getElementById('import-spinner').hidden = false;
+
+    // Set when the failure is specifically a wrong export passphrase, so the
+    // outer catch can clear just that one field rather than all of them.
+    let _wrongExportPass = false;
 
     try {
       // The export blob from "My Key → Export" is always encrypted with the
@@ -978,6 +1007,7 @@
           throw new Error('This export was created with an older version of the extension. ' +
             'Please regenerate your keypair on the original device and export again.');
         }
+        _wrongExportPass = true;
         throw new Error('Wrong export passphrase, or the blob is not a valid encrypted key export.');
       }
 
@@ -1021,6 +1051,10 @@
 
     } catch (e) {
       showErr(errEl, 'Import failed: ' + e.message);
+      if (_wrongExportPass) {
+        document.getElementById('import-export-passphrase').value = '';
+        saveImportDraft();
+      }
     } finally {
       btn.hidden = false;
       document.getElementById('import-spinner').hidden = true;
@@ -2075,6 +2109,12 @@
 
   // ─── Export private key ───────────────────────────────────────────────────────
 
+  // Preserve export passphrases across accidental popup dismissal via a TTL draft.
+  const EXPORT_DRAFT_FIELDS = ['export-passphrase-input', 'export-new-passphrase', 'export-new-passphrase2'];
+  const { save: saveExportDraft, restore: restoreExportDraft, clear: clearExportDraft } =
+    makeDraftManager('export_draft', EXPORT_DRAFT_FIELDS);
+  EXPORT_DRAFT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveExportDraft));
+
   function resetExportModal() {
     document.getElementById('export-passphrase-input').value  = '';
     document.getElementById('export-new-passphrase').value    = '';
@@ -2086,12 +2126,17 @@
     document.getElementById('modal-export-key').hidden        = true;
   }
 
-  document.getElementById('btn-export-key').addEventListener('click', () => {
+  document.getElementById('btn-export-key').addEventListener('click', async () => {
     resetExportModal();
+    await restoreExportDraft();
     document.getElementById('modal-export-key').hidden = false;
   });
 
-  document.getElementById('btn-export-cancel').addEventListener('click', resetExportModal);
+  document.getElementById('btn-export-cancel').addEventListener('click', () => {
+    // Explicit cancel — the typed passphrases no longer serve any purpose.
+    resetExportModal();
+    clearExportDraft();
+  });
 
   ['export-passphrase-input', 'export-new-passphrase', 'export-new-passphrase2'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
@@ -2112,7 +2157,13 @@
 
     const exportPassErr = validatePassphrase(exportPass);
     if (exportPassErr)              { showErr(errEl, 'Export passphrase: ' + exportPassErr); return; }
-    if (exportPass !== exportPass2) { showErr(errEl, 'Export passphrases do not match.'); return; }
+    if (exportPass !== exportPass2) {
+      showErr(errEl, 'Export passphrases do not match.');
+      document.getElementById('export-new-passphrase').value  = '';
+      document.getElementById('export-new-passphrase2').value = '';
+      saveExportDraft();
+      return;
+    }
 
     btn.disabled    = true;
     btn.textContent = 'Verifying…';
@@ -2125,6 +2176,7 @@
       const envelopeB64 = await encryptIdentityBlob(identity, exportPass);
 
       resetExportModal();
+      clearExportDraft();
       document.getElementById('export-key-blob').value = envelopeB64;
       document.getElementById('modal-export-display').hidden = false;
 
@@ -2133,6 +2185,12 @@
         ? 'Your identity format is outdated. Please regenerate your key.'
         : 'Export failed: ' + e.message
       );
+      if (e.message === 'Wrong unlock passphrase.') {
+        // Confirmed wrong — only this field is invalid, leave the export
+        // passphrase pair (which the user may have gotten right) alone.
+        document.getElementById('export-passphrase-input').value = '';
+        saveExportDraft();
+      }
       btn.disabled    = false;
       btn.textContent = 'Encrypt & show';
       spinner.hidden  = true;
@@ -2186,7 +2244,7 @@
     confirmBtn: 'btn-clear-data-confirm',
     modal:      'modal-clear-data',
     input:      'clear-data-confirm-input',
-    onConfirm:  () => resetToSetupScreen(false),
+    onConfirm:  () => resetToSetupScreen(),
   });
 
   // ─── Change passphrase ────────────────────────────────────────────────────────
@@ -2228,7 +2286,12 @@
     if (!currentPass) { showErr(errEl, 'Enter your current passphrase.'); return; }
     const newPassErr = validatePassphrase(newPass);
     if (newPassErr)              { showErr(errEl, newPassErr); return; }
-    if (newPass !== newPass2)    { showErr(errEl, 'New passphrases do not match.'); return; }
+    if (newPass !== newPass2) {
+      showErr(errEl, 'New passphrases do not match.');
+      document.getElementById('change-pass-new').value  = '';
+      document.getElementById('change-pass-new2').value = '';
+      return;
+    }
     if (newPass === currentPass) { showErr(errEl, 'New passphrase must differ from current.'); return; }
 
     btn.disabled    = true;
@@ -2261,6 +2324,9 @@
         ? 'Your identity format is outdated. Please regenerate your key.'
         : 'Change failed: ' + e.message
       );
+      if (e.message === 'Wrong current passphrase.') {
+        document.getElementById('change-pass-current').value = '';
+      }
       btn.disabled    = false;
       btn.textContent = 'Change passphrase';
       spinner.hidden  = true;
@@ -2329,6 +2395,31 @@
     document.getElementById('about-version').textContent = 'v' + ver;
     show('about');
   }
+
+  // ─── Sensitive-field auto-clear ──────────────────────────────────────────────
+
+  // Backstop: clear inactive sensitive fields after SENSITIVE_FIELD_TTL.
+  const SENSITIVE_FIELD_TTL = 5 * 60 * 1000; // 5 minutes
+  const SENSITIVE_FIELD_IDS = [
+    'passphrase-input',
+    'setup-passphrase', 'setup-passphrase2',
+    'import-export-passphrase', 'import-passphrase', 'import-passphrase2',
+    'export-passphrase-input', 'export-new-passphrase', 'export-new-passphrase2',
+    'change-pass-current', 'change-pass-new', 'change-pass-new2',
+  ];
+
+  (function armSensitiveFieldAutoClear() {
+    const timers = new Map();
+    SENSITIVE_FIELD_IDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        clearTimeout(timers.get(id));
+        if (!el.value) return;
+        timers.set(id, setTimeout(() => { el.value = ''; }, SENSITIVE_FIELD_TTL));
+      });
+    });
+  })();
 
   // ─── Boot ────────────────────────────────────────────────────────────────────
 
