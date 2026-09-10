@@ -15,7 +15,7 @@
 
 'use strict';
 
-import { init as _rustcryptoInit, xchacha20poly1305_encrypt, xchacha20poly1305_decrypt }
+import { init as _rustcryptoInit, xchacha20poly1305_encrypt }
   from './lib/rustcrypto-wasm.min.js';
 
 // init() is idempotent. Fire it immediately so WASM is ready before any message
@@ -58,10 +58,6 @@ function getMldsaSeed(identityBlob) {
 
 const ENVELOPE_VER      = 0x01;
 const ENVELOPE_HDR_LEN  = 1;
-const XCHACHA_NONCE_LEN = 24;
-const POLY1305_TAG_LEN  = 16;
-// Minimum valid envelope: version byte + nonce + at least an empty-plaintext tag.
-const MIN_ENVELOPE_LEN  = ENVELOPE_HDR_LEN + XCHACHA_NONCE_LEN + POLY1305_TAG_LEN;
 
 function encryptContacts(jsonStr) {
   if (!_contactsKeyBytes) throw new Error('Contacts key not available — extension locked.');
@@ -71,17 +67,6 @@ function encryptContacts(jsonStr) {
   envelope[0]       = ENVELOPE_VER;
   envelope.set(noncePlusCt, ENVELOPE_HDR_LEN);
   return toB64(envelope);
-}
-
-function decryptContacts(b64) {
-  if (!_contactsKeyBytes) throw new Error('Contacts key not available — extension locked.');
-  const envelope = fromB64(b64);
-  if (envelope[0] !== ENVELOPE_VER)
-    throw new Error(`Unknown contacts envelope version 0x${envelope[0].toString(16)}.`);
-  if (envelope.length < MIN_ENVELOPE_LEN)
-    throw new Error('Contacts envelope too short — data may be corrupt.');
-  const plaintext = xchacha20poly1305_decrypt(_contactsKeyBytes, envelope.slice(ENVELOPE_HDR_LEN));
-  return new TextDecoder().decode(plaintext);
 }
 
 // ─── Identity state ───────────────────────────────────────────────────────────
@@ -177,7 +162,9 @@ function handleUnlock(msg, _sender, sendResponse) {
         _contactsKeyBytes?.fill(0);
         _contactsKeyBytes = fromB64(msg.contactsKeyB64);
       }
-      // Atomic session write: identity, contacts, recipient, and key stay consistent.
+      // Atomic session write; roll back if _epoch changes during the write to prevent
+      // RELOCK races from resurrecting age_unlocked state.
+      const myEpoch = _epoch;
       await chrome.storage.session.set({
         age_unlocked:     true,
         age_identity:     _identity,
@@ -185,6 +172,13 @@ function handleUnlock(msg, _sender, sendResponse) {
         age_recipient:    _ageRecipient,
         age_contacts_key: _contactsKeyBytes ? toB64(_contactsKeyBytes) : null,
       });
+      if (_epoch !== myEpoch) {
+        // Superseded during the write; remove the stale identity from storage.
+        await chrome.storage.session.remove(SESSION_KEYS)
+          .catch(e => console.error('[age] UNLOCK post-RELOCK cleanup failed:', e?.message));
+        sendResponse({ ok: false, error: 'superseded' });
+        return;
+      }
       // Best-effort push to every open Discord tab. Only load-bearing for
       // tabs that are already fully loaded and idle — a tab that's still
       // loading will get this same state itself via its own boot-time
@@ -238,9 +232,17 @@ function handleContactsUpdated(msg, _sender, sendResponse) {
   if (msg.contacts)     _contacts     = msg.contacts;
   if (msg.ageRecipient) _ageRecipient = msg.ageRecipient;
   broadcastToTabs({ type: 'CONTACTS_UPDATED', contacts: _contacts, ageRecipient: _ageRecipient });
-  // Sync session storage while unlocked; abort if RELOCK superseded this update.
+  // Sync session storage while unlocked; re-check _epoch after set() to prevent
+  // a RELOCK race from resurrecting age_contacts.
   if (_identity) {
+    const myEpoch = _epoch;
     chrome.storage.session.set({ age_contacts: _contacts, age_recipient: _ageRecipient })
+      .then(() => {
+        if (_epoch !== myEpoch) {
+          chrome.storage.session.remove(['age_contacts', 'age_recipient'])
+            .catch(e => console.error('[age] CONTACTS_UPDATED post-RELOCK cleanup failed:', e?.message));
+        }
+      })
       .catch(e => console.error('[age] CONTACTS_UPDATED session write failed:', e?.message));
   }
   sendResponse({ ok: true });
@@ -255,20 +257,6 @@ function handleEncryptContacts(msg, _sender, sendResponse) {
       sendResponse({ ok: true, ciphertextB64: encryptContacts(msg.json) });
     } catch (e) {
       console.error('[age] ENCRYPT_CONTACTS error:', e?.message);
-      sendResponse({ ok: false, error: e?.message ?? String(e) });
-    }
-  })();
-  return true;
-}
-
-function handleDecryptContacts(msg, _sender, sendResponse) {
-  (async () => {
-    try {
-      await _wasmReady;
-      await ensureIdentity(); // restore contacts key too if the SW just woke up
-      sendResponse({ ok: true, json: decryptContacts(msg.ciphertextB64) });
-    } catch (e) {
-      console.error('[age] DECRYPT_CONTACTS error:', e?.message);
       sendResponse({ ok: false, error: e?.message ?? String(e) });
     }
   })();
@@ -301,7 +289,6 @@ const handlers = {
   RELOAD_DISCORD_TABS:  handleReloadDiscordTabs,
   CONTACTS_UPDATED:     handleContactsUpdated,
   ENCRYPT_CONTACTS:     handleEncryptContacts,
-  DECRYPT_CONTACTS:     handleDecryptContacts,
   REQUEST_UNLOCK:       handleRequestUnlock,
 };
 
