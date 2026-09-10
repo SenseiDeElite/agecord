@@ -342,6 +342,19 @@ function getActiveEntry(channelIdOverride, serverIdOverride) {
 function isEncryptionActive() {
   return canDecrypt() && !!getActiveEntry();
 }
+
+// Authoritative outbound upload decision, evaluated live at encryption time.
+// AGE_ENCRYPT_FILE/AGE_ENCRYPT_TEXT_MESSAGE consume this result.
+// 'blocked'     — locked or contact state unconfirmed; never send plaintext.
+// 'passthrough' — encryption off or no contact configured for this channel.
+// 'encrypt'     — proceed; entry/channelId are ready.
+function resolveUploadGate(channelId, guildId) {
+  if (!_globalOn) return { outcome: 'passthrough', reason: 'Agecord is turned off.' };
+  if (!canDecrypt()) return { outcome: 'blocked', reason: 'Agecord is locked — unlock it to send attachments in this channel.' };
+  const active = getActiveEntry(channelId, guildId);
+  if (!active?.entry) return { outcome: 'passthrough', reason: 'No encrypted contact configured for this channel.' };
+  return { outcome: 'encrypt', entry: active.entry, channelId: active.channelId };
+}
  
 // ─── Enter key interception ───────────────────────────────────────────────────
  
@@ -2104,30 +2117,34 @@ function listenForInterceptorMessages() {
     const fileChannelId = e.data.channelId ?? null;
     const fileGuildId   = e.data.guildId ?? null;
 
-    // ACK before any await — upload-interceptor.js uses a 10 s window to detect bridge failures.
+    // ACK before any await — upload-interceptor.js's ACK_TIMEOUT_MS (2 s) detects bridge failures.
     window.postMessage({ type: 'AGE_ENCRYPT_FILE_ACK', requestId }, '*');
  
     try {
+      // Thread/forum composers lack a channel ID, so fail closed.
       if (fileChannelId === null) {
-        throw new Error('Channel ID unavailable — file not encrypted (thread creation or forum modal).');
-      }
-
-      // Passes explicit recipient context to avoid encrypting only for self.
-      // Avoids re-deriving IDs after async navigation.
-      const active = getActiveEntry(fileChannelId, fileGuildId);
-      if (!active?.entry) {
-        throw new Error(
-          'No encrypted contact configured for this channel — file not encrypted.'
+        throw Object.assign(
+          new Error('Channel ID unavailable — file not encrypted (thread creation or forum modal).'),
+          { code: 'BLOCKED' },
         );
       }
- 
-      const { entry }     = active;
+
+
+      // Pass recipient context to avoid self-only encryption.
+      // Prevents ID re-derivation after async navigation; live-evaluated.
+      const gate = resolveUploadGate(fileChannelId, fileGuildId);
+      if (gate.outcome !== 'encrypt') {
+        throw Object.assign(new Error(gate.reason), { code: gate.outcome.toUpperCase() });
+      }
+
+      const { entry }     = gate;
       const recipients    = buildRecipientList(entry);
- 
-      // Secondary guard: entry found but no usable public keys (e.g. group with
-      // all members removed, or contact with a malformed ageRecipient).
-      if (recipients.length === 0) throw new Error('No recipients — is an encrypted contact selected?');
- 
+
+      // Matched entry without usable keys must block; contact is configured.
+      if (recipients.length === 0) {
+        throw Object.assign(new Error('No recipients — is an encrypted contact selected?'), { code: 'BLOCKED' });
+      }
+
       const encBuffer = await workerEncryptFile(plainBuffer, recipients);
       const ageBytes  = new Uint8Array(encBuffer);
 
@@ -2144,7 +2161,7 @@ function listenForInterceptorMessages() {
     } catch (err) {
       console.error('[age] AGE_ENCRYPT_FILE error requestId=%s:', requestId, err?.message ?? err);
       window.postMessage(
-        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, error: err.message },
+        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, error: err.message, errorCode: err.code ?? 'BLOCKED' },
         '*'
       );
     }
@@ -2158,21 +2175,24 @@ function listenForInterceptorMessages() {
 
     const { requestId, text, channelId: msgChannelId, guildId: msgGuildId } = e.data;
 
-    // ACK before any await — upload-interceptor.js uses a 2 s window to detect bridge failures.
+    // ACK before any await — upload-interceptor.js's ACK_TIMEOUT_MS (2 s) detects bridge failures.
     window.postMessage({ type: 'AGE_ENCRYPT_TEXT_MESSAGE_ACK', requestId }, '*');
 
     try {
       if (msgChannelId === null || msgChannelId === undefined) {
-        throw new Error('Channel ID unavailable — message not encrypted (thread creation or forum modal).');
+        throw Object.assign(
+          new Error('Channel ID unavailable — message not encrypted (thread creation or forum modal).'),
+          { code: 'BLOCKED' },
+        );
       }
 
       // Both ids passed explicitly — see getActiveEntry's doc comment.
-      const active = getActiveEntry(msgChannelId, msgGuildId ?? null);
-      if (!active?.entry) {
-        throw new Error('No encrypted contact configured for this channel — message not encrypted.');
+      const gate = resolveUploadGate(msgChannelId, msgGuildId ?? null);
+      if (gate.outcome !== 'encrypt') {
+        throw Object.assign(new Error(gate.reason), { code: gate.outcome.toUpperCase() });
       }
 
-      const fileBytes = await encryptTextAsMessage(text, active.entry, msgChannelId);
+      const fileBytes = await encryptTextAsMessage(text, gate.entry, msgChannelId);
 
       window.postMessage(
         { type: 'AGE_ENCRYPT_TEXT_MESSAGE_RESULT', requestId, buffer: fileBytes.buffer },
@@ -2182,7 +2202,7 @@ function listenForInterceptorMessages() {
     } catch (err) {
       console.error('[age] AGE_ENCRYPT_TEXT_MESSAGE error requestId=%s:', requestId, err?.message ?? err);
       window.postMessage(
-        { type: 'AGE_ENCRYPT_TEXT_MESSAGE_RESULT', requestId, error: err.message },
+        { type: 'AGE_ENCRYPT_TEXT_MESSAGE_RESULT', requestId, error: err.message, errorCode: err.code ?? 'BLOCKED' },
         '*'
       );
     }
@@ -2231,12 +2251,20 @@ function _syncDisplayToSession() {
 
 // All unlock state arrives in one payload, avoiding partial-session async gaps.
 async function applyUnlockPayload(payload) {
+  // Capture generation before await to prevent stale results from clobbering relocks.
+  const genBefore = _generation;
+
   let localData;
   try {
     localData = await localGet(['globalOn']);
   } catch (e) {
     console.error('[age] unlock error: globalOn read failed:', e?.message);
     localData = {};
+  }
+
+  if (_generation !== genBefore) {
+    console.warn('[age] applyUnlockPayload: generation changed mid-await, discarding this unlock (a RELOCK or a fresher unlock should have already superseded it)');
+    return;
   }
 
   let mldsaPrivBytes;
@@ -2849,15 +2877,15 @@ function checkDecryptPreconditions() {
 
 // Deduplicates attachment processing across observer events.
 // Reuses same-element work; retries after stale element tasks settle.
-async function _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName) {
+async function _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName, previousRoot) {
   if (!_inFlight.has(attachId)) return false;
-  if (_attachmentInProgress.get(attachId) === liElement) return true; // same node, already running
+  if (previousRoot === liElement) return true; // same node, already running
   try { await _inFlight.get(attachId); } catch { /* ignore Task A errors */ }
   await processEncryptedAttachment(liElement, fileCard, cdnUrl, originalName);
   return true;
 }
 
-async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalName) {
+async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalName, previousRoot) {
   // isContextValid() calls _signalContextInvalidated() which swaps all placeholders to 'locked'.
   if (!isContextValid()) return;
 
@@ -2884,15 +2912,15 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
   // ── message.txt.age — treat as encrypted text message ────────────────────────
   
   if (originalName === 'message.txt.age') {
-    return _processEncryptedTextMessage(liElement, fileCard, cdnUrl, originalName);
+    return _processEncryptedTextMessage(liElement, fileCard, cdnUrl, originalName, previousRoot);
   }
 
-  return _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, originalName);
+  return _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, originalName, previousRoot);
 }
 
 // Handles message.txt.age decryption and inline rendering.
 // Keeps text decrypt flow separate from media processing.
-async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, originalName) {
+async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, originalName, previousRoot) {
   {
     // Key includes li.id so two message.txt.age files in the same message
     // (same liElement.id, different CDN URLs) get separate cache/in-flight slots.
@@ -2920,7 +2948,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
     
     // Deduplicates concurrent attachment tasks by attachId and element.
     // Reuses in-flight work; stale elements retry through cache.
-    if (await _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName)) return;
+    if (await _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName, previousRoot)) return;
 
     // No in-flight task — start one and expose the Promise so a concurrent
     // call for the same attachId can await it.
@@ -3057,7 +3085,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
 
 // Handles media and download attachment decryption/rendering.
 // Keeps large-file flow separate from message text decryption.
-async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, originalName) {
+async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, originalName, previousRoot) {
   // ── All other .age files — media/download attachments ────────────────────────
   
   // Capture generation now — RELOCK or globalOn→false bumps it synchronously,
@@ -3092,7 +3120,7 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
   
   // Deduplicates media fetches across virtual-scroller remounts.
   // Uses attachId tracking to prevent duplicate worker queue entries.
-  if (await _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName)) return;
+  if (await _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName, previousRoot)) return;
 
   // No in-flight task — start one and expose the Promise so concurrent calls
   // for the same attachId can await it.
@@ -3425,10 +3453,11 @@ function _scanForEncryptedAttachments(root, keyFn, { checkExtraGuards = false } 
       if (_processedIds.has(attachId)) continue;
       if (_inFlight.has(attachId)) continue;
     }
-    if (_attachmentInProgress.get(attachId) === root) continue;
+    const _previousRoot = _attachmentInProgress.get(attachId);
+    if (_previousRoot === root) continue;
     _attachmentInProgress.set(attachId, root);
 
-    processEncryptedAttachment(root, fileCard, cdnUrl, rawName);
+    processEncryptedAttachment(root, fileCard, cdnUrl, rawName, _previousRoot);
   }
 }
 
