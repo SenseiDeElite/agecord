@@ -49,7 +49,9 @@
   const MIN_USERNAME    = 1;
   const MAX_GROUP_MEMBERS  = 10;
   const CONTACTS_VERSION   = 2;
-  const IMPORT_SIZE_LIMIT  = 1_048_576; // 1 MiB — well above the ~420 KB worst-case maximum
+  // Worst-case serialized export size for MAX_CONTACTS; reject oversized input
+  // before JSON.parse rather than allowing arbitrary slack.
+  const IMPORT_SIZE_LIMIT  = 5.4 * 1024 * 1024; // ~5.4 MiB
 
   // ─── Storage helpers ────────────────────────────────────────────────────────
   const store = {
@@ -65,19 +67,25 @@
 
   // ─── Encrypted contacts storage ──────────────────────────────────────────────
   
-// Contacts: encrypted at rest in chrome.storage.local (contactsEnc).
-//           XChaCha20-Poly1305 key from Argon2id stored only in background
-//           (_contactsKeyBytes). Popup uses ENCRYPT_CONTACTS / DECRYPT_CONTACTS.
+// Contacts: encrypted at rest; local Argon2id key derivation/decryption.
+// Writes use the background-held key to persist without re-prompting.
 
-// State:    _contacts is the unlocked in-memory source of truth.
-//           Writes: mutate _contacts → saveContacts() → store.set.
-
-// Session:  _sessionPassphrase kept in popup memory during unlock session.
-//           Allows key re-derivation after background restart without prompt.
+// State: _contacts is the unlocked in-memory source of truth.
+// Session: _sessionPassphrase enables key re-derivation after background restart.
 
   let _sessionPassphrase = null;
 
-  async function saveContacts(contacts) {
+  // Serialize saveContacts() calls so encryption and storage writes complete in
+  // call order, preventing stale edits from overwriting newer ones.
+  let _saveContactsChain = Promise.resolve();
+
+  function saveContacts(contacts) {
+    const run = () => saveContactsImpl(contacts);
+    _saveContactsChain = _saveContactsChain.then(run, run);
+    return _saveContactsChain;
+  }
+
+  async function saveContactsImpl(contacts) {
     const json = JSON.stringify(contacts);
 
     // Always update session storage immediately — this keeps the popup and content
@@ -116,34 +124,22 @@
       return {};
     }
 
-    const resp = await bgSend({ type: 'DECRYPT_CONTACTS', ciphertextB64: contactsEnc });
-    if (resp?.ok) {
+    // Decrypts locally; no background key-availability retry is required.
+    const passphrase = _sessionPassphrase ?? await getSessionPassphrase();
+    if (passphrase) {
       try {
-        const parsed = JSON.parse(resp.json);
+        const { contactsSaltB64 } = await store.get(['contactsSaltB64']);
+        const { keyB64 } = await deriveContactsKey(passphrase, contactsSaltB64 ?? null);
+        const parsed = await loadContactsWithKeyB64(keyB64);
         await setSessionContacts(parsed);
         return parsed;
-      } catch { return {}; }
-    }
-
-    // Background key unavailable (service-worker restarted, passphrase not cached).
-    // Try to re-derive the key using the cached passphrase.
-    if (_sessionPassphrase) {
-      const identity = await getSessionIdentity();
-      if (identity) {
-        await bgUnlock(identity, _sessionPassphrase);
-        const resp2 = await bgSend({ type: 'DECRYPT_CONTACTS', ciphertextB64: contactsEnc });
-        if (resp2?.ok) {
-          try {
-            const parsed = JSON.parse(resp2.json);
-            await setSessionContacts(parsed);
-            return parsed;
-          } catch { return {}; }
-        }
+      } catch (e) {
+        console.warn('[age] loadContacts: local decrypt failed:', e?.message);
       }
     }
 
-    // Passphrase unavailable after popup restart.
-    // Use decrypted contacts from session storage, persisted during the unlock session.
+    // Fall back to the session-cached contacts if the passphrase is unavailable
+    // or local decryption fails.
     try {
       const s = await chrome.storage.session.get('age_contacts');
       if (s.age_contacts && typeof s.age_contacts === 'object') {
@@ -151,7 +147,7 @@
       }
     } catch {}
 
-    console.error('[age] loadContacts: background decrypt failed and no session fallback:', resp?.error);
+    console.error('[age] loadContacts: no passphrase available and no session fallback.');
     return {};
   }
 
@@ -169,19 +165,30 @@
     });
   }
 
-   // Relay: bundle contacts + ageRecipient; content scripts cannot access session storage.
-   // bgUnlock: full unlock; derives Argon2id contacts key and sends identity + contacts.
-   // Used for first unlock, keygen, import, and passphrase changes.
-  async function bgUnlock(identity, passphrase) {
+  // Relay contacts + ageRecipient; content scripts cannot access session storage.
+  // bgUnlock derives the Argon2id key and broadcasts identity + contacts.
+
+  // refreshContacts defaults false. Only doUnlock() refreshes from storage;
+  // other callers already hold authoritative in-memory _contacts, which may
+  // contain unsaved or intentionally reset edits.
+  async function bgUnlock(identity, passphrase, { refreshContacts = false } = {}) {
     const ageRecipient = await getAgeRecipient();
     let contactsKeyB64 = null;
+    if (refreshContacts) _contactsFreshFromUnlock = false;
     if (passphrase) {
       try {
         const { contactsSaltB64 } = await store.get(['contactsSaltB64']);
         const { keyB64 } = await deriveContactsKey(passphrase, contactsSaltB64 ?? null);
         contactsKeyB64 = keyB64;
+        if (refreshContacts) {
+          // Local decryption keeps UNLOCK broadcasts from exposing an empty contact state.
+          _contacts = await loadContactsWithKeyB64(keyB64);
+          await setSessionContacts(_contacts);
+          _contactsFreshFromUnlock = true;
+        }
       } catch (e) {
-        console.warn('[age] bgUnlock: could not derive contacts key:', e?.message);
+        // Leave _contacts unchanged; showMain() retries local decryption when needed.
+        console.warn('[age] bgUnlock: could not derive/decrypt contacts locally:', e?.message);
       }
     }
     return bgSend({ type: 'UNLOCK', identity, contactsKeyB64, contacts: _contacts, ageRecipient });
@@ -254,6 +261,9 @@
   // async contact-load/broadcast tail. checkPendingImport() awaits this so 
   // an import can't race loadContacts()'s reassignment of _contacts.
   let _mainReadyPromise = null;
+  // Set by bgUnlock() when contacts were decrypted locally; showMain() consumes
+  // it to skip redundant decryption. bgUnlockResume() never sets it.
+  let _contactsFreshFromUnlock = false;
   
   // ─── Screen router ──────────────────────────────────────────────────────────
   
@@ -452,6 +462,29 @@
     const identity = new TextDecoder().decode(plaintextArr);
     plaintextArr.fill(0);
     return identity;
+  }
+
+  // Locally decrypts the contacts envelope with an existing key.
+  // Unlike identity blobs, contacts store the salt separately.
+  async function decryptContactsBlob(ciphertextB64, keyBytes) {
+    const envBytes = fromB64(ciphertextB64);
+    const { plaintextBytes } = await runCryptoWorker(
+      { op: 'XCHACHA_DECRYPT_CONTACTS', keyBytes: keyBytes.buffer, envelopeBytes: envBytes.buffer },
+      [keyBytes.buffer, envBytes.buffer],
+    );
+    const plaintextArr = new Uint8Array(plaintextBytes);
+    const json = new TextDecoder().decode(plaintextArr);
+    plaintextArr.fill(0);
+    return JSON.parse(json);
+  }
+
+  // Locally decrypt contactsEnc with the given key.
+  // Returns {} when unset; throws on decrypt or corruption errors.
+  async function loadContactsWithKeyB64(keyB64) {
+    const { contactsEnc } = await store.get(['contactsEnc']);
+    if (!contactsEnc) return {};
+    const keyBytes = fromB64(keyB64);
+    return decryptContactsBlob(contactsEnc, keyBytes);
   }
 
   // ─── Boot ───────────────────────────────────────────────────────────────────
@@ -785,7 +818,7 @@
       _sessionPassphrase = passphrase;
       await setSessionPassphrase(passphrase);
       await store.set({ format_version: 2 });
-      await bgUnlock(identity, passphrase);
+      await bgUnlock(identity, passphrase, { refreshContacts: true });
       document.getElementById('passphrase-input').value = '';
       showMain();
 
@@ -1075,18 +1108,20 @@
     renderContacts();
     show('main');
 
-    // Load and broadcast contacts after the screen is already visible.
-    // loadContacts() can fail silently (e.g. contacts key momentarily unavailable)
-    // and that must not roll back the screen state.
-    try {
-      _contacts = await loadContacts();
-    } catch (e) {
-      console.warn('[age] showMain: loadContacts failed:', e?.message);
+    // Skip reload when bgUnlock() already decrypted and broadcast contacts;
+    // otherwise load them for resumed sessions or failed unlock-time decryption.
+    if (_contactsFreshFromUnlock) {
+      _contactsFreshFromUnlock = false;
+    } else {
+      // Ignore loadContacts() failures so screen state remains unchanged.
+      try {
+        _contacts = await loadContacts();
+      } catch (e) {
+        console.warn('[age] showMain: loadContacts failed:', e?.message);
+      }
     }
     renderContacts(); // re-render with the now-populated contacts list
-    // Broadcast the freshly-loaded contacts to all Discord tabs.  This must
-    // happen after _contacts is populated — the UNLOCK broadcast in bgUnlock()
-    // fires before loadContacts() completes and carries a stale empty object.
+    // Re-broadcast as a cheap, idempotent delivery backstop for missed UNLOCK messages.
     await bgContactsUpdated();
   }
 
