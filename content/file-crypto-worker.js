@@ -76,6 +76,9 @@ function decodePubKey(b64) {
 // Avoids resending on verify/decrypt paths.
 let _cachedDecrypter = null;
 
+// Bumped on RELOCK so in-flight verifyAndDecrypt() calls can detect stale work.
+let _lockEpoch = 0;
+
 // Verifies ML-DSA-87 signature and age-decrypts.
 // Returns { sigValid: false } on failure, { sigValid: true, plainBytes } on success.
 // Throws NOT_UNLOCKED if no identity is cached.
@@ -93,6 +96,7 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
     throw new Error(`${opName}: fileBuffer too short`);
   if (!_cachedDecrypter)
     throw new Error('NOT_UNLOCKED');
+  const myEpoch = _lockEpoch;
 
   const fileBytes = new Uint8Array(fileBuffer);
   const sigBytes  = fileBytes.subarray(0, sigByteLen);
@@ -136,10 +140,14 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
   // Worker (transferred in, not neutered here). No copy needed.
   const plainBytes = await _cachedDecrypter.decrypt(ageBytes, 'uint8array');
 
+  // Reject plaintext if RELOCK occurred during the in-flight decrypt.
+  if (_lockEpoch !== myEpoch) {
+    plainBytes.fill(0);
+    throw new Error('NOT_UNLOCKED');
+  }
+
   return { sigValid: true, plainBytes };
 }
-
-// Blob shim completes before this module's init/onmessage setup; buffer sends until WORKER_READY.
 
 self.onmessage = async ({ data }) => {
   const { op, id } = data;
@@ -159,6 +167,7 @@ self.onmessage = async ({ data }) => {
     }
 
     if (op === 'RELOCK') {
+      _lockEpoch++;
       _cachedDecrypter = null;
       // Match the decrypter's lifecycle: drop cached sender keys too, so a
       // long-lived worker doesn't accumulate every correspondent's pubkey
@@ -258,5 +267,5 @@ self.onmessage = async ({ data }) => {
   }
 };
 
-// Signal readiness after registering self.onmessage.
+// Signal readiness after registering onmessage so buffered messages can flush.
 self.postMessage({ op: 'WORKER_READY' });
