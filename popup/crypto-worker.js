@@ -33,6 +33,7 @@ const initReady = init();
 // m=64 MiB, t=3, p=1, output=32 bytes
 
 const ENVELOPE_VERSION = 0x01;
+const ENVELOPE_HDR_LEN = 1;   // version byte — mirrors background.js's ENVELOPE_HDR_LEN
 const SALT_LEN         = 16;
 const ARGON2_M_COST    = 65536;
 const ARGON2_T_COST    = 3;
@@ -104,19 +105,23 @@ self.onmessage = async ({ data }) => {
       return;
     }
 
-    if (data.op === 'XCHACHA_DECRYPT') {
+    // Shared decrypt logic; envelope-specific header lengths are explicit.
+    // XCHACHA_DECRYPT: version + salt + ciphertext.
+    // XCHACHA_DECRYPT_CONTACTS: version + ciphertext; salt is separate.
+    if (data.op === 'XCHACHA_DECRYPT' || data.op === 'XCHACHA_DECRYPT_CONTACTS') {
+      const headerLen = data.op === 'XCHACHA_DECRYPT_CONTACTS' ? ENVELOPE_HDR_LEN : ENVELOPE_HDR_LEN + SALT_LEN;
       const envelope = new Uint8Array(data.envelopeBytes);
       // Guard against truncated input before indexing — otherwise envelope[0]
       // is undefined and the check below throws an opaque TypeError instead
       // of this clear, intended error.
-      if (envelope.length < 1 + SALT_LEN)
-        throw new Error(`Envelope too short: expected at least ${1 + SALT_LEN} bytes, got ${envelope.length}.`);
+      if (envelope.length < headerLen)
+        throw new Error(`Envelope too short: expected at least ${headerLen} bytes, got ${envelope.length}.`);
       if (envelope[0] !== ENVELOPE_VERSION)
         throw new Error(`Unknown envelope version 0x${envelope[0].toString(16)}.`);
 
       const key = new Uint8Array(data.keyBytes);
       // decrypt() expects nonce(24)||ct+tag and slices the nonce internally.
-      const noncePlusCt = envelope.slice(1 + SALT_LEN);
+      const noncePlusCt = envelope.slice(headerLen);
       let plaintext, out;
       try {
         plaintext = xchacha20poly1305_decrypt(key, noncePlusCt);
