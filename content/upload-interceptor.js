@@ -9,11 +9,10 @@
 
 function err(...a)  { console.error('[age-intercept]', ...a); }
 
-// ─── Lock state ───────────────────────────────────────────────────────────────
+// ─── Lock state (cosmetic only) ────────────────────────────────────────────────
 
+// Best-effort snapshot for dragover cursor hints; upload gating is always live.
 let _locked = true;
-// Set by content.js via AGE_INTERCEPTOR_STATE. When false, uploads pass through
-// unmodified — no recipient configured, so interception would only discard files.
 let _activeEntry = false;
 Object.defineProperty(window, '__ageLocked', { get: () => _locked, configurable: true });
 
@@ -60,7 +59,7 @@ window.addEventListener('message', (e) => {
     _pending.delete(requestId);
     if (e.data.error) {
       err('encrypt FAILED requestId=%s fileName=%s —', requestId, fileName, e.data.error);
-      reject(new Error(e.data.error));
+      reject(Object.assign(new Error(e.data.error), { code: e.data.errorCode }));
     } else {
       resolve({ buffer: e.data.buffer, encryptedName: e.data.encryptedName });
     }
@@ -81,7 +80,7 @@ window.addEventListener('message', (e) => {
     _pending.delete(requestId);
     if (e.data.error) {
       err('encrypt text message FAILED requestId=%s —', requestId, e.data.error);
-      reject(new Error(e.data.error));
+      reject(Object.assign(new Error(e.data.error), { code: e.data.errorCode }));
     } else {
       resolve(e.data.buffer);
     }
@@ -106,17 +105,19 @@ window.addEventListener('message', (e) => {
 
   // ── AGE_UPLOAD_TEXT_AS_FILE ──────────────────────────────────────────────────
   
-  // content.js can't reach React's onChange itself (page-context only) — asks us
-  // to attach `text` as a generic encrypted file when it's too long for a single
-  // encrypted message (mirrors the paste handler's own >4000-char branch below).
+  // Long messages need encrypted-file delivery; this explicit action must never
+  // fall back to plaintext.
   if (type === 'AGE_UPLOAD_TEXT_AS_FILE') {
     const { text, channelId: uploadChannelId, guildId: uploadGuildId } = e.data;
     (async () => {
+      // Set the gate before awaiting encryption to prevent concurrent flows.
+      _attachmentPending = true;
       try {
         const file = new File([text], 'message.txt', { type: 'text/plain' });
         await deliverEncryptedFiles([file], uploadChannelId, uploadGuildId);
         window.postMessage({ type: 'AGE_UPLOAD_TEXT_AS_FILE_RESULT', requestId, ok: true }, '*');
       } catch (uploadErr) {
+        _attachmentPending = false; // nothing delivered — don't leave the gate stuck shut
         err('AGE_UPLOAD_TEXT_AS_FILE failed:', uploadErr.message);
         window.postMessage({ type: 'AGE_UPLOAD_TEXT_AS_FILE_RESULT', requestId, ok: false, error: uploadErr.message }, '*');
       }
@@ -471,12 +472,11 @@ async function encryptFileList(files, channelId, guildId) {
   return dt;
 }
 
-// Hands a DataTransfer's files to React's onChange and starts tray tracking.
-// Shared tail for every upload path (drop, change, paste, AGE_DO_UPLOAD, ...).
+// Delivers files to React and starts tray tracking.
+// _attachmentPending is set by the caller before encryption.
 function deliverFileList(dt) {
   const onChange = getFileInputOnChange();
   onChange({ currentTarget: { files: dt.files, err: null } });
-  _attachmentPending = true;
   watchTrayAndClearPending();
 }
 
@@ -484,6 +484,24 @@ function deliverFileList(dt) {
 // upload entry point below.
 async function deliverEncryptedFiles(files, channelId, guildId) {
   deliverFileList(await encryptFileList(files, channelId, guildId));
+}
+
+// Only explicit PASSTHROUGH permits raw delivery; all other failures rethrow.
+// Set _attachmentPending before await to serialize concurrent upload flows.
+async function deliverFilesRespectingGate(files, channelId, guildId) {
+  _attachmentPending = true;
+  try {
+    await deliverEncryptedFiles(files, channelId, guildId);
+  } catch (e) {
+    if (e?.code === 'PASSTHROUGH') {
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(f);
+      deliverFileList(dt);
+      return;
+    }
+    _attachmentPending = false; // nothing delivered — don't leave the gate stuck shut
+    throw e; // BLOCKED, timeout, worker error — nothing delivered.
+  }
 }
 
 // Clears a stale _attachmentPending flag left behind by a drop whose tray
@@ -507,6 +525,14 @@ function encryptTextMessage(text, channelId, guildId) {
 // factored out so neither has to duplicate the DataTransfer/File plumbing.
 function uploadSignedMessageBytes(buffer) {
   const file = new File([buffer], 'message.txt.age', { type: 'application/octet-stream' });
+  const dt   = new DataTransfer();
+  dt.items.add(file);
+  deliverFileList(dt);
+}
+
+// PASSTHROUGH path for long pasted text: deliver raw message.txt.
+function deliverPlainTextFile(text) {
+  const file = new File([text], 'message.txt', { type: 'text/plain' });
   const dt   = new DataTransfer();
   dt.items.add(file);
   deliverFileList(dt);
@@ -587,7 +613,6 @@ window.addEventListener('dragover', (e) => {
 // Window capture required; Discord blocks document capture.
 // Uses React onChange because synthetic drag events are rejected.
 window.addEventListener('drop', async (e) => {
-  if (_locked || !_activeEntry) return;
   const files = [...(e.dataTransfer?.files ?? [])];
   if (files.length === 0) return;
 
@@ -603,7 +628,7 @@ window.addEventListener('drop', async (e) => {
   if (_attachmentPending) return;
 
   try {
-    await deliverEncryptedFiles(files, channelId, guildId);
+    await deliverFilesRespectingGate(files, channelId, guildId);
   } catch (dropErr) {
     err('drop: failed — %s', dropErr?.message ?? dropErr);
   }
@@ -615,7 +640,6 @@ window.addEventListener('drop', async (e) => {
 // would re-enter this capture listener, clear the files override, and swallow
 // the upload before Discord's handler. Direct invocation avoids recursion.
 document.addEventListener('change', async (e) => {
-  if (_locked || !_activeEntry) return;
   const input = e.target;
   if (input?.type !== 'file') return;
 
@@ -635,7 +659,7 @@ document.addEventListener('change', async (e) => {
   clearStalePending();
 
   try {
-    await deliverEncryptedFiles(files, channelId, guildId);
+    await deliverFilesRespectingGate(files, channelId, guildId);
   } catch (changeErr) {
     err('change: failed — %s', changeErr?.message ?? changeErr);
   }
@@ -650,7 +674,6 @@ const NATIVE_PASTE_FILE_THRESHOLD = 2000;
 const MESSAGE_TEXT_MAX_CHARS      = 4000;
 
 document.addEventListener('paste', async (e) => {
-  if (_locked || !_activeEntry) return;
   const files = [...(e.clipboardData?.files ?? [])];
   const text  = files.length === 0 ? (e.clipboardData?.getData('text/plain') ?? '') : '';
 
@@ -666,17 +689,25 @@ document.addEventListener('paste', async (e) => {
 
   try {
     if (files.length > 0) {
-      await deliverEncryptedFiles(files, channelId, guildId);
+      await deliverFilesRespectingGate(files, channelId, guildId);
     } else if (text.length <= MESSAGE_TEXT_MAX_CHARS) {
-      // Fits in a single encrypted message — encrypt with the same
-      // compress+sign pipeline a typed send uses, producing message.txt.age.
-      const buffer = await encryptTextMessage(text, channelId, guildId);
-      uploadSignedMessageBytes(buffer);
+      // Single-message path: use the typed-send compress+sign pipeline.
+      // Keep PASSTHROUGH handling here; generic file delivery is separate.
+      try {
+        const buffer = await encryptTextMessage(text, channelId, guildId);
+        uploadSignedMessageBytes(buffer);
+      } catch (msgErr) {
+        if (msgErr?.code === 'PASSTHROUGH') {
+          deliverPlainTextFile(text);
+        } else {
+          throw msgErr; // BLOCKED, timeout, worker error — nothing delivered.
+        }
+      }
     } else {
       // Too long for a single encrypted message — attach the full,
       // untruncated text as a real encrypted file instead.
       const textFile = new File([text], 'message.txt', { type: 'text/plain' });
-      await deliverEncryptedFiles([textFile], channelId, guildId);
+      await deliverFilesRespectingGate([textFile], channelId, guildId);
     }
   } catch (pasteErr) {
     err('paste: failed — %s', pasteErr?.message ?? pasteErr);
