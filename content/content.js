@@ -43,7 +43,7 @@ const SIG_VERSION     = 0x01;
 const SIG_VERSION_LEN = 1;
 
 // Files larger than this show a confirmation prompt before decryption.
-const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10 MiB
+const LARGE_FILE_THRESHOLD = 20 * 1024 * 1024; // 20 MiB
  
 // ─── Renderable format allowlists ─────────────────────────────────────────────
 
@@ -2837,7 +2837,7 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
   warnText.style.cssText = 'font-size:11px;color:#a8b8cc;line-height:1.5;';
   warnText.textContent =
     'Decrypting large files keeps the plaintext in memory until this tab is closed. '
-    + 'Files over 10 MB may increase memory usage significantly.';
+    + 'Files over 20 MiB may increase memory usage significantly.';
 
   warn.append(warnText);
   wrapper.append(header, warn);
