@@ -30,5 +30,5 @@ If you trust the extension, you can bypass this check for it specifically, witho
 1. Download [`policies.json`](https://github.com/SenseiDeElite/agecord/blob/main/policies.json) from this repository.
 2. Download the latest release of [chromium-policies.json](https://github.com/SenseiDeElite/chromium-policies.json/releases/latest), my other project for applying Chromium policies.
 3. Replace the `policies.json` from that project with the one downloaded in step 1.
-4. Follow the [`README.md`](https://github.com/SenseiDeElite/chromium-policies.json/blob/main/README.md) instructions to apply the policy.
+4. Follow the [`README.md`](https://github.com/SenseiDeElite/chromium-policies.json#%EF%B8%8F-installation) instructions to apply the policy.
 5. The extension should now be allowlisted automatically. If needed, repeat the normal installation steps.
