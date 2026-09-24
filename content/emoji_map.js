@@ -5,7 +5,7 @@
 
 // emoji_map.js — :shortcode: -> emoji lookup table
 
-// Current revision: Unicode® 17.0.0
+// Current revision: Unicode® 18.0.0
 
 'use strict';
 
@@ -3825,6 +3825,25 @@ const EMOJI_GROUPS = {
   "🛘": ["landslide"],
   "🪊": ["trombone"],
   "🪎": ["treasure_chest"],
+  "🫫": ["cracking_face"],
+  "🫌": ["monarch_butterfly"],
+  "🫝": ["pickle", "gherkin"],
+  "🛙": ["lighthouse"],
+  "🪋": ["meteor"],
+  "🪌": ["eraser"],
+  "🪍": ["net_with_handle", "net"],
+  "🫹": ["leftwards_thumb_sign", "thumbsleft"],
+  "🫹🏻": ["leftwards_thumb_sign_tone1", "thumbsleft_tone1", "leftwards_thumb_sign_light_skin_tone"],
+  "🫹🏼": ["leftwards_thumb_sign_tone2", "thumbsleft_tone2", "leftwards_thumb_sign_medium_light_skin_tone"],
+  "🫹🏽": ["leftwards_thumb_sign_tone3", "thumbsleft_tone3", "leftwards_thumb_sign_medium_skin_tone"],
+  "🫹🏾": ["leftwards_thumb_sign_tone4", "thumbsleft_tone4", "leftwards_thumb_sign_medium_dark_skin_tone"],
+  "🫹🏿": ["leftwards_thumb_sign_tone5", "thumbsleft_tone5", "leftwards_thumb_sign_dark_skin_tone"],
+  "🫺": ["rightwards_thumb_sign", "thumbsright"],
+  "🫺🏻": ["rightwards_thumb_sign_tone1", "thumbsright_tone1", "rightwards_thumb_sign_light_skin_tone"],
+  "🫺🏼": ["rightwards_thumb_sign_tone2", "thumbsright_tone2", "rightwards_thumb_sign_medium_light_skin_tone"],
+  "🫺🏽": ["rightwards_thumb_sign_tone3", "thumbsright_tone3", "rightwards_thumb_sign_medium_skin_tone"],
+  "🫺🏾": ["rightwards_thumb_sign_tone4", "thumbsright_tone4", "rightwards_thumb_sign_medium_dark_skin_tone"],
+  "🫺🏿": ["rightwards_thumb_sign_tone5", "thumbsright_tone5", "rightwards_thumb_sign_dark_skin_tone"],
 };
 
 const EMOJI_MAP = Object.fromEntries(
