@@ -87,6 +87,13 @@ html, body {
   animation: screen-enter 200ms var(--motion-decelerate) both;
 }
 
+/* Forms wrapping a screen's fields stay in the same flex column as before. */
+.screen > form {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
 /* Form screens scroll internally — extra bottom padding for last field breathing room */
 .screen-form {
   padding-bottom: 32px;
@@ -224,7 +231,6 @@ html, body {
   font-family: inherit;
   font-size: 14px;
   padding: 10px 12px;
-  outline: none;
   transition: border-color 180ms var(--motion-standard),
               background   180ms var(--motion-standard),
               box-shadow   180ms var(--motion-standard);
@@ -488,6 +494,14 @@ html, body {
   font-size: 14px;
 }
 
+/* ── Focus ring ──────────────────────────────────────────────────────────── */
+/* Keyboard focus only (:focus-visible). Text fields keep their :focus border
+   change as a secondary cue. */
+:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
 /* ── MD3 Switch ──────────────────────────────────────────────────────────── */
 .switch {
   position: relative;
@@ -498,6 +512,7 @@ html, body {
 }
 
 .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch input:focus-visible + .slider { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 
 .slider {
   position: absolute;
@@ -754,25 +769,29 @@ html, body {
 }
 
 /* ── Bottom sheet ────────────────────────────────────────────────────────── */
-.sheet-backdrop {
-  position: fixed;
-  inset: 0;
+/* Sheets and modals are native <dialog>s opened with showModal(): the top layer,
+   focus trapping, Esc and ::backdrop come from the browser. */
+.bottom-sheet::backdrop,
+.modal::backdrop {
   background: var(--md-scrim);
-  z-index: 100;
   animation: fade-in 180ms var(--motion-decelerate);
 }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 .bottom-sheet {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  inset: auto 0 0 0;
+  margin: 0;
+  width: 100%;
+  max-width: none;
+  border: 0;
   background: var(--md-surface-container-low);
+  color: var(--md-on-surface);
   border-radius: var(--shape-xl) var(--shape-xl) 0 0;
   padding: 0 0 14px;
-  z-index: 200;
+}
+
+.bottom-sheet[open] {
   animation: sheet-up 280ms var(--motion-decelerate);
 }
 
@@ -848,29 +867,29 @@ html, body {
 .modal-label + input { margin-top: 6px; }
 
 /* ── Modal ───────────────────────────────────────────────────────────────── */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--md-scrim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 300;
-  padding: 24px;
-  animation: fade-in 160ms var(--motion-decelerate);
-}
-
 .modal {
   background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+  border: 0;
   border-radius: var(--shape-xl);
   padding: 22px;
-  width: 100%;
+  width: calc(100% - 48px);
   max-width: 316px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+/* display only while open, otherwise this would override the UA's closed state */
+.modal[open] {
   display: flex;
   flex-direction: column;
   gap: 10px;
   animation: modal-in 200ms var(--motion-decelerate);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+
+.modal form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 @keyframes modal-in {
@@ -900,7 +919,6 @@ html, body {
   font-family: inherit;
   font-size: 14px;
   padding: 9px 12px;
-  outline: none;
   width: 100%;
   transition: border-color 160ms var(--motion-standard),
               box-shadow   160ms var(--motion-standard);
@@ -1031,7 +1049,6 @@ html, body {
   font-family: inherit;
   font-size: 14px;
   padding: 10px 36px 10px 12px;
-  outline: none;
   width: 100%;
   cursor: pointer;
   transition: border-color 180ms var(--motion-standard),
@@ -1062,7 +1079,6 @@ html, body {
   font-family: inherit;
   font-size: 13px;
   padding: 8px 14px;
-  outline: none;
   flex-shrink: 0;
   transition: border-color 180ms var(--motion-standard),
               background   180ms var(--motion-standard);
@@ -1098,6 +1114,9 @@ html, body {
 /* ── Member picker sheet ─────────────────────────────────────────────────── */
 .bottom-sheet-tall {
   max-height: 70vh;
+}
+
+.bottom-sheet-tall[open] {
   display: flex;
   flex-direction: column;
 }
@@ -1142,10 +1161,23 @@ html, body {
   font-family: inherit;
   font-size: 13px;
   padding: 7px 14px;
-  outline: none;
 }
 
 #member-picker-search:focus {
   border-color: var(--md-primary);
   box-shadow: 0 0 0 1px var(--md-primary);
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* The busy spinner is the only progress cue during key derivation; keep it turning. */
+  .spinner {
+    animation-duration: 0.8s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
