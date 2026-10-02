@@ -66,12 +66,10 @@
 /* hidden attribute always wins over any display rule */
 [hidden] { display: none !important; }
 
-/* Set a base popup size; cap dimensions so the layout adapts to narrower panels. */
+/* Popup dimensions are content-driven; use fixed root dimensions to avoid collapse. */
 html, body {
   width: 360px;
   height: 560px;
-  max-width: 100vw;
-  max-height: 100vh;
   overflow: hidden;
   font-family: 'Roboto', system-ui, sans-serif;
   font-size: 14px;
@@ -85,8 +83,8 @@ html, body {
 .screen {
   display: flex;
   flex-direction: column;
-  width: 100%;
-  height: 100%;
+  width: 360px;
+  height: 560px;
   overflow-y: auto;
   overflow-x: hidden;
   padding-bottom: 8px;
@@ -889,8 +887,6 @@ textarea.mono { font-size: 11px; resize: none; }
   white-space: pre;
 }
 
-/* My Key screen fingerprint — 128-byte BLAKE3 output is 8 lines; keep it
-   slightly smaller than the single-contact fingerprint so it fits cleanly. */
 #my-key-fp {
   font-size: 10px;
   line-height: 1.65;
@@ -964,7 +960,8 @@ textarea.mono { font-size: 11px; resize: none; }
   gap: 6px;
 }
 
-/* Dialog padding already provides the side gutter. */
+/* .error-msg / .spinner-wrap carry screen-level 16px side gutters; inside a
+   dialog the 22px padding already provides the gutter. */
 .modal .error-msg   { margin: 0; }
 .modal .spinner-wrap { padding: 4px 0; }
 
@@ -1201,7 +1198,7 @@ textarea.mono { font-size: 11px; resize: none; }
 
 /* ── Member picker sheet ─────────────────────────────────────────────────── */
 .bottom-sheet-tall {
-  max-height: 70vh;
+  max-height: 392px; /* 70% of the fixed 560px popup */
 }
 
 .bottom-sheet-tall[open] {
