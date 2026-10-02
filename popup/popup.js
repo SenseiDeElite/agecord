@@ -1260,18 +1260,21 @@
 
     entries.forEach(c => {
       const uuid = c.id;
-      const card = document.createElement('div');
+      // A real <button> so cards are keyboard-focusable and announced as actionable.
+      const card = document.createElement('button');
+      card.type = 'button';
       card.className = 'contact-card';
 
       const type   = c.type ?? 'contact';
       const icon   = type === 'group' ? '👥' : type === 'server' ? '🌐' : '👤';
       const label  = type === 'contact' ? c.username : c.name;
 
-      const avatar = Object.assign(document.createElement('div'), {
+      // Phrasing content only (a <button> may not contain <div>).
+      const avatar = Object.assign(document.createElement('span'), {
         className:   'contact-avatar',
         textContent: icon,
       });
-      const name = Object.assign(document.createElement('div'), {
+      const name = Object.assign(document.createElement('span'), {
         className:   'contact-name',
         textContent: label,
       });
@@ -1280,7 +1283,7 @@
         className:   `contact-chip ${c.enabled ? 'chip-on' : 'chip-off'}`,
         textContent: chipLabel,
       });
-      const info = document.createElement('div');
+      const info = document.createElement('span');
       info.className = 'contact-info';
       info.append(name, chip);
       card.append(avatar, info);
