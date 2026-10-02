@@ -537,6 +537,16 @@
 
   // ─── Confirm-modal helper ────────────────────────────────────────────────────
   
+  // Route native cancel events through the dialog's cancel button for shared cleanup.
+  const openDialog = id => {
+    const d = document.getElementById(id);
+    if (!d.open) d.showModal();
+  };
+  const closeDialog = id => document.getElementById(id).close();
+  document.querySelectorAll('dialog[data-cancel]').forEach(d => {
+    d.addEventListener('cancel', () => document.getElementById(d.dataset.cancel).click());
+  });
+
   // Requires typing CONFIRM before destructive actions.
   // Open resets input; typing enables confirm; cancel closes; confirm runs callback.
   // IDs are explicit because existing markup uses inconsistent naming.
@@ -550,26 +560,26 @@
     openEl.addEventListener('click', () => {
       inputEl.value      = '';
       confirmEl.disabled = true;
-      modalEl.hidden     = false;
+      modalEl.showModal();
     });
     cancelEl.addEventListener('click', () => {
       inputEl.value  = '';
-      modalEl.hidden = true;
+      modalEl.close();
     });
     inputEl.addEventListener('input', e => {
       confirmEl.disabled = (e.target.value !== confirmWord);
     });
     confirmEl.addEventListener('click', async () => {
-      modalEl.hidden = true;
+      modalEl.close();
       await onConfirm();
     });
   }
 
   // ─── Lock screen ─────────────────────────────────────────────────────────────
 
-  document.getElementById('btn-unlock').addEventListener('click', doUnlock);
-  document.getElementById('passphrase-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') doUnlock();
+  document.getElementById('form-lock').addEventListener('submit', e => {
+    e.preventDefault();
+    doUnlock();
   });
 
   // resetToSetupScreen: shared teardown for reset-keypair and clear-all-data.
@@ -882,7 +892,8 @@
     return errs.length ? 'Passphrase must include: ' + errs.join(', ') + '.' : null;
   }
 
-  document.getElementById('btn-generate').addEventListener('click', async () => {
+  document.getElementById('form-setup').addEventListener('submit', async e => {
+    e.preventDefault();
     await cryptoReady;
     const pass  = setupPassEl.value;
     const pass2 = document.getElementById('setup-passphrase2').value;
@@ -995,7 +1006,8 @@
     show('setup');
   });
 
-  document.getElementById('btn-import').addEventListener('click', async () => {
+  document.getElementById('form-import').addEventListener('submit', async e => {
+    e.preventDefault();
     await cryptoReady;
     const encryptedBlob  = document.getElementById('import-blob').value.trim();
     const exportPass     = document.getElementById('import-export-passphrase').value;
@@ -1332,17 +1344,15 @@
 
   DRAFT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveDraft));
 
-  // hostname allows an optional subdomain (canary./ptb./www.) ahead of the
-  // apex domain; unlike a bare substring match this won't false-positive on
-  // lookalike hosts.
+  // Require the Discord stable channel hostname; host permission already provides tab.url access.
   const DM_CHANNEL_URL_PATTERN = new URLPattern({
     protocol: 'https',
-    hostname: '{*.}?discord.com',
+    hostname: 'discord.com',
     pathname: '/channels/@me/:channelId(\\d+)',
   });
   const SERVER_CHANNEL_URL_PATTERN = new URLPattern({
     protocol: 'https',
-    hostname: '{*.}?discord.com',
+    hostname: 'discord.com',
     pathname: '/channels/:serverId(\\d+)/:channelId(\\d+)',
   });
 
@@ -1437,23 +1447,20 @@
     document.getElementById('sheet-contact-name').textContent = c.username;
     document.getElementById('sheet-contact-toggle').checked   = c.enabled;
     fpEl.textContent = 'Computing…';
-    document.getElementById('sheet-contact').hidden  = false;
-    document.getElementById('sheet-backdrop').hidden = false;
+    openDialog('sheet-contact');
     fpEl.textContent = await keyFingerprint(c.ageRecipient);
   }
 
   function closeSheet() {
-    document.getElementById('sheet-contact').hidden = true;
-    document.getElementById('sheet-group').hidden   = true;
-    document.getElementById('sheet-server').hidden  = true;
-    document.getElementById('sheet-backdrop').hidden = true;
+    closeDialog('sheet-contact');
+    closeDialog('sheet-group');
+    closeDialog('sheet-server');
     _selectedId       = null;
     _selectedGroupId  = null;
     _selectedServerId = null;
   }
 
   document.getElementById('btn-close-sheet').addEventListener('click', closeSheet);
-  document.getElementById('sheet-backdrop').addEventListener('click', closeSheet);
 
   document.getElementById('sheet-contact-toggle').addEventListener('change', async (e) => {
     if (!_selectedId) return;
@@ -1467,15 +1474,15 @@
     if (!_selectedId) return;
     document.getElementById('modal-delete-msg').textContent =
       `"${_contacts[_selectedId].username}" and their public key will be permanently removed.`;
-    document.getElementById('modal-delete-contact').hidden = false;
+    openDialog('modal-delete-contact');
   });
 
   document.getElementById('btn-delete-cancel').addEventListener('click', () => {
-    document.getElementById('modal-delete-contact').hidden = true;
+    closeDialog('modal-delete-contact');
   });
 
   document.getElementById('btn-delete-confirm').addEventListener('click', async () => {
-    document.getElementById('modal-delete-contact').hidden = true;
+    closeDialog('modal-delete-contact');
     if (_selectedId) {
       const deletedId = _selectedId;
       delete _contacts[deletedId];
@@ -1598,13 +1605,11 @@
     _pickerContext = context;
     document.getElementById('member-picker-search').value = '';
     renderMemberPicker('');
-    document.getElementById('sheet-member-picker').hidden          = false;
-    document.getElementById('sheet-member-picker-backdrop').hidden = false;
+    openDialog('sheet-member-picker');
   }
 
   function closeMemberPicker() {
-    document.getElementById('sheet-member-picker').hidden          = true;
-    document.getElementById('sheet-member-picker-backdrop').hidden = true;
+    closeDialog('sheet-member-picker');
   }
 
   document.getElementById('member-picker-search').addEventListener('input', e => {
@@ -1616,7 +1621,6 @@
     const uuids = [..._pickerContext.selectedUUIDs];
     applyMemberSelection(_pickerContext.mode, uuids);
   });
-  document.getElementById('sheet-member-picker-backdrop').addEventListener('click', closeMemberPicker);
 
   // ─── Member chip rendering (used by group/server forms) ───────────────────────
 
@@ -1730,8 +1734,7 @@
     document.getElementById('sheet-group-name').textContent    = g.name;
     document.getElementById('sheet-group-channel').textContent = g.channelId;
     document.getElementById('sheet-group-toggle').checked      = g.enabled;
-    document.getElementById('sheet-group').hidden              = false;
-    document.getElementById('sheet-backdrop').hidden           = false;
+    openDialog('sheet-group');
   }
 
   document.getElementById('sheet-group-toggle').addEventListener('change', async e => {
@@ -1763,7 +1766,7 @@
     if (!_selectedGroupId) return;
     document.getElementById('modal-delete-msg').textContent =
       `"${_contacts[_selectedGroupId].name}" group will be permanently removed.`;
-    document.getElementById('modal-delete-contact').hidden = false;
+    openDialog('modal-delete-contact');
   });
 
   document.getElementById('btn-close-group-sheet').addEventListener('click', closeSheet);
@@ -1832,8 +1835,7 @@
     document.getElementById('sheet-server-name').textContent       = s.name;
     document.getElementById('sheet-server-id-display').textContent = s.serverId;
     document.getElementById('sheet-server-toggle').checked         = s.enabled;
-    document.getElementById('sheet-server').hidden                 = false;
-    document.getElementById('sheet-backdrop').hidden               = false;
+    openDialog('sheet-server');
   }
 
   document.getElementById('sheet-server-toggle').addEventListener('change', async e => {
@@ -1865,7 +1867,7 @@
     if (!_selectedServerId) return;
     document.getElementById('modal-delete-msg').textContent =
       `"${_contacts[_selectedServerId].name}" server will be permanently removed.`;
-    document.getElementById('modal-delete-contact').hidden = false;
+    openDialog('modal-delete-contact');
   });
 
   document.getElementById('btn-close-server-sheet').addEventListener('click', closeSheet);
@@ -1908,7 +1910,7 @@
     // Reject oversized files before JSON.parse to prevent freezing the UI thread.
     if (json.length > IMPORT_SIZE_LIMIT) {
       msgEl.textContent = 'File too large — contacts exports must be under 1 MB.';
-      modal.hidden = false;
+      openDialog('modal-import-contacts');
       return;
     }
 
@@ -1916,21 +1918,21 @@
     try { parsed = JSON.parse(json); }
     catch {
       msgEl.textContent = 'Could not parse file — make sure it is a valid contacts export.';
-      modal.hidden = false;
+      openDialog('modal-import-contacts');
       return;
     }
 
     // Reject v1 outright (version !== 2, or bare array without version field).
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== CONTACTS_VERSION) {
       msgEl.textContent = 'Unsupported format — only v2 exports (version: 2) are accepted. v1 imports are no longer supported.';
-      modal.hidden = false;
+      openDialog('modal-import-contacts');
       return;
     }
 
     const entries = parsed.entries;
     if (!Array.isArray(entries)) {
       msgEl.textContent = 'Unrecognised format — expected a v2 contacts export JSON with an "entries" array.';
-      modal.hidden = false;
+      openDialog('modal-import-contacts');
       return;
     }
 
@@ -2064,7 +2066,7 @@
     if (skipped)        parts.push(`${skipped} skipped (invalid or duplicate)`);
     if (limitSkipped)   parts.push(`${limitSkipped} skipped (limit reached)`);
     msgEl.textContent = 'Import complete — ' + (parts.join(', ') || 'nothing changed') + '.';
-    modal.hidden = false;
+    openDialog('modal-import-contacts');
   }
 
   document.getElementById('btn-import-contacts').addEventListener('click', () => {
@@ -2105,12 +2107,12 @@
   }
 
   document.getElementById('btn-import-contacts-ok').addEventListener('click', () => {
-    document.getElementById('modal-import-contacts').hidden = true;
+    closeDialog('modal-import-contacts');
     closeImportHelperTab();
   });
 
   window.addEventListener('unload', () => {
-    if (!document.getElementById('modal-import-contacts').hidden) {
+    if (document.getElementById('modal-import-contacts').open) {
       closeImportHelperTab();
     }
   });
@@ -2158,13 +2160,13 @@
     document.getElementById('export-spinner').hidden          = true;
     document.getElementById('btn-export-confirm').disabled    = false;
     document.getElementById('btn-export-confirm').textContent = 'Encrypt & show';
-    document.getElementById('modal-export-key').hidden        = true;
+    closeDialog('modal-export-key');
   }
 
   document.getElementById('btn-export-key').addEventListener('click', async () => {
     resetExportModal();
     await restoreExportDraft();
-    document.getElementById('modal-export-key').hidden = false;
+    openDialog('modal-export-key');
   });
 
   document.getElementById('btn-export-cancel').addEventListener('click', () => {
@@ -2173,13 +2175,8 @@
     clearExportDraft();
   });
 
-  ['export-passphrase-input', 'export-new-passphrase', 'export-new-passphrase2'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') document.getElementById('btn-export-confirm').click();
-    });
-  });
-
-  document.getElementById('btn-export-confirm').addEventListener('click', async () => {
+  document.getElementById('form-export').addEventListener('submit', async e => {
+    e.preventDefault();
     const unlockPass  = document.getElementById('export-passphrase-input').value;
     const exportPass  = document.getElementById('export-new-passphrase').value;
     const exportPass2 = document.getElementById('export-new-passphrase2').value;
@@ -2213,7 +2210,7 @@
       resetExportModal();
       clearExportDraft();
       document.getElementById('export-key-blob').value = envelopeB64;
-      document.getElementById('modal-export-display').hidden = false;
+      openDialog('modal-export-display');
 
     } catch (e) {
       showErr(errEl, e.message === 'OUTDATED_FORMAT'
@@ -2233,8 +2230,8 @@
   });
 
   function closeExportDisplay() {
-    document.getElementById('export-key-blob').value          = '';
-    document.getElementById('modal-export-display').hidden     = true;
+    document.getElementById('export-key-blob').value = '';
+    closeDialog('modal-export-display');
   }
   document.getElementById('btn-export-copy').addEventListener('click', async () => {
     const blob = document.getElementById('export-key-blob').value;
@@ -2293,23 +2290,18 @@
     const btn = document.getElementById('btn-change-pass-confirm');
     btn.disabled    = false;
     btn.textContent = 'Change passphrase';
-    document.getElementById('modal-change-passphrase').hidden = true;
+    closeDialog('modal-change-passphrase');
   }
 
   document.getElementById('btn-change-passphrase').addEventListener('click', () => {
     resetChangePassModal();
-    document.getElementById('modal-change-passphrase').hidden = false;
+    openDialog('modal-change-passphrase');
   });
 
   document.getElementById('btn-change-pass-cancel').addEventListener('click', resetChangePassModal);
 
-  ['change-pass-current', 'change-pass-new', 'change-pass-new2'].forEach(id => {
-    document.getElementById(id).addEventListener('keydown', e => {
-      if (e.key === 'Enter') document.getElementById('btn-change-pass-confirm').click();
-    });
-  });
-
-  document.getElementById('btn-change-pass-confirm').addEventListener('click', async () => {
+  document.getElementById('form-change-pass').addEventListener('submit', async e => {
+    e.preventDefault();
     const currentPass = document.getElementById('change-pass-current').value;
     const newPass     = document.getElementById('change-pass-new').value;
     const newPass2    = document.getElementById('change-pass-new2').value;
