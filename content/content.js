@@ -1206,8 +1206,14 @@ function renderCodeBlock(lang, codeText) {
   _copyIconFront.textContent = '\uD83D\uDCC4';
   _copyIcon.appendChild(_copyIconFront);
   copyBtn.appendChild(_copyIcon);
+  copyBtn.type = 'button';
+  copyBtn.setAttribute('aria-label', 'Copy code');
+  copyBtn.title = 'Copy code';
+  // Mirror hover emphasis for keyboard focus too.
   copyBtn.addEventListener('mouseover', () => { copyBtn.style.opacity = '1'; });
   copyBtn.addEventListener('mouseout',  () => { copyBtn.style.opacity = '0.65'; });
+  copyBtn.addEventListener('focus',     () => { copyBtn.style.opacity = '1'; });
+  copyBtn.addEventListener('blur',      () => { copyBtn.style.opacity = '0.65'; });
   let _copyResetTimer = null;
   copyBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(codeText).catch(() => {});
@@ -2689,6 +2695,12 @@ function _buildDownloadCard(url, strippedName) {
     dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 24%, transparent)';
   });
   dlBtn.addEventListener('mouseout', () => {
+    dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 16%, transparent)';
+  });
+  dlBtn.addEventListener('focus', () => {
+    dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 24%, transparent)';
+  });
+  dlBtn.addEventListener('blur', () => {
     dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 16%, transparent)';
   });
 
