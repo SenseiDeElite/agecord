@@ -21,14 +21,16 @@
       <p class="subtitle">Enter your passphrase to unlock encryption for this session.</p>
     </div>
 
+    <form id="form-lock">
     <div class="form-group">
       <label for="passphrase-input">Passphrase</label>
-      <input id="passphrase-input" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+      <input id="passphrase-input" aria-describedby="unlock-error" type="password" placeholder="Type current passphrase" autocomplete="current-password">
     </div>
-    <div id="unlock-error" class="error-msg" hidden></div>
+    <div id="unlock-error" class="error-msg" role="alert" hidden></div>
 
-    <button id="btn-unlock" class="btn btn-primary btn-full">Unlock</button>
-    <button id="btn-goto-setup" class="btn btn-text btn-full" hidden>Set up new keypair instead</button>
+    <button id="btn-unlock" type="submit" class="btn btn-primary btn-full">Unlock</button>
+    <button id="btn-goto-setup" type="button" class="btn btn-text btn-full" hidden>Set up new keypair instead</button>
+    </form>
   </div>
 
   <!-- ── SCREEN: SETUP ─────────────────────────────────────────────────── -->
@@ -39,9 +41,10 @@
       <p class="subtitle">One-time setup.</p>
     </div>
 
+    <form id="form-setup">
     <div class="form-group">
       <label for="setup-passphrase">Passphrase</label>
-      <input id="setup-passphrase" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+      <input id="setup-passphrase" aria-describedby="setup-error" type="password" placeholder="Type new passphrase" autocomplete="new-password">
       <div id="strength-bar-wrap"><div id="strength-bar"></div></div>
       <span id="strength-label" class="hint"></span>
     </div>
@@ -49,14 +52,15 @@
       <label for="setup-passphrase2">Confirm passphrase</label>
       <input id="setup-passphrase2" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
     </div>
-    <div id="setup-error" class="error-msg" hidden></div>
+    <div id="setup-error" class="error-msg" role="alert" hidden></div>
 
-    <button id="btn-generate" class="btn btn-primary btn-full">Generate keypair</button>
+    <button id="btn-generate" type="submit" class="btn btn-primary btn-full">Generate keypair</button>
     <div id="setup-spinner" class="spinner-wrap" hidden>
       <div class="spinner"></div><span>Generating keypair... do not close this window.</span>
     </div>
 
-    <button id="btn-show-import" class="btn btn-outlined btn-full">Import existing keypair</button>
+    <button id="btn-show-import" type="button" class="btn btn-outlined btn-full">Import existing keypair</button>
+    </form>
   </div>
 
 
@@ -69,9 +73,10 @@
 
     <p class="hint" style="padding: 8px 16px 4px">Import an existing keypair, then choose a new passphrase to protect it on this device.</p>
 
+    <form id="form-import">
     <div class="form-group">
       <label for="import-blob">Encrypted private key blob</label>
-      <textarea id="import-blob" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
+      <textarea id="import-blob" aria-describedby="import-error" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
     </div>
     <div class="form-group">
       <label for="import-export-passphrase">Export passphrase</label>
@@ -85,11 +90,12 @@
       <label for="import-passphrase2">Confirm new passphrase</label>
       <input id="import-passphrase2" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
     </div>
-    <div id="import-error" class="error-msg" hidden></div>
-    <button id="btn-import" class="btn btn-primary btn-full">Import &amp; unlock</button>
+    <div id="import-error" class="error-msg" role="alert" hidden></div>
+    <button id="btn-import" type="submit" class="btn btn-primary btn-full">Import &amp; unlock</button>
     <div id="import-spinner" class="spinner-wrap" hidden>
       <div class="spinner"></div><span>Importing... do not close this window.</span>
     </div>
+    </form>
   </div>
 
   <!-- ── SCREEN: MAIN ──────────────────────────────────────────────────── -->
@@ -107,8 +113,8 @@
       </div>
       <div class="main-header-toggle-row">
         <span class="main-header-toggle-label">🛡️ Encryption &amp; Decryption</span>
-        <label class="switch" aria-label="Toggle global encryption">
-          <input id="global-toggle" type="checkbox">
+        <label class="switch">
+          <input id="global-toggle" type="checkbox" role="switch" aria-label="Toggle global encryption">
           <span class="slider"></span>
         </label>
       </div>
@@ -122,7 +128,7 @@
       </div>
     </div>
 
-    <input id="contacts-search" type="search" placeholder="Search..." autocomplete="off">
+    <input id="contacts-search" type="search" placeholder="Search..." aria-label="Search contacts" autocomplete="off">
 
     <div id="contacts-list" class="contacts-list">
       <div id="no-contacts" class="empty-state">No contacts yet.<br>Add one below.</div>
@@ -132,15 +138,13 @@
   </div>
 
   <!-- ── MODAL: IMPORT CONTACTS RESULT ─────────────────────────────────── -->
-  <div id="modal-import-contacts" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>Import contacts</h3>
-      <p id="modal-import-contacts-msg"></p>
-      <div class="modal-actions">
-        <button id="btn-import-contacts-ok" class="btn btn-primary">OK</button>
-      </div>
+  <dialog id="modal-import-contacts" class="modal" closedby="any" aria-labelledby="modal-import-contacts-title" data-cancel="btn-import-contacts-ok">
+    <h3 id="modal-import-contacts-title">Import contacts</h3>
+    <p id="modal-import-contacts-msg"></p>
+    <div class="modal-actions">
+      <button id="btn-import-contacts-ok" class="btn btn-primary">OK</button>
     </div>
-  </div>
+  </dialog>
 
   <!-- ── SCREEN: ADD ENTRY ─────────────────────────────────────────────── -->
   <div id="screen-add-contact" class="screen screen-form" hidden>
@@ -162,7 +166,7 @@
     <div id="add-fields-contact">
       <div class="form-group">
         <label for="contact-channel-id">Channel ID</label>
-        <input id="contact-channel-id" type="text" placeholder="Paste channel ID">
+        <input id="contact-channel-id" aria-describedby="add-contact-error" type="text" placeholder="Paste channel ID">
         <span class="hint">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
       </div>
       <div class="form-group">
@@ -211,7 +215,7 @@
       </div>
     </div>
 
-    <div id="add-contact-error" class="error-msg" hidden></div>
+    <div id="add-contact-error" class="error-msg" role="alert" hidden></div>
     <button id="btn-save-contact" class="btn btn-primary btn-full">Save</button>
   </div>
 
@@ -224,7 +228,7 @@
 
     <div class="form-group">
       <label for="edit-channel-id">Channel ID</label>
-      <input id="edit-channel-id" type="text" placeholder="Numbers only">
+      <input id="edit-channel-id" aria-describedby="edit-contact-error" type="text" placeholder="Numbers only">
       <span class="hint">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
     </div>
     <div class="form-group">
@@ -235,7 +239,7 @@
       <label for="edit-key">Public key</label>
       <textarea id="edit-key" rows="5" placeholder="age1pq1...;mldsa87:..."></textarea>
     </div>
-    <div id="edit-contact-error" class="error-msg" hidden></div>
+    <div id="edit-contact-error" class="error-msg" role="alert" hidden></div>
 
     <button id="btn-save-edit" class="btn btn-primary btn-full">Save changes</button>
   </div>
@@ -248,7 +252,7 @@
     </div>
     <div class="form-group">
       <label for="edit-group-channel-id">Channel ID</label>
-      <input id="edit-group-channel-id" type="text" placeholder="Numbers only">
+      <input id="edit-group-channel-id" aria-describedby="edit-group-error" type="text" placeholder="Numbers only">
       <span class="hint">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
     </div>
     <div class="form-group">
@@ -260,7 +264,7 @@
       <div id="edit-group-member-list" class="member-chip-list"></div>
       <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
     </div>
-    <div id="edit-group-error" class="error-msg" hidden></div>
+    <div id="edit-group-error" class="error-msg" role="alert" hidden></div>
     <button id="btn-save-edit-group" class="btn btn-primary btn-full">Save changes</button>
   </div>
 
@@ -272,7 +276,7 @@
     </div>
     <div class="form-group">
       <label for="edit-server-id-input">Server ID</label>
-      <input id="edit-server-id-input" type="text" placeholder="Numbers only">
+      <input id="edit-server-id-input" aria-describedby="edit-server-error" type="text" placeholder="Numbers only">
       <span class="hint">https://discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
     </div>
     <div class="form-group">
@@ -284,57 +288,56 @@
       <div id="edit-server-member-list" class="member-chip-list"></div>
       <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
     </div>
-    <div id="edit-server-error" class="error-msg" hidden></div>
+    <div id="edit-server-error" class="error-msg" role="alert" hidden></div>
     <button id="btn-save-edit-server" class="btn btn-primary btn-full">Save changes</button>
   </div>
 
   <!-- ── SHEET: MEMBER PICKER ──────────────────────────────────────────── -->
-  <div id="sheet-member-picker" class="bottom-sheet bottom-sheet-tall" hidden>
+  <dialog id="sheet-member-picker" class="bottom-sheet bottom-sheet-tall" closedby="any" aria-labelledby="member-picker-title">
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="member-picker-title">Select members</div>
-    <input id="member-picker-search" type="search" placeholder="Search contacts...">
+    <input id="member-picker-search" type="search" placeholder="Search contacts..." aria-label="Search contacts">
     <div id="member-picker-list"></div>
     <div style="padding: 8px 16px 16px;">
       <button id="btn-member-picker-done" class="btn btn-primary btn-full">Done</button>
     </div>
-  </div>
-  <div id="sheet-member-picker-backdrop" class="sheet-backdrop" hidden></div>
+  </dialog>
 
   <!-- ── SHEET: GROUP DETAIL ───────────────────────────────────────────── -->
-  <div id="sheet-group" class="bottom-sheet" hidden>
+  <dialog id="sheet-group" class="bottom-sheet" closedby="any" aria-labelledby="sheet-group-name" data-cancel="btn-close-group-sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="sheet-group-name"></div>
     <div class="sheet-fp-label">Channel ID</div>
     <div class="sheet-fingerprint" id="sheet-group-channel" style="font-family:monospace;"></div>
     <div class="sheet-row">
-      <span>Encrypt in this group</span>
+      <span id="sheet-group-toggle-label">Encrypt in this group</span>
       <label class="switch">
-        <input id="sheet-group-toggle" type="checkbox">
+        <input id="sheet-group-toggle" type="checkbox" role="switch" aria-labelledby="sheet-group-toggle-label">
         <span class="slider"></span>
       </label>
     </div>
     <button id="btn-edit-group"   class="btn btn-primary btn-full">Edit group</button>
     <button id="btn-delete-group" class="btn btn-outlined-error btn-full">Delete group</button>
     <button id="btn-close-group-sheet" class="btn btn-text btn-full">Close</button>
-  </div>
+  </dialog>
 
   <!-- ── SHEET: SERVER DETAIL ──────────────────────────────────────────── -->
-  <div id="sheet-server" class="bottom-sheet" hidden>
+  <dialog id="sheet-server" class="bottom-sheet" closedby="any" aria-labelledby="sheet-server-name" data-cancel="btn-close-server-sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="sheet-server-name"></div>
     <div class="sheet-fp-label">Server ID</div>
     <div class="sheet-fingerprint" id="sheet-server-id-display" style="font-family:monospace;"></div>
     <div class="sheet-row">
-      <span>Encrypt in this server</span>
+      <span id="sheet-server-toggle-label">Encrypt in this server</span>
       <label class="switch">
-        <input id="sheet-server-toggle" type="checkbox">
+        <input id="sheet-server-toggle" type="checkbox" role="switch" aria-labelledby="sheet-server-toggle-label">
         <span class="slider"></span>
       </label>
     </div>
     <button id="btn-edit-server"   class="btn btn-primary btn-full">Edit server</button>
     <button id="btn-delete-server" class="btn btn-outlined-error btn-full">Delete server</button>
     <button id="btn-close-server-sheet" class="btn btn-text btn-full">Close</button>
-  </div>
+  </dialog>
   <div id="screen-my-key" class="screen screen-form" hidden>
     <div class="topbar">
       <button id="btn-back-key" class="icon-btn" aria-label="Back">←</button>
@@ -431,135 +434,124 @@
   </div>
 
   <!-- ── SHEET: CONTACT DETAIL ─────────────────────────────────────────── -->
-  <div id="sheet-contact" class="bottom-sheet" hidden>
+  <dialog id="sheet-contact" class="bottom-sheet" closedby="any" aria-labelledby="sheet-contact-name" data-cancel="btn-close-sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="sheet-contact-name"></div>
     <div class="sheet-fp-label">SHAKE256 Fingerprint</div>
     <div class="sheet-fingerprint" id="sheet-contact-fp">Computing fingerprint...</div>
     <div class="sheet-row">
-      <span>Encrypt to this contact</span>
+      <span id="sheet-contact-toggle-label">Encrypt to this contact</span>
       <label class="switch">
-        <input id="sheet-contact-toggle" type="checkbox">
+        <input id="sheet-contact-toggle" type="checkbox" role="switch" aria-labelledby="sheet-contact-toggle-label">
         <span class="slider"></span>
       </label>
     </div>
     <button id="btn-edit-contact"   class="btn btn-primary btn-full">Edit contact</button>
     <button id="btn-delete-contact" class="btn btn-outlined-error btn-full">Delete contact</button>
     <button id="btn-close-sheet"    class="btn btn-text btn-full">Close</button>
-  </div>
-  <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+  </dialog>
 
   <!-- ── MODAL: EXPORT PRIVATE KEY ────────────────────────────────────── -->
-  <div id="modal-export-key" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>Export private key</h3>
-      <p style="font-size:12px; color:var(--md-on-surface-variant);">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
-      <label for="export-passphrase-input" class="modal-label">Unlock passphrase</label>
-      <input id="export-passphrase-input" type="password" placeholder="Type unlock passphrase" autocomplete="current-password" style="margin-top:6px;">
-      <label for="export-new-passphrase" class="modal-label" style="margin-top:12px;">Export passphrase</label>
-      <input id="export-new-passphrase" type="password" placeholder="Type export passphrase" autocomplete="new-password" style="margin-top:6px;">
-      <label for="export-new-passphrase2" class="modal-label" style="margin-top:12px;">Confirm export passphrase</label>
-      <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password" style="margin-top:6px;">
-      <div id="export-passphrase-error" class="error-msg" hidden></div>
-      <div id="export-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
-        <div class="spinner"></div><span>Encrypting... do not close this window.</span>
-      </div>
-      <div class="modal-actions">
-        <button id="btn-export-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-export-confirm" class="btn btn-error">Encrypt &amp; show</button>
-      </div>
+  <dialog id="modal-export-key" class="modal" aria-labelledby="modal-export-key-title" data-cancel="btn-export-cancel">
+    <h3 id="modal-export-key-title">Export private key</h3>
+    <p style="font-size:12px; color:var(--md-on-surface-variant);">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
+    <form id="form-export">
+    <label for="export-passphrase-input" class="modal-label">Unlock passphrase</label>
+    <input id="export-passphrase-input" aria-describedby="export-passphrase-error" type="password" placeholder="Type unlock passphrase" autocomplete="current-password" style="margin-top:6px;">
+    <label for="export-new-passphrase" class="modal-label" style="margin-top:12px;">Export passphrase</label>
+    <input id="export-new-passphrase" type="password" placeholder="Type export passphrase" autocomplete="new-password" style="margin-top:6px;">
+    <label for="export-new-passphrase2" class="modal-label" style="margin-top:12px;">Confirm export passphrase</label>
+    <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password" style="margin-top:6px;">
+    <div id="export-passphrase-error" class="error-msg" role="alert" hidden></div>
+    <div id="export-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
+      <div class="spinner"></div><span>Encrypting... do not close this window.</span>
     </div>
-  </div>
+    <div class="modal-actions">
+      <button id="btn-export-cancel" type="button"  class="btn btn-text">Cancel</button>
+      <button id="btn-export-confirm" type="submit" class="btn btn-error">Encrypt &amp; show</button>
+    </div>
+    </form>
+  </dialog>
 
   <!-- ── MODAL: EXPORT KEY DISPLAY ────────────────────────────────────── -->
-  <div id="modal-export-display" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>Encrypted private key blob</h3>
-      <p style="font-size: 12px; color: var(--md-on-surface-variant);">This blob is encrypted with your export passphrase. Copy and save it alongside the export passphrase in a trusted password manager. Anyone with both can fully restore your keypair.</p>
-      <textarea id="export-key-blob" rows="6" readonly spellcheck="false" style="width:100%; font-family: monospace; font-size: 10px; background: var(--md-surface-container); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 8px; box-sizing: border-box; resize: none; margin-top:8px;"></textarea>
-      <div class="modal-actions">
-        <button id="btn-export-copy"  class="btn btn-primary">Copy &amp; close</button>
-        <button id="btn-export-close" class="btn btn-text">Close</button>
-      </div>
+  <dialog id="modal-export-display" class="modal" aria-labelledby="modal-export-display-title" data-cancel="btn-export-close">
+    <h3 id="modal-export-display-title">Encrypted private key blob</h3>
+    <p style="font-size: 12px; color: var(--md-on-surface-variant);">This blob is encrypted with your export passphrase. Copy and save it alongside the export passphrase in a trusted password manager. Anyone with both can fully restore your keypair.</p>
+    <textarea id="export-key-blob" rows="6" readonly aria-label="Encrypted private key blob" spellcheck="false" style="width:100%; font-family: monospace; font-size: 10px; background: var(--md-surface-container); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 8px; box-sizing: border-box; resize: none; margin-top:8px;"></textarea>
+    <div class="modal-actions">
+      <button id="btn-export-copy"  class="btn btn-primary">Copy &amp; close</button>
+      <button id="btn-export-close" class="btn btn-text">Close</button>
     </div>
-  </div>
+  </dialog>
 
   <!-- ── MODAL: CHANGE PASSPHRASE ─────────────────────────────────────── -->
-  <div id="modal-change-passphrase" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>Change passphrase</h3>
-      <p style="font-size:12px; color:var(--md-on-surface-variant);">Your data will be re-encrypted with the new passphrase.</p>
-      <label for="change-pass-current" class="modal-label">Current passphrase</label>
-      <input id="change-pass-current" type="password" placeholder="Type current passphrase" autocomplete="current-password" style="margin-top:6px;">
-      <label for="change-pass-new" class="modal-label" style="margin-top:12px;">New passphrase</label>
-      <input id="change-pass-new" type="password" placeholder="Type new passphrase" autocomplete="new-password" style="margin-top:6px;">
-      <label for="change-pass-new2" class="modal-label" style="margin-top:12px;">Confirm new passphrase</label>
-      <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password" style="margin-top:6px;">
-      <div id="change-pass-error" class="error-msg" hidden></div>
-      <div id="change-pass-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
-        <div class="spinner"></div><span>Re-encrypting... do not close this window.</span>
-      </div>
-      <div class="modal-actions">
-        <button id="btn-change-pass-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-change-pass-confirm" class="btn btn-primary">Change passphrase</button>
-      </div>
+  <dialog id="modal-change-passphrase" class="modal" aria-labelledby="modal-change-passphrase-title" data-cancel="btn-change-pass-cancel">
+    <h3 id="modal-change-passphrase-title">Change passphrase</h3>
+    <p style="font-size:12px; color:var(--md-on-surface-variant);">Your data will be re-encrypted with the new passphrase.</p>
+    <form id="form-change-pass">
+    <label for="change-pass-current" class="modal-label">Current passphrase</label>
+    <input id="change-pass-current" aria-describedby="change-pass-error" type="password" placeholder="Type current passphrase" autocomplete="current-password" style="margin-top:6px;">
+    <label for="change-pass-new" class="modal-label" style="margin-top:12px;">New passphrase</label>
+    <input id="change-pass-new" type="password" placeholder="Type new passphrase" autocomplete="new-password" style="margin-top:6px;">
+    <label for="change-pass-new2" class="modal-label" style="margin-top:12px;">Confirm new passphrase</label>
+    <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password" style="margin-top:6px;">
+    <div id="change-pass-error" class="error-msg" role="alert" hidden></div>
+    <div id="change-pass-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
+      <div class="spinner"></div><span>Re-encrypting... do not close this window.</span>
     </div>
-  </div>
+    <div class="modal-actions">
+      <button id="btn-change-pass-cancel" type="button"  class="btn btn-text">Cancel</button>
+      <button id="btn-change-pass-confirm" type="submit" class="btn btn-primary">Change passphrase</button>
+    </div>
+    </form>
+  </dialog>
 
   <!-- ── MODAL: CLEAR ALL DATA ─────────────────────────────────────────── -->
-  <div id="modal-clear-data" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>⚠️ Clear all data?</h3>
-      <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
-      <p>Type <strong>CONFIRM</strong> to proceed:</p>
-      <input id="clear-data-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
-      <div class="modal-actions">
-        <button id="btn-clear-data-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-clear-data-confirm" class="btn btn-error" disabled>Erase &amp; start over</button>
-      </div>
+  <dialog id="modal-clear-data" class="modal" aria-labelledby="modal-clear-data-title" data-cancel="btn-clear-data-cancel">
+    <h3 id="modal-clear-data-title">⚠️ Clear all data?</h3>
+    <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
+    <p id="clear-data-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
+    <input id="clear-data-confirm-input" aria-labelledby="clear-data-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
+    <div class="modal-actions">
+      <button id="btn-clear-data-cancel"  class="btn btn-text">Cancel</button>
+      <button id="btn-clear-data-confirm" class="btn btn-error" disabled>Erase &amp; start over</button>
     </div>
-  </div>
+  </dialog>
 
   <!-- ── MODAL: REGEN CONFIRM ──────────────────────────────────────────── -->
-  <div id="modal-regen" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>⚠️ Regenerate keypair?</h3>
-      <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> Contacts will be disabled.</p>
-      <p>Type <strong>CONFIRM</strong> to proceed:</p>
-      <input id="regen-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
-      <div class="modal-actions">
-        <button id="btn-regen-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-regen-confirm" class="btn btn-error" disabled>Regenerate</button>
-      </div>
+  <dialog id="modal-regen" class="modal" aria-labelledby="modal-regen-title" data-cancel="btn-regen-cancel">
+    <h3 id="modal-regen-title">⚠️ Regenerate keypair?</h3>
+    <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> Contacts will be disabled.</p>
+    <p id="regen-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
+    <input id="regen-confirm-input" aria-labelledby="regen-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
+    <div class="modal-actions">
+      <button id="btn-regen-cancel"  class="btn btn-text">Cancel</button>
+      <button id="btn-regen-confirm" class="btn btn-error" disabled>Regenerate</button>
     </div>
-  </div>
+  </dialog>
 
   <!-- ── MODAL: DELETE CONTACT ─────────────────────────────────────────── -->
-  <div id="modal-delete-contact" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>Delete recipient?</h3>
-      <p id="modal-delete-msg"></p>
-      <div class="modal-actions">
-        <button id="btn-delete-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-delete-confirm" class="btn btn-error">Delete</button>
-      </div>
+  <dialog id="modal-delete-contact" class="modal" closedby="any" aria-labelledby="modal-delete-contact-title" data-cancel="btn-delete-cancel">
+    <h3 id="modal-delete-contact-title">Delete recipient?</h3>
+    <p id="modal-delete-msg"></p>
+    <div class="modal-actions">
+      <button id="btn-delete-cancel"  class="btn btn-text">Cancel</button>
+      <button id="btn-delete-confirm" class="btn btn-error">Delete</button>
     </div>
-  </div>
+  </dialog>
 
   <!-- ── MODAL: RESET KEYPAIR ──────────────────────────────────────────── -->
-  <div id="modal-reset-keypair" class="modal-overlay" hidden>
-    <div class="modal">
-      <h3>⚠️ Erase everything?</h3>
-      <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
-      <p>Only continue if you have forgotten your passphrase.</p>
-      <p>Type <strong>CONFIRM</strong> to proceed:</p>
-      <input id="reset-confirm-input" type="text" placeholder="CONFIRM" autocomplete="off">
-      <div class="modal-actions">
-        <button id="btn-reset-cancel"  class="btn btn-text">Cancel</button>
-        <button id="btn-reset-confirm" class="btn btn-error" disabled>Erase &amp; start over</button>
-      </div>
+  <dialog id="modal-reset-keypair" class="modal" aria-labelledby="modal-reset-keypair-title" data-cancel="btn-reset-cancel">
+    <h3 id="modal-reset-keypair-title">⚠️ Erase everything?</h3>
+    <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
+    <p>Only continue if you have forgotten your passphrase.</p>
+    <p id="reset-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
+    <input id="reset-confirm-input" aria-labelledby="reset-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
+    <div class="modal-actions">
+      <button id="btn-reset-cancel"  class="btn btn-text">Cancel</button>
+      <button id="btn-reset-confirm" class="btn btn-error" disabled>Erase &amp; start over</button>
     </div>
-  </div>
+  </dialog>
 
 
   <script src="popup.js"></script>
