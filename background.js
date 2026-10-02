@@ -215,15 +215,21 @@ function handleRelock(_msg, _sender, sendResponse) {
   // check and are waiting on their own .get() to resolve.
   chrome.storage.session.remove(SESSION_KEYS)
     .catch(e => console.error('[age] RELOCK session clear failed:', e?.message));
-  broadcastToTabs({ type: 'RELOCK' });
+  broadcastToTabs({ type: 'RELOCK' })
+    .catch(e => console.error('[age] RELOCK broadcast failed:', e?.message));
   sendResponse({ ok: true });
   return false;
 }
 
 function handleReloadDiscordTabs(_msg, _sender, sendResponse) {
-  getDiscordTabs()
-    .then(tabs => tabs.forEach(t => chrome.tabs.reload(t.id)))
-    .catch(e => console.error('[age] RELOAD_DISCORD_TABS failed:', e?.message));
+  (async () => {
+    try {
+      const tabs = await getDiscordTabs();
+      for (const t of tabs) chrome.tabs.reload(t.id);
+    } catch (e) {
+      console.error('[age] RELOAD_DISCORD_TABS failed:', e?.message);
+    }
+  })();
   sendResponse({ ok: true });
   return false;
 }
@@ -236,14 +242,16 @@ function handleContactsUpdated(msg, _sender, sendResponse) {
   // a RELOCK race from resurrecting age_contacts.
   if (_identity) {
     const myEpoch = _epoch;
-    chrome.storage.session.set({ age_contacts: _contacts, age_recipient: _ageRecipient })
-      .then(() => {
+    (async () => {
+      try {
+        await chrome.storage.session.set({ age_contacts: _contacts, age_recipient: _ageRecipient });
         if (_epoch !== myEpoch) {
-          chrome.storage.session.remove(['age_contacts', 'age_recipient'])
-            .catch(e => console.error('[age] CONTACTS_UPDATED post-RELOCK cleanup failed:', e?.message));
+          await chrome.storage.session.remove(['age_contacts', 'age_recipient']);
         }
-      })
-      .catch(e => console.error('[age] CONTACTS_UPDATED session write failed:', e?.message));
+      } catch (e) {
+        console.error('[age] CONTACTS_UPDATED session sync failed:', e?.message);
+      }
+    })();
   }
   sendResponse({ ok: true });
   return false;
