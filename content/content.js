@@ -372,6 +372,9 @@ function getTextboxes() {
 function _makeEnterHandler(tb) {
   return (e) => {
     if (e.key !== 'Enter' || e.shiftKey || e.altKey) return;
+    // Enter confirming an IME candidate must reach Discord untouched: bail out
+    // before any preventDefault/stopPropagation so the composition isn't swallowed.
+    if (e.isComposing) return;
     if (document.querySelector('[role="listbox"]')) return;
     const focused = document.activeElement;
     if (focused &&
@@ -2219,12 +2222,18 @@ function relayInterceptorState(unlocked) {
 // Evicts non-DOM message cache entries and revokes blob URLs.
 // Uses current DOM state; quoted messages match by CDN URL.
 function _evictStaleProcessedIds() {
+  if (_processedIds.size === 0) return;
+  // Quoted-message containers are queried at most once per pass, not once per id.
+  let quoted = null;
   for (const attachId of [..._processedIds]) {
     const { liId, url } = _splitAttachId(attachId);
-    const inDom = liId
-      ? !!document.getElementById(liId)
-      : [...document.querySelectorAll('[class*="quotedChatMessage__"]')]
-          .some(c => c.querySelector(`a[href="${url}"]`));
+    let inDom;
+    if (liId) {
+      inDom = !!document.getElementById(liId);
+    } else {
+      quoted ??= [...document.querySelectorAll('[class*="quotedChatMessage__"]')];
+      inDom = quoted.some(c => c.querySelector(`a[href="${url}"]`));
+    }
     if (!inDom) {
       // Media entries are { url, type, originalName } — text entries are a
       // plain plaintext string. Only media entries own a blob: URL to free.
@@ -2403,8 +2412,9 @@ function startNavObserver() {
   let lastUrl     = location.href;
   let lastChanKey = _navChannelKey(location.href);
 
-  // Hook pushState/replaceState instead of a body subtree observer — Discord's SPA
-  // router uses History API exclusively and the observer was firing hundreds of times/s.
+  // Observe same-document navigation without a costly body subtree observer.
+  // History API patching is isolated from Discord's page-world calls.
+  // Navigation API covers push, replace, and traverse events.
   function onNav() {
     if (_contextInvalidated) return;
     if (location.href === lastUrl) return;
@@ -2440,11 +2450,7 @@ function startNavObserver() {
     relayInterceptorState(!!_session?.mldsaPrivBytes);
   }
 
-  const _origPush    = history.pushState.bind(history);
-  const _origReplace = history.replaceState.bind(history);
-  history.pushState    = (...a) => { _origPush(...a);    onNav(); };
-  history.replaceState = (...a) => { _origReplace(...a); onNav(); };
-  window.addEventListener('popstate', onNav);
+  navigation.addEventListener('currententrychange', onNav);
 
   // Watches <main> for message-list replacement and rebinds observers.
   // Prevents detached <ol> observers from missing new messages.
