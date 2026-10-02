@@ -17,7 +17,7 @@ To reproduce the [libraries](https://github.com/SenseiDeElite/agecord/tree/main/
 export { Encrypter, Decrypter, generateHybridIdentity, identityToRecipient } from 'age-encryption';
 ```
   
-- Make sure [npm v12.0.2](https://github.com/npm/cli/releases/tag/v12.0.2) is installed, then run:
+- Make sure [npm v12.2.0](https://github.com/npm/cli/releases/tag/v12.2.0) is installed, then run:
 
 ```sh
 npm ci --ignore-scripts && npm run build
@@ -40,7 +40,7 @@ esbuild entry.js \
 *"Cryptographic algorithms written in pure Rust"*
 
 - Our project provides [rustcrypto-wasm](https://github.com/SenseiDeElite/agecord/tree/main/rustcrypto-wasm), a WebAssembly wrapper around RustCrypto implementations of [Argon2id](https://github.com/RustCrypto/password-hashes/tree/master/argon2), [XChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [SHAKE256](https://github.com/RustCrypto/XOFs/tree/master/shake), and [ML-DSA-87](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), built by compiling native Rust code to WebAssembly.
-- Make dependencies: [wasm-pack v0.15.0](https://github.com/wasm-bindgen/wasm-pack/releases/tag/v0.15.0), [rust 1.98.1](https://github.com/rust-lang/rust/releases/tag/1.98.1) (including rust-wasm target), [wasm-bindgen 0.2.128](https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.128), [binaryen 130](https://github.com/WebAssembly/binaryen/releases/tag/version_130) and [LLVM 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8).
+- Make dependencies: [wasm-pack v0.15.0](https://github.com/wasm-bindgen/wasm-pack/releases/tag/v0.15.0), [rust 1.99.0](https://github.com/rust-lang/rust/releases/tag/1.99.0) (including rust-wasm target), [wasm-bindgen 0.2.128](https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.128), [binaryen 130](https://github.com/WebAssembly/binaryen/releases/tag/version_130) and [LLVM 23.1.1](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.1).
 - Upon obtaining them, run:
 
 ```sh
