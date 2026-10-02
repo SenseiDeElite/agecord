@@ -10,6 +10,9 @@
 
 /* ── MD3 Color Tokens — Blue ─────────────────────────────────────────────── */
 :root {
+  /* Keep native controls dark to match the UI. */
+  color-scheme: dark;
+
   /* Primary — blue */
   --md-primary:                #64b5f6;
   --md-on-primary:             #003258;
@@ -38,6 +41,8 @@
   /* Outline */
   --md-outline:                #78909c;
   --md-outline-variant:        #2e3d4f;
+  /* Ensure placeholder text remains readable on field backgrounds. */
+  --md-placeholder:            #93a4b8;
 
   /* Scrim */
   --md-scrim:                  rgba(0, 0, 0, 0.6);
@@ -61,9 +66,12 @@
 /* hidden attribute always wins over any display rule */
 [hidden] { display: none !important; }
 
+/* Set a base popup size; cap dimensions so the layout adapts to narrower panels. */
 html, body {
   width: 360px;
   height: 560px;
+  max-width: 100vw;
+  max-height: 100vh;
   overflow: hidden;
   font-family: 'Roboto', system-ui, sans-serif;
   font-size: 14px;
@@ -77,14 +85,14 @@ html, body {
 .screen {
   display: flex;
   flex-direction: column;
-  width: 360px;
-  height: 560px;
+  width: 100%;
+  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   padding-bottom: 8px;
   scrollbar-width: thin;
   scrollbar-color: var(--md-outline-variant) transparent;
-  animation: screen-enter 200ms var(--motion-decelerate) both;
+  animation: screen-enter 200ms var(--motion-decelerate) backwards;
 }
 
 /* Forms wrapping a screen's fields stay in the same flex column as before. */
@@ -192,7 +200,7 @@ html, body {
   filter: drop-shadow(0 0 12px color-mix(in srgb, var(--md-primary) 35%, transparent));
 }
 
-.screen-header h2 {
+.screen-header h1 {
   font-size: 20px;
   font-weight: 500;
   color: var(--md-on-surface);
@@ -213,7 +221,8 @@ html, body {
   padding: 10px 16px 0;
 }
 
-.form-group label {
+.form-group label,
+.form-group .field-label {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.5px;
@@ -225,7 +234,7 @@ html, body {
 .form-group input,
 .form-group textarea {
   background: var(--md-surface-container-high);
-  border: 1.5px solid var(--md-outline-variant);
+  border: 1.5px solid var(--md-outline);
   border-radius: var(--shape-xs);
   color: var(--md-on-surface);
   font-family: inherit;
@@ -246,9 +255,10 @@ html, body {
   line-height: 1.6;
 }
 
-.form-group input::placeholder,
-.form-group textarea::placeholder {
-  color: var(--md-outline);
+input::placeholder,
+textarea::placeholder {
+  color: var(--md-placeholder);
+  opacity: 1; /* Firefox dims placeholders by default */
 }
 
 .form-group input:focus,
@@ -356,6 +366,14 @@ html, body {
 .spinner-wrap + .btn-full       { margin-top: 10px; }
 .btn-full:first-of-type         { margin-top: 14px; }
 
+/* Inside a .form-group the padding already provides the 16px gutter, so a
+   full-width button must not inset itself a second time. */
+.form-group .btn-full {
+  width: 100%;
+  margin-inline: 0;
+}
+.form-group .btn-full:first-of-type { margin-top: 6px; }
+
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 .spinner-wrap {
   display: flex;
@@ -368,6 +386,7 @@ html, body {
 }
 
 .spinner {
+  flex-shrink: 0; /* otherwise it is squashed to a sliver when the caption wraps */
   width: 16px;
   height: 16px;
   border: 2px solid var(--md-outline-variant);
@@ -604,11 +623,20 @@ html, body {
   display: flex;
   align-items: center;
   gap: 14px;
+  width: 100%;
   padding: 10px 8px 10px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
   border-radius: var(--shape-md);
   cursor: pointer;
   transition: background 140ms var(--motion-standard);
 }
+
+/* The list scrolls (overflow clips), so draw the focus ring inside the card. */
+.contact-card:focus-visible { outline-offset: -2px; }
 
 .contact-card:hover  { background: color-mix(in srgb, var(--md-on-surface) 8%,  transparent); }
 .contact-card:active { background: color-mix(in srgb, var(--md-on-surface) 12%, transparent); }
@@ -636,6 +664,7 @@ html, body {
 }
 
 .contact-name {
+  display: block;
   font-size: 14px;
   font-weight: 500;
   color: var(--md-on-surface);
@@ -761,7 +790,32 @@ html, body {
 .key-copy-btn svg { flex-shrink: 0; }
 
 
+/* ── Utility classes ─────────────────────── */
+.mono { font-family: 'Roboto Mono', 'Consolas', monospace; }
+textarea.mono { font-size: 11px; resize: none; }
+
+.screen-intro    { padding: 8px 16px 4px; }
+.screen-intro-lg { font-size: 13px; padding: 10px 16px 6px; line-height: 1.5; }
+
+.member-count { color: var(--md-on-surface-variant); font-weight: 400; }
+
+.divider {
+  margin: 8px 16px 0;
+  border: 0;
+  border-top: 1px solid var(--md-outline-variant);
+}
+.fp-centered { text-align: center; }
+.sheet-fp-label.fp-centered { padding-top: 10px; }
+
+.sheet-footer { padding: 8px 16px 16px; }
+
+.modal .modal-note { font-size: 12px; }
+
+.section-label-danger { color: var(--md-error); }
+
 /* ── Danger zone ─────────────────────────────────────────────────────────── */
+.danger-zone .btn-full + .btn-full { margin-top: 8px; }
+
 .danger-zone {
   margin-top: 8px;
   padding-top: 6px;
@@ -860,11 +914,8 @@ html, body {
 .modal-label {
   font-size: 13px;
   font-weight: 500;
-  margin-top: 8px;
   display: block;
 }
-
-.modal-label + input { margin-top: 6px; }
 
 /* ── Modal ───────────────────────────────────────────────────────────────── */
 .modal {
@@ -876,6 +927,16 @@ html, body {
   width: calc(100% - 48px);
   max-width: 316px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+
+  /* Restore modal dialog centering after the global margin reset. */
+  position: fixed;
+  inset: 0;
+  margin: auto;
+
+  /* Keep dialogs within the popup and scroll overflow content. */
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* display only while open, otherwise this would override the UA's closed state */
@@ -892,12 +953,40 @@ html, body {
   gap: 10px;
 }
 
+/* Flex children must not be squashed when the dialog hits its max-height. */
+.modal[open] > *,
+.modal form > * { flex-shrink: 0; }
+
+/* One label + one control, tightly paired. */
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Dialog padding already provides the side gutter. */
+.modal .error-msg   { margin: 0; }
+.modal .spinner-wrap { padding: 4px 0; }
+
+.modal-textarea {
+  width: 100%;
+  font-family: 'Roboto Mono', 'Consolas', monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  background: var(--md-surface-container-highest);
+  color: var(--md-on-surface);
+  border: 1.5px solid var(--md-outline);
+  border-radius: var(--shape-xs);
+  padding: 8px;
+  resize: none;
+}
+
 @keyframes modal-in {
   from { opacity: 0; transform: scale(0.93); }
   to   { opacity: 1; transform: scale(1); }
 }
 
-.modal h3 {
+.modal h2 {
   font-size: 17px;
   font-weight: 500;
   color: var(--md-on-surface);
@@ -913,7 +1002,7 @@ html, body {
 
 .modal input {
   background: var(--md-surface-container-highest);
-  border: 1.5px solid var(--md-outline-variant);
+  border: 1.5px solid var(--md-outline);
   border-radius: var(--shape-xs);
   color: var(--md-on-surface);
   font-family: inherit;
@@ -1015,7 +1104,7 @@ html, body {
 .about-row:active { background: color-mix(in srgb, var(--md-on-surface) 12%, transparent); }
 
 .about-row-icon  { font-size: 16px; flex-shrink: 0; width: 22px; text-align: center; }
-.about-row-text  { flex: 1; }
+.about-row-text  { flex: 1; display: flex; flex-direction: column; }
 .about-row-label { font-weight: 500; }
 .about-row-sub   { font-size: 11px; color: var(--md-on-surface-variant); margin-top: 1px; }
 .about-row-badge {
@@ -1043,7 +1132,7 @@ html, body {
   background: var(--md-surface-container-high)
               url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23a8b8cc' d='M6 8L0 0h12z'/%3E%3C/svg%3E")
               no-repeat right 12px center;
-  border: 1.5px solid var(--md-outline-variant);
+  border: 1.5px solid var(--md-outline);
   border-radius: var(--shape-xs);
   color: var(--md-on-surface);
   font-family: inherit;
@@ -1073,7 +1162,7 @@ html, body {
   width: calc(100% - 32px);
   box-sizing: border-box;
   background: var(--md-surface-container-high);
-  border: 1.5px solid var(--md-outline-variant);
+  border: 1.5px solid var(--md-outline);
   border-radius: var(--shape-full);
   color: var(--md-on-surface);
   font-family: inherit;
@@ -1084,7 +1173,6 @@ html, body {
               background   180ms var(--motion-standard);
 }
 
-#contacts-search::placeholder { color: var(--md-outline); }
 
 #contacts-search:focus {
   border-color: var(--md-primary);
@@ -1155,7 +1243,7 @@ html, body {
   width: calc(100% - 32px);
   box-sizing: border-box;
   background: var(--md-surface-container-high);
-  border: 1.5px solid var(--md-outline-variant);
+  border: 1.5px solid var(--md-outline);
   border-radius: var(--shape-full);
   color: var(--md-on-surface);
   font-family: inherit;
