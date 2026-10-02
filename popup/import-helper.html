@@ -7,8 +7,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Import Contacts – Agecord</title>
   <style>
+    :root { color-scheme: dark; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Roboto', system-ui, sans-serif;
@@ -19,7 +21,9 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
+      min-height: 100dvh;
       gap: 18px;
+      padding: 16px;
     }
     .card {
       background: #1c2532;
@@ -35,7 +39,7 @@
       text-align: center;
     }
     .icon  { font-size: 36px; line-height: 1; }
-    h2     { font-size: 18px; font-weight: 500; }
+    h1     { font-size: 18px; font-weight: 500; }
     p      { font-size: 13px; color: #a8b8cc; line-height: 1.5; }
     label {
       display: inline-flex;
@@ -53,7 +57,18 @@
       user-select: none;
     }
     label:hover { background: #90caf9; }
-    input[type=file] { display: none; }
+    /* Visually hidden rather than display:none, so the picker stays in the tab
+       order and a keyboard user can open it. */
+    input[type=file] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    label:has(input:focus-visible) { outline: 2px solid #64b5f6; outline-offset: 3px; }
     #status {
       font-size: 13px;
       color: #a8b8cc;
@@ -61,20 +76,20 @@
       line-height: 1.5;
     }
     #status.ok  { color: #57f287; }
-    #status.err { color: #ed4245; }
+    #status.err { color: #ffb4ab; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <span class="icon">&#x2B06;&#xFE0F;</span>
-    <h2>Import Contacts</h2>
+  <main class="card">
+    <span class="icon" aria-hidden="true">&#x2B06;&#xFE0F;</span>
+    <h1>Import Contacts</h1>
     <p>Select your <strong>agecord</strong> JSON export file.</p>
     <label>
       Choose file
       <input id="f" type="file" accept=".json,application/json">
     </label>
-    <div id="status"></div>
-  </div>
+    <div id="status" role="status" aria-live="polite"></div>
+  </main>
   <script src="import-helper.js"></script>
 </body>
 </html>
