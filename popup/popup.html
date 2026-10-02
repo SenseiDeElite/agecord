@@ -14,10 +14,10 @@
 <body>
 
   <!-- ── SCREEN: LOCK ──────────────────────────────────────────────────── -->
-  <div id="screen-lock" class="screen" hidden>
+  <main id="screen-lock" class="screen" hidden>
     <div class="screen-header">
-      <span class="lock-icon">🔐</span>
-      <h2>Unlock extension</h2>
+      <span class="lock-icon" aria-hidden="true">🔐</span>
+      <h1>Unlock extension</h1>
       <p class="subtitle">Enter your passphrase to unlock encryption for this session.</p>
     </div>
 
@@ -31,13 +31,13 @@
     <button id="btn-unlock" type="submit" class="btn btn-primary btn-full">Unlock</button>
     <button id="btn-goto-setup" type="button" class="btn btn-text btn-full" hidden>Set up new keypair instead</button>
     </form>
-  </div>
+  </main>
 
   <!-- ── SCREEN: SETUP ─────────────────────────────────────────────────── -->
-  <div id="screen-setup" class="screen" hidden>
+  <main id="screen-setup" class="screen" hidden>
     <div class="screen-header">
-      <span class="lock-icon">🏛️</span>
-      <h2>Agecord</h2>
+      <span class="lock-icon" aria-hidden="true">🏛️</span>
+      <h1>Agecord</h1>
       <p class="subtitle">One-time setup.</p>
     </div>
 
@@ -45,8 +45,8 @@
     <div class="form-group">
       <label for="setup-passphrase">Passphrase</label>
       <input id="setup-passphrase" aria-describedby="setup-error" type="password" placeholder="Type new passphrase" autocomplete="new-password">
-      <div id="strength-bar-wrap"><div id="strength-bar"></div></div>
-      <span id="strength-label" class="hint"></span>
+      <div id="strength-bar-wrap" aria-hidden="true"><div id="strength-bar"></div></div>
+      <span id="strength-label" class="hint" aria-live="polite"></span>
     </div>
     <div class="form-group">
       <label for="setup-passphrase2">Confirm passphrase</label>
@@ -61,22 +61,22 @@
 
     <button id="btn-show-import" type="button" class="btn btn-outlined btn-full">Import existing keypair</button>
     </form>
-  </div>
+  </main>
 
 
   <!-- ── SCREEN: IMPORT ────────────────────────────────────────────────── -->
-  <div id="screen-import" class="screen screen-form" hidden>
-    <div class="topbar">
-      <button id="btn-back-import" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Import keypair</span>
-    </div>
+  <main id="screen-import" class="screen screen-form" hidden>
+    <header class="topbar">
+      <button id="btn-back-import" class="icon-btn" aria-label="Back" type="button">←</button>
+      <h1 class="topbar-title">Import keypair</h1>
+    </header>
 
-    <p class="hint" style="padding: 8px 16px 4px">Import an existing keypair, then choose a new passphrase to protect it on this device.</p>
+    <p class="hint screen-intro">Import an existing keypair, then choose a new passphrase to protect it on this device.</p>
 
     <form id="form-import">
     <div class="form-group">
       <label for="import-blob">Encrypted private key blob</label>
-      <textarea id="import-blob" aria-describedby="import-error" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false" style="font-family: monospace; font-size: 11px; resize: none;"></textarea>
+      <textarea id="import-blob" class="mono" aria-describedby="import-error" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false"></textarea>
     </div>
     <div class="form-group">
       <label for="import-export-passphrase">Export passphrase</label>
@@ -96,25 +96,25 @@
       <div class="spinner"></div><span>Importing... do not close this window.</span>
     </div>
     </form>
-  </div>
+  </main>
 
   <!-- ── SCREEN: MAIN ──────────────────────────────────────────────────── -->
-  <div id="screen-main" class="screen screen-main" hidden>
+  <main id="screen-main" class="screen screen-main" hidden>
     <div class="main-header">
       <div class="main-header-glow"></div>
       <div class="main-header-actions">
-        <button id="btn-my-key" class="icon-btn" title="My public key" aria-label="My public key">🔑</button>
-        <button id="btn-lock"   class="icon-btn" title="Lock session"  aria-label="Lock session">🔒</button>
-        <button id="btn-about"  class="icon-btn" title="About"         aria-label="About">ℹ️</button>
+        <button id="btn-my-key" class="icon-btn" title="My public key" aria-label="My public key" type="button">🔑</button>
+        <button id="btn-lock"   class="icon-btn" title="Lock session"  aria-label="Lock session" type="button">🔒</button>
+        <button id="btn-about"  class="icon-btn" title="About"         aria-label="About" type="button">ℹ️</button>
       </div>
       <div class="main-header-hero">
-        <span class="main-header-icon">🏛️</span>
-        <span class="main-header-title">Agecord</span>
+        <span class="main-header-icon" aria-hidden="true">🏛️</span>
+        <h1 class="main-header-title">Agecord</h1>
       </div>
       <div class="main-header-toggle-row">
-        <span class="main-header-toggle-label">🛡️ Encryption &amp; Decryption</span>
+        <span class="main-header-toggle-label" id="global-toggle-label"><span aria-hidden="true">🛡️</span> Encryption &amp; Decryption</span>
         <label class="switch">
-          <input id="global-toggle" type="checkbox" role="switch" aria-label="Toggle global encryption">
+          <input id="global-toggle" type="checkbox" role="switch" aria-labelledby="global-toggle-label">
           <span class="slider"></span>
         </label>
       </div>
@@ -123,8 +123,8 @@
     <div class="section-label">
       <span>Contacts</span>
       <div class="section-label-actions">
-        <button id="btn-export-contacts" class="icon-btn icon-btn-sm" title="Export contacts" aria-label="Export contacts">⬇️</button>
-        <button id="btn-import-contacts" class="icon-btn icon-btn-sm" title="Import contacts" aria-label="Import contacts">⬆️</button>
+        <button id="btn-export-contacts" class="icon-btn icon-btn-sm" title="Export contacts" aria-label="Export contacts" type="button">⬇️</button>
+        <button id="btn-import-contacts" class="icon-btn icon-btn-sm" title="Import contacts" aria-label="Import contacts" type="button">⬆️</button>
       </div>
     </div>
 
@@ -134,24 +134,24 @@
       <div id="no-contacts" class="empty-state">No contacts yet.<br>Add one below.</div>
     </div>
 
-    <button id="btn-add-contact" class="fab">+ Add</button>
-  </div>
+    <button id="btn-add-contact" class="fab" type="button">+ Add</button>
+  </main>
 
   <!-- ── MODAL: IMPORT CONTACTS RESULT ─────────────────────────────────── -->
   <dialog id="modal-import-contacts" class="modal" closedby="any" aria-labelledby="modal-import-contacts-title" data-cancel="btn-import-contacts-ok">
-    <h3 id="modal-import-contacts-title">Import contacts</h3>
+    <h2 id="modal-import-contacts-title">Import contacts</h2>
     <p id="modal-import-contacts-msg"></p>
     <div class="modal-actions">
-      <button id="btn-import-contacts-ok" class="btn btn-primary">OK</button>
+      <button id="btn-import-contacts-ok" class="btn btn-primary" type="button">OK</button>
     </div>
   </dialog>
 
   <!-- ── SCREEN: ADD ENTRY ─────────────────────────────────────────────── -->
-  <div id="screen-add-contact" class="screen screen-form" hidden>
-    <div class="topbar">
-      <button id="btn-back-add" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Add</span>
-    </div>
+  <main id="screen-add-contact" class="screen screen-form" hidden>
+    <header class="topbar">
+      <button id="btn-back-add" class="icon-btn" aria-label="Back" type="button">←</button>
+      <h1 class="topbar-title">Add</h1>
+    </header>
 
     <div class="form-group">
       <label for="add-type-select">Type</label>
@@ -166,16 +166,16 @@
     <div id="add-fields-contact">
       <div class="form-group">
         <label for="contact-channel-id">Channel ID</label>
-        <input id="contact-channel-id" aria-describedby="add-contact-error" type="text" placeholder="Paste channel ID">
-        <span class="hint">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+        <input id="contact-channel-id" aria-describedby="hint-contact-channel add-contact-error" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <span class="hint" id="hint-contact-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
       </div>
       <div class="form-group">
         <label for="contact-username">Name</label>
-        <input id="contact-username" type="text" placeholder="e.g. George">
+        <input id="contact-username" type="text" autocomplete="off" placeholder="e.g. George">
       </div>
       <div class="form-group">
         <label for="contact-key">Public key</label>
-        <textarea id="contact-key" rows="4" placeholder="age1pq1...;mldsa87:..."></textarea>
+        <textarea id="contact-key" autocomplete="off" spellcheck="false" rows="4" placeholder="age1pq1...;mldsa87:..."></textarea>
       </div>
     </div>
 
@@ -183,17 +183,17 @@
     <div id="add-fields-group" hidden>
       <div class="form-group">
         <label for="group-channel-id">Channel ID</label>
-        <input id="group-channel-id" type="text" placeholder="Paste channel ID">
-        <span class="hint">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+        <input id="group-channel-id" aria-describedby="hint-group-channel" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <span class="hint" id="hint-group-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
       </div>
       <div class="form-group">
         <label for="group-name">Name</label>
-        <input id="group-name" type="text" placeholder="e.g. My Group">
+        <input id="group-name" type="text" autocomplete="off" placeholder="e.g. My Group">
       </div>
       <div class="form-group">
-        <label>Members <span id="group-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0 / 10)</span></label>
+        <span class="field-label">Members <span class="member-count" id="group-member-count">(0 / 10)</span></span>
         <div id="group-member-list" class="member-chip-list"></div>
-        <button id="btn-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
+        <button id="btn-group-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
       </div>
     </div>
 
@@ -201,96 +201,96 @@
     <div id="add-fields-server" hidden>
       <div class="form-group">
         <label for="server-id-input">Server ID</label>
-        <input id="server-id-input" type="text" placeholder="Paste server ID">
-        <span class="hint">discord.com/channels/<strong>SERVER_ID</strong>/CHANNEL_ID</span>
+        <input id="server-id-input" aria-describedby="hint-server-id" type="text" placeholder="Paste server ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <span class="hint" id="hint-server-id">discord.com/channels/<strong>SERVER_ID</strong>/CHANNEL_ID</span>
       </div>
       <div class="form-group">
         <label for="server-name">Name</label>
-        <input id="server-name" type="text" placeholder="e.g. My Server">
+        <input id="server-name" type="text" autocomplete="off" placeholder="e.g. My Server">
       </div>
       <div class="form-group">
-        <label>Members <span id="server-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0)</span></label>
+        <span class="field-label">Members <span class="member-count" id="server-member-count">(0)</span></span>
         <div id="server-member-list" class="member-chip-list"></div>
-        <button id="btn-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
+        <button id="btn-server-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
       </div>
     </div>
 
     <div id="add-contact-error" class="error-msg" role="alert" hidden></div>
-    <button id="btn-save-contact" class="btn btn-primary btn-full">Save</button>
-  </div>
+    <button id="btn-save-contact" class="btn btn-primary btn-full" type="button">Save</button>
+  </main>
 
   <!-- ── SCREEN: EDIT CONTACT ──────────────────────────────────────────── -->
-  <div id="screen-edit-contact" class="screen screen-form" hidden>
-    <div class="topbar">
-      <button id="btn-back-edit" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Edit Contact</span>
-    </div>
+  <main id="screen-edit-contact" class="screen screen-form" hidden>
+    <header class="topbar">
+      <button id="btn-back-edit" class="icon-btn" aria-label="Back" type="button">←</button>
+      <h1 class="topbar-title">Edit Contact</h1>
+    </header>
 
     <div class="form-group">
       <label for="edit-channel-id">Channel ID</label>
-      <input id="edit-channel-id" aria-describedby="edit-contact-error" type="text" placeholder="Numbers only">
-      <span class="hint">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+      <input id="edit-channel-id" aria-describedby="hint-edit-channel edit-contact-error" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <span class="hint" id="hint-edit-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
     </div>
     <div class="form-group">
       <label for="edit-username">Contact name</label>
-      <input id="edit-username" type="text" placeholder="e.g. Alice">
+      <input id="edit-username" type="text" autocomplete="off" placeholder="e.g. Alice">
     </div>
     <div class="form-group">
       <label for="edit-key">Public key</label>
-      <textarea id="edit-key" rows="5" placeholder="age1pq1...;mldsa87:..."></textarea>
+      <textarea id="edit-key" autocomplete="off" spellcheck="false" rows="5" placeholder="age1pq1...;mldsa87:..."></textarea>
     </div>
     <div id="edit-contact-error" class="error-msg" role="alert" hidden></div>
 
-    <button id="btn-save-edit" class="btn btn-primary btn-full">Save changes</button>
-  </div>
+    <button id="btn-save-edit" class="btn btn-primary btn-full" type="button">Save changes</button>
+  </main>
 
   <!-- ── SCREEN: EDIT GROUP ────────────────────────────────────────────── -->
-  <div id="screen-edit-group" class="screen screen-form" hidden>
-    <div class="topbar">
-      <button id="btn-back-edit-group" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Edit group</span>
-    </div>
+  <main id="screen-edit-group" class="screen screen-form" hidden>
+    <header class="topbar">
+      <button id="btn-back-edit-group" class="icon-btn" aria-label="Back" type="button">←</button>
+      <h1 class="topbar-title">Edit group</h1>
+    </header>
     <div class="form-group">
       <label for="edit-group-channel-id">Channel ID</label>
-      <input id="edit-group-channel-id" aria-describedby="edit-group-error" type="text" placeholder="Numbers only">
-      <span class="hint">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+      <input id="edit-group-channel-id" aria-describedby="hint-edit-group-channel edit-group-error" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <span class="hint" id="hint-edit-group-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
     </div>
     <div class="form-group">
       <label for="edit-group-name">Group name</label>
-      <input id="edit-group-name" type="text" placeholder="e.g. Team Alpha">
+      <input id="edit-group-name" type="text" autocomplete="off" placeholder="e.g. Team Alpha">
     </div>
     <div class="form-group">
-      <label>Members <span id="edit-group-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0 / 10)</span></label>
+      <span class="field-label">Members <span class="member-count" id="edit-group-member-count">(0 / 10)</span></span>
       <div id="edit-group-member-list" class="member-chip-list"></div>
-      <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
+      <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
     </div>
     <div id="edit-group-error" class="error-msg" role="alert" hidden></div>
-    <button id="btn-save-edit-group" class="btn btn-primary btn-full">Save changes</button>
-  </div>
+    <button id="btn-save-edit-group" class="btn btn-primary btn-full" type="button">Save changes</button>
+  </main>
 
   <!-- ── SCREEN: EDIT SERVER ───────────────────────────────────────────── -->
-  <div id="screen-edit-server" class="screen screen-form" hidden>
-    <div class="topbar">
-      <button id="btn-back-edit-server" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">Edit server</span>
-    </div>
+  <main id="screen-edit-server" class="screen screen-form" hidden>
+    <header class="topbar">
+      <button id="btn-back-edit-server" class="icon-btn" aria-label="Back" type="button">←</button>
+      <h1 class="topbar-title">Edit server</h1>
+    </header>
     <div class="form-group">
       <label for="edit-server-id-input">Server ID</label>
-      <input id="edit-server-id-input" aria-describedby="edit-server-error" type="text" placeholder="Numbers only">
-      <span class="hint">https://discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
+      <input id="edit-server-id-input" aria-describedby="hint-edit-server-id edit-server-error" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <span class="hint" id="hint-edit-server-id">https://discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
     </div>
     <div class="form-group">
       <label for="edit-server-name">Server name</label>
-      <input id="edit-server-name" type="text" placeholder="e.g. My Server">
+      <input id="edit-server-name" type="text" autocomplete="off" placeholder="e.g. My Server">
     </div>
     <div class="form-group">
-      <label>Members <span id="edit-server-member-count" style="color:var(--md-on-surface-variant);font-weight:400;">(0)</span></label>
+      <span class="field-label">Members <span class="member-count" id="edit-server-member-count">(0)</span></span>
       <div id="edit-server-member-list" class="member-chip-list"></div>
-      <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" style="margin-top:6px;">Select members...</button>
+      <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
     </div>
     <div id="edit-server-error" class="error-msg" role="alert" hidden></div>
-    <button id="btn-save-edit-server" class="btn btn-primary btn-full">Save changes</button>
-  </div>
+    <button id="btn-save-edit-server" class="btn btn-primary btn-full" type="button">Save changes</button>
+  </main>
 
   <!-- ── SHEET: MEMBER PICKER ──────────────────────────────────────────── -->
   <dialog id="sheet-member-picker" class="bottom-sheet bottom-sheet-tall" closedby="any" aria-labelledby="member-picker-title">
@@ -298,8 +298,8 @@
     <div class="sheet-title" id="member-picker-title">Select members</div>
     <input id="member-picker-search" type="search" placeholder="Search contacts..." aria-label="Search contacts">
     <div id="member-picker-list"></div>
-    <div style="padding: 8px 16px 16px;">
-      <button id="btn-member-picker-done" class="btn btn-primary btn-full">Done</button>
+    <div class="sheet-footer">
+      <button id="btn-member-picker-done" class="btn btn-primary btn-full" type="button">Done</button>
     </div>
   </dialog>
 
@@ -308,7 +308,7 @@
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="sheet-group-name"></div>
     <div class="sheet-fp-label">Channel ID</div>
-    <div class="sheet-fingerprint" id="sheet-group-channel" style="font-family:monospace;"></div>
+    <div class="sheet-fingerprint mono" id="sheet-group-channel"></div>
     <div class="sheet-row">
       <span id="sheet-group-toggle-label">Encrypt in this group</span>
       <label class="switch">
@@ -316,9 +316,9 @@
         <span class="slider"></span>
       </label>
     </div>
-    <button id="btn-edit-group"   class="btn btn-primary btn-full">Edit group</button>
-    <button id="btn-delete-group" class="btn btn-outlined-error btn-full">Delete group</button>
-    <button id="btn-close-group-sheet" class="btn btn-text btn-full">Close</button>
+    <button id="btn-edit-group"   class="btn btn-primary btn-full" type="button">Edit group</button>
+    <button id="btn-delete-group" class="btn btn-outlined-error btn-full" type="button">Delete group</button>
+    <button id="btn-close-group-sheet" class="btn btn-text btn-full" type="button">Close</button>
   </dialog>
 
   <!-- ── SHEET: SERVER DETAIL ──────────────────────────────────────────── -->
@@ -326,7 +326,7 @@
     <div class="sheet-handle"></div>
     <div class="sheet-title" id="sheet-server-name"></div>
     <div class="sheet-fp-label">Server ID</div>
-    <div class="sheet-fingerprint" id="sheet-server-id-display" style="font-family:monospace;"></div>
+    <div class="sheet-fingerprint mono" id="sheet-server-id-display"></div>
     <div class="sheet-row">
       <span id="sheet-server-toggle-label">Encrypt in this server</span>
       <label class="switch">
@@ -334,21 +334,21 @@
         <span class="slider"></span>
       </label>
     </div>
-    <button id="btn-edit-server"   class="btn btn-primary btn-full">Edit server</button>
-    <button id="btn-delete-server" class="btn btn-outlined-error btn-full">Delete server</button>
-    <button id="btn-close-server-sheet" class="btn btn-text btn-full">Close</button>
+    <button id="btn-edit-server"   class="btn btn-primary btn-full" type="button">Edit server</button>
+    <button id="btn-delete-server" class="btn btn-outlined-error btn-full" type="button">Delete server</button>
+    <button id="btn-close-server-sheet" class="btn btn-text btn-full" type="button">Close</button>
   </dialog>
-  <div id="screen-my-key" class="screen screen-form" hidden>
-    <div class="topbar">
-      <button id="btn-back-key" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">My public key</span>
-    </div>
+  <main id="screen-my-key" class="screen screen-form" hidden>
+    <header class="topbar">
+      <button id="btn-back-key" class="icon-btn" aria-label="Back" type="button">←</button>
+      <h1 class="topbar-title">My public key</h1>
+    </header>
 
-    <p class="hint" style="font-size:13px; padding: 10px 16px 6px; line-height:1.5;">Share this with contacts so they can encrypt messages to you.</p>
+    <p class="hint screen-intro screen-intro-lg">Share this with contacts so they can encrypt messages to you.</p>
     <div class="my-key-card">
       <div class="my-key-card-toprow">
         <span class="key-box-label">Public key</span>
-        <button id="btn-copy-key" class="key-copy-btn" title="Copy to clipboard" aria-label="Copy public key">
+        <button id="btn-copy-key" class="key-copy-btn" title="Copy to clipboard" aria-label="Copy public key" type="button">
           <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           <span id="btn-copy-key-label">Copy</span>
         </button>
@@ -356,31 +356,31 @@
       <div class="my-key-card-text" id="my-key-box"></div>
     </div>
 
-    <div style="margin: 8px 16px 0; border-top: 1px solid var(--md-outline-variant);"></div>
-    <div class="sheet-fp-label" style="text-align: center; padding-top: 10px;">SHAKE256 Fingerprint</div>
-    <div class="sheet-fingerprint" id="my-key-fp" style="text-align: center;">Computing fingerprint...</div>
+    <hr class="divider">
+    <div class="sheet-fp-label fp-centered">SHAKE256 Fingerprint</div>
+    <div class="sheet-fingerprint fp-centered" id="my-key-fp">Computing fingerprint...</div>
 
     <div class="danger-zone">
-      <div class="section-label" style="color: var(--md-error)">Advanced</div>
-      <button id="btn-change-passphrase" class="btn btn-outlined-error btn-full">Change passphrase</button>
-      <button id="btn-export-key"        class="btn btn-outlined-error btn-full" style="margin-top:8px;">Export private key</button>
-      <button id="btn-regen"             class="btn btn-outlined-error btn-full" style="margin-top:8px;">Regenerate keypair</button>
-      <button id="btn-clear-data"        class="btn btn-outlined-error btn-full" style="margin-top:8px;">Clear storage</button>
+      <h2 class="section-label section-label-danger">Advanced</h2>
+      <button id="btn-change-passphrase" class="btn btn-outlined-error btn-full" type="button">Change passphrase</button>
+      <button id="btn-export-key"        class="btn btn-outlined-error btn-full" type="button">Export private key</button>
+      <button id="btn-regen"             class="btn btn-outlined-error btn-full" type="button">Regenerate keypair</button>
+      <button id="btn-clear-data"        class="btn btn-outlined-error btn-full" type="button">Clear storage</button>
     </div>
-  </div>
+  </main>
 
 
   <!-- ── SCREEN: ABOUT ────────────────────────────────────────────────── -->
-  <div id="screen-about" class="screen" hidden>
-    <div class="topbar">
-      <button id="btn-back-about" class="icon-btn" aria-label="Back">←</button>
-      <span class="topbar-title">About</span>
-    </div>
+  <main id="screen-about" class="screen" hidden>
+    <header class="topbar">
+      <button id="btn-back-about" class="icon-btn" aria-label="Back" type="button">←</button>
+      <h1 class="topbar-title">About</h1>
+    </header>
 
     <div class="about-body">
 
       <div class="about-hero">
-        <span class="about-hero-icon">🏛️</span>
+        <span class="about-hero-icon" aria-hidden="true">🏛️</span>
         <span class="about-hero-name">Agecord</span>
         <span class="about-hero-ver" id="about-version"></span>
       </div>
@@ -388,12 +388,12 @@
       <div>
         <div class="about-section-title">Source code</div>
         <div class="about-card">
-          <button class="about-row" id="about-repo-link">
-            <span class="about-row-icon">{ }</span>
+          <button class="about-row" id="about-repo-link" type="button">
+            <span class="about-row-icon" aria-hidden="true">{ }</span>
             <span class="about-row-text">
-              <div class="about-row-label">senseideelite/agecord</div>
+              <span class="about-row-label">senseideelite/agecord</span>
             </span>
-            <span class="about-row-badge">↗</span>
+            <span class="about-row-badge" aria-hidden="true">↗</span>
           </button>
         </div>
       </div>
@@ -401,13 +401,13 @@
       <div>
         <div class="about-section-title">License</div>
         <div class="about-card">
-          <button class="about-row" id="about-license-link">
-            <span class="about-row-icon">📄</span>
+          <button class="about-row" id="about-license-link" type="button">
+            <span class="about-row-icon" aria-hidden="true">📄</span>
             <span class="about-row-text">
-              <div class="about-row-label">GNU General Public License v3.0</div>
-              <div class="about-row-sub">No warranty or liability.</div>
+              <span class="about-row-label">GNU General Public License v3.0</span>
+              <span class="about-row-sub">No warranty or liability.</span>
             </span>
-            <span class="about-row-badge">↗</span>
+            <span class="about-row-badge" aria-hidden="true">↗</span>
           </button>
         </div>
       </div>
@@ -415,13 +415,13 @@
       <div>
         <div class="about-section-title">Notices</div>
         <div class="about-card">
-          <button class="about-row" id="about-notices-link">
-            <span class="about-row-icon">📜</span>
+          <button class="about-row" id="about-notices-link" type="button">
+            <span class="about-row-icon" aria-hidden="true">📜</span>
             <span class="about-row-text">
-              <div class="about-row-label">Third-Party Notices</div>
-              <div class="about-row-sub">typage, RustCrypto and others</div>
+              <span class="about-row-label">Third-Party Notices</span>
+              <span class="about-row-sub">typage, RustCrypto and others</span>
             </span>
-            <span class="about-row-badge">↗</span>
+            <span class="about-row-badge" aria-hidden="true">↗</span>
           </button>
         </div>
       </div>
@@ -431,7 +431,7 @@
       </p>
 
     </div>
-  </div>
+  </main>
 
   <!-- ── SHEET: CONTACT DETAIL ─────────────────────────────────────────── -->
   <dialog id="sheet-contact" class="bottom-sheet" closedby="any" aria-labelledby="sheet-contact-name" data-cancel="btn-close-sheet">
@@ -446,24 +446,30 @@
         <span class="slider"></span>
       </label>
     </div>
-    <button id="btn-edit-contact"   class="btn btn-primary btn-full">Edit contact</button>
-    <button id="btn-delete-contact" class="btn btn-outlined-error btn-full">Delete contact</button>
-    <button id="btn-close-sheet"    class="btn btn-text btn-full">Close</button>
+    <button id="btn-edit-contact"   class="btn btn-primary btn-full" type="button">Edit contact</button>
+    <button id="btn-delete-contact" class="btn btn-outlined-error btn-full" type="button">Delete contact</button>
+    <button id="btn-close-sheet"    class="btn btn-text btn-full" type="button">Close</button>
   </dialog>
 
   <!-- ── MODAL: EXPORT PRIVATE KEY ────────────────────────────────────── -->
   <dialog id="modal-export-key" class="modal" aria-labelledby="modal-export-key-title" data-cancel="btn-export-cancel">
-    <h3 id="modal-export-key-title">Export private key</h3>
-    <p style="font-size:12px; color:var(--md-on-surface-variant);">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
+    <h2 id="modal-export-key-title">Export private key</h2>
+    <p class="modal-note">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
     <form id="form-export">
-    <label for="export-passphrase-input" class="modal-label">Unlock passphrase</label>
-    <input id="export-passphrase-input" aria-describedby="export-passphrase-error" type="password" placeholder="Type unlock passphrase" autocomplete="current-password" style="margin-top:6px;">
-    <label for="export-new-passphrase" class="modal-label" style="margin-top:12px;">Export passphrase</label>
-    <input id="export-new-passphrase" type="password" placeholder="Type export passphrase" autocomplete="new-password" style="margin-top:6px;">
-    <label for="export-new-passphrase2" class="modal-label" style="margin-top:12px;">Confirm export passphrase</label>
-    <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password" style="margin-top:6px;">
+    <div class="modal-field">
+      <label for="export-passphrase-input" class="modal-label">Unlock passphrase</label>
+      <input id="export-passphrase-input" aria-describedby="export-passphrase-error" type="password" placeholder="Type unlock passphrase" autocomplete="current-password">
+    </div>
+    <div class="modal-field">
+      <label for="export-new-passphrase" class="modal-label">Export passphrase</label>
+      <input id="export-new-passphrase" type="password" placeholder="Type export passphrase" autocomplete="new-password">
+    </div>
+    <div class="modal-field">
+      <label for="export-new-passphrase2" class="modal-label">Confirm export passphrase</label>
+      <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password">
+    </div>
     <div id="export-passphrase-error" class="error-msg" role="alert" hidden></div>
-    <div id="export-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
+    <div id="export-spinner" class="spinner-wrap" hidden>
       <div class="spinner"></div><span>Encrypting... do not close this window.</span>
     </div>
     <div class="modal-actions">
@@ -475,28 +481,34 @@
 
   <!-- ── MODAL: EXPORT KEY DISPLAY ────────────────────────────────────── -->
   <dialog id="modal-export-display" class="modal" aria-labelledby="modal-export-display-title" data-cancel="btn-export-close">
-    <h3 id="modal-export-display-title">Encrypted private key blob</h3>
-    <p style="font-size: 12px; color: var(--md-on-surface-variant);">This blob is encrypted with your export passphrase. Copy and save it alongside the export passphrase in a trusted password manager. Anyone with both can fully restore your keypair.</p>
-    <textarea id="export-key-blob" rows="6" readonly aria-label="Encrypted private key blob" spellcheck="false" style="width:100%; font-family: monospace; font-size: 10px; background: var(--md-surface-container); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant); border-radius: 8px; padding: 8px; box-sizing: border-box; resize: none; margin-top:8px;"></textarea>
+    <h2 id="modal-export-display-title">Encrypted private key blob</h2>
+    <p class="modal-note">This blob is encrypted with your export passphrase. Copy and save it alongside the export passphrase in a trusted password manager. Anyone with both can fully restore your keypair.</p>
+    <textarea id="export-key-blob" class="modal-textarea" rows="6" readonly aria-label="Encrypted private key blob" spellcheck="false"></textarea>
     <div class="modal-actions">
-      <button id="btn-export-copy"  class="btn btn-primary">Copy &amp; close</button>
-      <button id="btn-export-close" class="btn btn-text">Close</button>
+      <button id="btn-export-copy"  class="btn btn-primary" type="button">Copy &amp; close</button>
+      <button id="btn-export-close" class="btn btn-text" type="button">Close</button>
     </div>
   </dialog>
 
   <!-- ── MODAL: CHANGE PASSPHRASE ─────────────────────────────────────── -->
   <dialog id="modal-change-passphrase" class="modal" aria-labelledby="modal-change-passphrase-title" data-cancel="btn-change-pass-cancel">
-    <h3 id="modal-change-passphrase-title">Change passphrase</h3>
-    <p style="font-size:12px; color:var(--md-on-surface-variant);">Your data will be re-encrypted with the new passphrase.</p>
+    <h2 id="modal-change-passphrase-title">Change passphrase</h2>
+    <p class="modal-note">Your data will be re-encrypted with the new passphrase.</p>
     <form id="form-change-pass">
-    <label for="change-pass-current" class="modal-label">Current passphrase</label>
-    <input id="change-pass-current" aria-describedby="change-pass-error" type="password" placeholder="Type current passphrase" autocomplete="current-password" style="margin-top:6px;">
-    <label for="change-pass-new" class="modal-label" style="margin-top:12px;">New passphrase</label>
-    <input id="change-pass-new" type="password" placeholder="Type new passphrase" autocomplete="new-password" style="margin-top:6px;">
-    <label for="change-pass-new2" class="modal-label" style="margin-top:12px;">Confirm new passphrase</label>
-    <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password" style="margin-top:6px;">
+    <div class="modal-field">
+      <label for="change-pass-current" class="modal-label">Current passphrase</label>
+      <input id="change-pass-current" aria-describedby="change-pass-error" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+    </div>
+    <div class="modal-field">
+      <label for="change-pass-new" class="modal-label">New passphrase</label>
+      <input id="change-pass-new" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+    </div>
+    <div class="modal-field">
+      <label for="change-pass-new2" class="modal-label">Confirm new passphrase</label>
+      <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password">
+    </div>
     <div id="change-pass-error" class="error-msg" role="alert" hidden></div>
-    <div id="change-pass-spinner" class="spinner-wrap" hidden style="margin-top:8px;">
+    <div id="change-pass-spinner" class="spinner-wrap" hidden>
       <div class="spinner"></div><span>Re-encrypting... do not close this window.</span>
     </div>
     <div class="modal-actions">
@@ -508,48 +520,48 @@
 
   <!-- ── MODAL: CLEAR ALL DATA ─────────────────────────────────────────── -->
   <dialog id="modal-clear-data" class="modal" aria-labelledby="modal-clear-data-title" data-cancel="btn-clear-data-cancel">
-    <h3 id="modal-clear-data-title">⚠️ Clear all data?</h3>
+    <h2 id="modal-clear-data-title"><span aria-hidden="true">⚠️</span> Clear all data?</h2>
     <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
     <p id="clear-data-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
     <input id="clear-data-confirm-input" aria-labelledby="clear-data-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
     <div class="modal-actions">
-      <button id="btn-clear-data-cancel"  class="btn btn-text">Cancel</button>
-      <button id="btn-clear-data-confirm" class="btn btn-error" disabled>Erase &amp; start over</button>
+      <button id="btn-clear-data-cancel"  class="btn btn-text" type="button">Cancel</button>
+      <button id="btn-clear-data-confirm" class="btn btn-error" disabled type="button">Erase &amp; start over</button>
     </div>
   </dialog>
 
   <!-- ── MODAL: REGEN CONFIRM ──────────────────────────────────────────── -->
   <dialog id="modal-regen" class="modal" aria-labelledby="modal-regen-title" data-cancel="btn-regen-cancel">
-    <h3 id="modal-regen-title">⚠️ Regenerate keypair?</h3>
+    <h2 id="modal-regen-title"><span aria-hidden="true">⚠️</span> Regenerate keypair?</h2>
     <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> Contacts will be disabled.</p>
     <p id="regen-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
     <input id="regen-confirm-input" aria-labelledby="regen-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
     <div class="modal-actions">
-      <button id="btn-regen-cancel"  class="btn btn-text">Cancel</button>
-      <button id="btn-regen-confirm" class="btn btn-error" disabled>Regenerate</button>
+      <button id="btn-regen-cancel"  class="btn btn-text" type="button">Cancel</button>
+      <button id="btn-regen-confirm" class="btn btn-error" disabled type="button">Regenerate</button>
     </div>
   </dialog>
 
   <!-- ── MODAL: DELETE CONTACT ─────────────────────────────────────────── -->
   <dialog id="modal-delete-contact" class="modal" closedby="any" aria-labelledby="modal-delete-contact-title" data-cancel="btn-delete-cancel">
-    <h3 id="modal-delete-contact-title">Delete recipient?</h3>
+    <h2 id="modal-delete-contact-title">Delete recipient?</h2>
     <p id="modal-delete-msg"></p>
     <div class="modal-actions">
-      <button id="btn-delete-cancel"  class="btn btn-text">Cancel</button>
-      <button id="btn-delete-confirm" class="btn btn-error">Delete</button>
+      <button id="btn-delete-cancel"  class="btn btn-text" type="button">Cancel</button>
+      <button id="btn-delete-confirm" class="btn btn-error" type="button">Delete</button>
     </div>
   </dialog>
 
   <!-- ── MODAL: RESET KEYPAIR ──────────────────────────────────────────── -->
   <dialog id="modal-reset-keypair" class="modal" aria-labelledby="modal-reset-keypair-title" data-cancel="btn-reset-cancel">
-    <h3 id="modal-reset-keypair-title">⚠️ Erase everything?</h3>
+    <h2 id="modal-reset-keypair-title"><span aria-hidden="true">⚠️</span> Erase everything?</h2>
     <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
     <p>Only continue if you have forgotten your passphrase.</p>
     <p id="reset-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
     <input id="reset-confirm-input" aria-labelledby="reset-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
     <div class="modal-actions">
-      <button id="btn-reset-cancel"  class="btn btn-text">Cancel</button>
-      <button id="btn-reset-confirm" class="btn btn-error" disabled>Erase &amp; start over</button>
+      <button id="btn-reset-cancel"  class="btn btn-text" type="button">Cancel</button>
+      <button id="btn-reset-confirm" class="btn btn-error" disabled type="button">Erase &amp; start over</button>
     </div>
   </dialog>
 
