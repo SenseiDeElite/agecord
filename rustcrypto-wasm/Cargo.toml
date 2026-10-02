@@ -1,6 +1,6 @@
 [package]
 name = "rustcrypto-wasm"
-version = "0.3.5"
+version = "0.3.6"
 authors = ["Sensei <https://github.com/SenseiDeElite>"]
 description = "WebAssembly RustCrypto"
 license = "MIT"
