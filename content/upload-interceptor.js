@@ -34,6 +34,36 @@ const CHANNEL_PATH_PATTERN = new URLPattern({
   pathname: '/channels/:guildId/:channelId(\\d+){/*}?',
 });
 
+// ─── Draft panes (forum post / new thread) ─────────────────────────────────────
+
+// Drafts have no channel ID until the first message is posted, so they cannot be signed.
+// Pass drafts to Discord unchanged. Use positive markers only; missing pane features
+// are insufficient, since false positives expose plaintext.
+// Forum post: the composer form contains the forum-channel list. Without <main>,
+// targets outside a real side pane qualify; drop zones and overlays may be outside the form.
+// New thread: the composer form inside a <section> contains the starter preview,
+// identified by Discord with a NO_LIST___ ID.
+// Never classify a real side pane (section[role=complementary]) as a draft.
+// KEEP IN SYNC with content/content.js.
+
+// DRAFT-GUARD-BEGIN
+const DRAFT_FORUM_SEL   = '[data-list-id^="forum-channel-list-"]';
+const DRAFT_PREVIEW_SEL = '[data-list-item-id^="NO_LIST___"]';
+const REAL_PANE_SEL     = 'section[role="complementary"]';
+function isDraftTarget(el) {
+  if (!el?.closest) return false;
+  // New thread: the starter-message preview lives in the composer form.
+  if (el.closest('section form')?.querySelector(DRAFT_PREVIEW_SEL)) return true;
+  // Forum post composer form.
+  if (el.closest('form')?.querySelector(DRAFT_FORUM_SEL)) return true;
+  // Real thread / forum-post side panes always have a channel id.
+  if (el.closest(REAL_PANE_SEL)) return false;
+  // Anywhere else on a forum page (no <main>): drop zones and overlays are not
+  // inside the composer form, but the forum itself can never hold a message.
+  return !document.querySelector('main') && !!document.querySelector(DRAFT_FORUM_SEL);
+}
+// DRAFT-GUARD-END
+
 // ─── Attachment-pending guard ─────────────────────────────────────────────────
 
 // Blocks all attachment entry-points until the upload tray clears or the
@@ -151,7 +181,12 @@ window.addEventListener('message', (e) => {
   if (type === 'AGE_GET_SLATE_TEXT') {
     const nonce = e.data?.nonce;
     const tb = getMainTextbox();
-    if (!tb) throw new Error('Slate textbox not found');
+    if (!tb) {
+      // Answer immediately so the content script doesn't wait out its timeout.
+      console.warn('[age] Slate textbox not found');
+      window.postMessage({ type: 'AGE_GET_SLATE_TEXT_RESULT', ok: false, nonce }, '*');
+      return;
+    }
 
     const lines = [];
     for (const block of tb.children) {
@@ -496,7 +531,12 @@ async function deliverFilesRespectingGate(files, channelId, guildId) {
     if (e?.code === 'PASSTHROUGH') {
       const dt = new DataTransfer();
       for (const f of files) dt.items.add(f);
-      deliverFileList(dt);
+      try {
+        deliverFileList(dt);
+      } catch (deliverErr) {
+        _attachmentPending = false; // delivery threw before tray tracking started
+        throw deliverErr;
+      }
       return;
     }
     _attachmentPending = false; // nothing delivered — don't leave the gate stuck shut
@@ -564,16 +604,18 @@ function watchTrayAndClearPending() {
   const TRAY_SEL = 'ul[data-list-id="attachments"]';
 
   let fired = false;
+  let trayGoneObserver = null;
   function clearOnce() {
     if (fired) return;
     fired = true;
     trayAppearObserver.disconnect();
+    trayGoneObserver?.disconnect();
     _attachmentPending = false;
     window.postMessage({ type: 'AGE_ATTACHMENT_CLEARED' }, '*');
   }
 
   function watchForTrayGone() {
-    const trayGoneObserver = new MutationObserver(() => {
+    trayGoneObserver = new MutationObserver(() => {
       if (!document.querySelector(TRAY_SEL)) {
         trayGoneObserver.disconnect();
         clearOnce();
@@ -604,6 +646,7 @@ function watchTrayAndClearPending() {
 window.addEventListener('dragover', (e) => {
   if (_locked || !_activeEntry) return;
   if (!(e.dataTransfer?.types ?? []).includes('Files')) return;
+  if (isDraftTarget(e.target)) return; // native handling
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
 }, true);
@@ -615,6 +658,9 @@ window.addEventListener('dragover', (e) => {
 window.addEventListener('drop', async (e) => {
   const files = [...(e.dataTransfer?.files ?? [])];
   if (files.length === 0) return;
+
+  // Draft panes: classify BEFORE stopping the event so Discord handles it natively.
+  if (isDraftTarget(e.target)) return;
 
   // Resolve channelId/guildId synchronously — activeElement (and location.href's
   // relevance to it) is unreliable after any await.
@@ -642,6 +688,7 @@ window.addEventListener('drop', async (e) => {
 document.addEventListener('change', async (e) => {
   const input = e.target;
   if (input?.type !== 'file') return;
+  if (isDraftTarget(input)) return; // draft: native handling, before touching input.files
 
   // Delete any leftover override before reading so we get the real selection.
   try { delete input.files; } catch { /* non-configurable — already native */ }
@@ -679,6 +726,7 @@ document.addEventListener('paste', async (e) => {
 
   const needsInterception = files.length > 0 || text.length > NATIVE_PASTE_FILE_THRESHOLD;
   if (!needsInterception) return;
+  if (isDraftTarget(e.target)) return; // draft: native handling
 
   const { channelId, guildId } = getInterceptorLocation();
 
