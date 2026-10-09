@@ -121,6 +121,10 @@ Click a contact entry in the main popup list to open its detail card, which show
 
 Encrypted messages are sent as `.age` file attachments in Discord.
 
+### Forum posts and new threads are not encrypted
+
+A forum post or a new thread does not have a channel yet, so there is nothing to bind an encrypted message to. While you are creating one, Agecord leaves Discord alone: the text and any files you add to the **Create Post** or **Create Thread** panel are sent **unencrypted**. Once the post or thread exists, messages you send inside it are encrypted as usual.
+
 ## Receiving Messages
 
 Received encrypted messages are automatically decrypted and shown inline in Discord with a lock badge, provided the sender has been added as a contact with a matching public key.
