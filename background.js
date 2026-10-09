@@ -22,6 +22,16 @@ import { init as _rustcryptoInit, xchacha20poly1305_encrypt }
 // arrives, but service workers forbid top-level await — store the Promise instead.
 const _wasmReady = _rustcryptoInit();
 
+// Keep chrome.storage.session out of content scripts. This is already the
+// default; the explicit call documents the intent. Not all browsers implement
+// setAccessLevel, so failures are non-fatal.
+try {
+  chrome.storage.session.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' })
+    ?.catch?.(e => console.info('[age] storage.session setAccessLevel unavailable:', e?.message));
+} catch (e) {
+  console.info('[age] storage.session setAccessLevel unavailable:', e?.message);
+}
+
 let _identity          = null;
 let _contactsKeyBytes  = null; // raw Uint8Array, derived by popup's crypto-worker
 let _contacts          = {};
@@ -300,9 +310,24 @@ const handlers = {
   REQUEST_UNLOCK:       handleRequestUnlock,
 };
 
+// Defence in depth: runtime.onMessage only delivers messages from this
+// extension's own contexts, but state-changing and key-handling messages
+// are additionally restricted to the popup, the only legitimate sender.
+const POPUP_ONLY_TYPES = new Set(['UNLOCK', 'RELOCK', 'ENCRYPT_CONTACTS']);
+const POPUP_URL_PREFIX = chrome.runtime.getURL('popup/');
+
+const isOwnSender   = (sender) => sender?.id === chrome.runtime.id;
+const isPopupSender = (sender) =>
+  isOwnSender(sender) && typeof sender.url === 'string' && sender.url.startsWith(POPUP_URL_PREFIX);
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg?.type) return false;
   const handler = handlers[msg.type];
   if (!handler) return false;
+  if (!isOwnSender(sender)) return false;
+  if (POPUP_ONLY_TYPES.has(msg.type) && !isPopupSender(sender)) {
+    console.warn(`[age] ${msg.type} rejected: sender is not the popup`);
+    return false;
+  }
   return handler(msg, sender, sendResponse);
 });
