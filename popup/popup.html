@@ -55,8 +55,8 @@
     <div id="setup-error" class="error-msg" role="alert" hidden></div>
 
     <button id="btn-generate" type="submit" class="btn btn-primary btn-full">Generate keypair</button>
-    <div id="setup-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Generating keypair... do not close this window.</span>
+    <div id="setup-spinner" class="spinner-wrap" role="status" hidden>
+      <div class="spinner" aria-hidden="true"></div><span>Generating keypair... do not close this window.</span>
     </div>
 
     <button id="btn-show-import" type="button" class="btn btn-outlined btn-full">Import existing keypair</button>
@@ -92,8 +92,8 @@
     </div>
     <div id="import-error" class="error-msg" role="alert" hidden></div>
     <button id="btn-import" type="submit" class="btn btn-primary btn-full">Import &amp; unlock</button>
-    <div id="import-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Importing... do not close this window.</span>
+    <div id="import-spinner" class="spinner-wrap" role="status" hidden>
+      <div class="spinner" aria-hidden="true"></div><span>Importing... do not close this window.</span>
     </div>
     </form>
   </main>
@@ -469,8 +469,8 @@
       <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password">
     </div>
     <div id="export-passphrase-error" class="error-msg" role="alert" hidden></div>
-    <div id="export-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Encrypting... do not close this window.</span>
+    <div id="export-spinner" class="spinner-wrap" role="status" hidden>
+      <div class="spinner" aria-hidden="true"></div><span>Encrypting... do not close this window.</span>
     </div>
     <div class="modal-actions">
       <button id="btn-export-cancel" type="button"  class="btn btn-text">Cancel</button>
@@ -508,8 +508,8 @@
       <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password">
     </div>
     <div id="change-pass-error" class="error-msg" role="alert" hidden></div>
-    <div id="change-pass-spinner" class="spinner-wrap" hidden>
-      <div class="spinner"></div><span>Re-encrypting... do not close this window.</span>
+    <div id="change-pass-spinner" class="spinner-wrap" role="status" hidden>
+      <div class="spinner" aria-hidden="true"></div><span>Re-encrypting... do not close this window.</span>
     </div>
     <div class="modal-actions">
       <button id="btn-change-pass-cancel" type="button"  class="btn btn-text">Cancel</button>
