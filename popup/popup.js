@@ -1567,7 +1567,7 @@
 
   function renderMemberPicker(query = '') {
     const list = document.getElementById('member-picker-list');
-    list.innerHTML = '';
+    list.replaceChildren();
     const q = query.trim().toLowerCase();
     const contacts = contactsForPicker().filter(c =>
       !q || c.username.toLowerCase().includes(q)
@@ -1628,7 +1628,7 @@
   // ─── Member chip rendering (used by group/server forms) ───────────────────────
 
   function renderMemberChips(containerEl, countEl, uuids, maxMembers) {
-    containerEl.innerHTML = '';
+    containerEl.replaceChildren();
     const displayMax = maxMembers === Infinity ? '' : ` / ${maxMembers}`;
     if (countEl) countEl.textContent = `(${uuids.length}${displayMax})`;
     uuids.forEach(uuid => {
@@ -1684,13 +1684,13 @@
       _groupAddMembers = [];
       document.getElementById('group-channel-id').value = '';
       document.getElementById('group-name').value       = '';
-      document.getElementById('group-member-list').innerHTML = '';
+      document.getElementById('group-member-list').replaceChildren();
       document.getElementById('group-member-count').textContent = `(0 / ${MAX_GROUP_MEMBERS})`;
     } else {
       _groupEditMembers = [];
       document.getElementById('edit-group-channel-id').value = '';
       document.getElementById('edit-group-name').value       = '';
-      document.getElementById('edit-group-member-list').innerHTML = '';
+      document.getElementById('edit-group-member-list').replaceChildren();
       document.getElementById('edit-group-member-count').textContent = `(0 / ${MAX_GROUP_MEMBERS})`;
       document.getElementById('edit-group-error').hidden = true;
     }
@@ -1785,13 +1785,13 @@
       _serverAddMembers = [];
       document.getElementById('server-id-input').value = '';
       document.getElementById('server-name').value     = '';
-      document.getElementById('server-member-list').innerHTML = '';
+      document.getElementById('server-member-list').replaceChildren();
       document.getElementById('server-member-count').textContent = '(0)';
     } else {
       _serverEditMembers = [];
       document.getElementById('edit-server-id-input').value = '';
       document.getElementById('edit-server-name').value     = '';
-      document.getElementById('edit-server-member-list').innerHTML = '';
+      document.getElementById('edit-server-member-list').replaceChildren();
       document.getElementById('edit-server-member-count').textContent = '(0)';
       document.getElementById('edit-server-error').hidden = true;
     }
@@ -2380,6 +2380,31 @@
   }
 
   function showErr(el, msg) { el.textContent = msg; el.hidden = false; }
+
+  // Keeps aria-invalid on each field in step with its error message: any input
+  // whose aria-describedby names a visible .error-msg is invalid. Observing the
+  // `hidden` attribute covers every place an error is shown or cleared.
+  (() => {
+    const sync = (errEl) => {
+      if (!errEl.id) return;
+      const invalid = !errEl.hidden;
+      document.querySelectorAll('[aria-describedby]').forEach(field => {
+        if (!field.getAttribute('aria-describedby').split(/\s+/).includes(errEl.id)) return;
+        if (invalid) field.setAttribute('aria-invalid', 'true');
+        else if (![...document.querySelectorAll('.error-msg:not([hidden])')]
+          .some(other => field.getAttribute('aria-describedby').split(/\s+/).includes(other.id))) {
+          field.removeAttribute('aria-invalid');
+        }
+      });
+    };
+    const observer = new MutationObserver(records => {
+      for (const r of records) sync(r.target);
+    });
+    document.querySelectorAll('.error-msg').forEach(el => {
+      observer.observe(el, { attributes: true, attributeFilter: ['hidden'] });
+      sync(el);
+    });
+  })();
 
   // ─── Base64 helpers ───────────────────────────────────────────────────────────
   const toB64   = bytes => bytes.toBase64();
