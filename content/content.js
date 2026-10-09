@@ -12,7 +12,9 @@
 // Pubkey hint identifies the ML-DSA key before verification.
 
 // Decryption: attachment → CDN bridge → file-crypto-worker.js → render.
-// Age identities never enter content.js memory.
+// The age identity line is the only secret held in content.js. cachedIdentityLine
+// is a JS string and cannot be zeroed; it is resent to workers on respawn.
+// Decryption runs exclusively in workers.
 
 // Contacts (v2): keyed by UUID; resolved by channelId or serverId.
 
@@ -80,11 +82,14 @@ function classifyFile(originalName) {
   return _mediaCategory(ext) ?? 'download';
 }
  
-// Returns an anonymized filename preserving only the extension for MIME detection.
-// Pattern: <category>.<ext>.age. Already-encrypted files pass through unchanged.
+// Returns <category>.<ext>.age or file.age; preserves valid extensions for MIME detection.
+// Encrypted files pass through unchanged.
+// Leading-dot names have no extension.
 function anonymizeFileName(originalName) {
   if (originalName.endsWith('.age')) return originalName;
-  const ext  = originalName.split('.').pop().toLowerCase();
+  const dot = originalName.lastIndexOf('.');
+  const ext = dot > 0 ? originalName.slice(dot + 1).toLowerCase() : '';
+  if (!/^[a-z0-9]{1,8}$/.test(ext)) return 'file.age';
   const base = _mediaCategory(ext) ?? 'file';
   return `${base}.${ext}.age`;
 }
@@ -109,7 +114,16 @@ const _inFlight = new Map();
 // _inFlight, and _attachmentInProgress. Falls back to "\0<cdnUrl>"
 // when the container has no id (e.g. quoted messages).
 function _attachId(liElement, cdnUrl) {
-  return liElement.id + '\0' + cdnUrl;
+  return _rootKey(liElement) + '\0' + cdnUrl;
+}
+
+// Stable DOM key of a message root. Draft-preview roots have no id but carry a
+// unique data-list-item-id; keying on it keeps them from colliding with quoted
+// containers that show the same attachment (both would be "\0<url>").
+function _rootKey(el) {
+  if (el.id) return el.id;
+  const lid = el.dataset?.listItemId;
+  return lid?.startsWith(DRAFT_PREVIEW_PREFIX) ? lid : '';
 }
 
 // Inverse of _attachId(): recovers the DOM liId prefix (empty for quoted
@@ -140,9 +154,10 @@ let _session = null;
 // Kept outside _session so it advances independently.
 let _generation = 0;
 
-// Publishes a new session in one atomic assignment. Never mutates an existing
-// session's fields in place — callers pass every field, spreading the prior
-// session first if this is a partial update (e.g. CONTACTS_UPDATED).
+// Atomically replaces the session; callers must provide all fields.
+// Never spread the prior session: zeroization would erase the shared mldsaPrivBytes.
+// CONTACTS_UPDATED mutates contacts, contactsLoaded, and selfRecipient in place
+// without incrementing _generation.
 function _setSession(fields) {
   _session?.mldsaPrivBytes?.fill(0); // wipe any superseded key material
   _session = { ...fields };
@@ -220,20 +235,50 @@ function isContextValid() {
 
 // ─── DOM helpers ─────────────────────────────────────────────────────────────
  
-// Returns the primary composer textbox. Edit-box editors are excluded — main
-// composer is inside <form>, edit box is inside <li id^="chat-messages-">.
-function getTextbox() {
-  const all = document.querySelectorAll('[data-slate-editor="true"]');
-  for (const el of all) {
-    if (el.closest('form') && !el.closest('li[id^="chat-messages-"]')) return el;
-  }
-  for (const el of all) {
-    if (!el.closest('li[id^="chat-messages-"]')) return el;
-  }
-  return all[0] ?? null;
+// Message roots in DOM order: the <ol> lists, plus the draft preview when a
+// new-thread panel is open (it replaces any open thread pane, so it takes the
+// second slot).
+function getMessageRoots() {
+  const roots = [...document.querySelectorAll('ol[data-list-id="chat-messages"]')];
+  const preview = document.querySelector(DRAFT_PREVIEW_ROOT_SEL);
+  if (preview) roots.push(preview);
+  return roots;
 }
-function getAllMessageLists() { return [...document.querySelectorAll('ol[data-list-id="chat-messages"]')]; }
  
+// ─── Draft panes (forum post / new thread) ─────────────────────────────────────
+
+// A draft has no channel id until its first message exists, so it cannot be
+// signed for and is passed through to Discord untouched. Only POSITIVE markers
+// are used.
+// KEEP IN SYNC with content/upload-interceptor.js
+
+// DRAFT-GUARD-BEGIN
+const DRAFT_FORUM_SEL   = '[data-list-id^="forum-channel-list-"]';
+const DRAFT_PREVIEW_SEL = '[data-list-item-id^="NO_LIST___"]';
+const REAL_PANE_SEL     = 'section[role="complementary"]';
+function isDraftTarget(el) {
+  if (!el?.closest) return false;
+  // New thread: the starter-message preview lives in the composer form.
+  if (el.closest('section form')?.querySelector(DRAFT_PREVIEW_SEL)) return true;
+  // Forum post composer form.
+  if (el.closest('form')?.querySelector(DRAFT_FORUM_SEL)) return true;
+  // Real thread / forum-post side panes always have a channel id.
+  if (el.closest(REAL_PANE_SEL)) return false;
+  // Anywhere else on a forum page (no <main>): drop zones and overlays are not
+  // inside the composer form, but the forum itself can never hold a message.
+  return !document.querySelector('main') && !!document.querySelector(DRAFT_FORUM_SEL);
+}
+// DRAFT-GUARD-END
+
+// The draft panel's starter-message preview acts as a message root without an id
+// (like a quoted message). The same attachment can also be shown elsewhere, and
+// Discord reuses the message's element ids inside the preview, so it is only ever
+// addressed through its root, never through document-wide id lookups.
+const DRAFT_PREVIEW_PREFIX   = 'NO_LIST___';
+const DRAFT_PREVIEW_ROOT_SEL = 'section form ' + DRAFT_PREVIEW_SEL;
+// Every message root that has no li id: quoted messages and the draft preview.
+const ID_LESS_ROOT_SEL = '[class*="quotedChatMessage__"], ' + DRAFT_PREVIEW_ROOT_SEL;
+
 // ─── Route patterns ────────────────────────────────────────────────────────────
 
 // Shared by the getCurrent*Id() helpers and the SPA nav-key derivation below.
@@ -272,40 +317,23 @@ function cdnChannelId(url) {
 // Returns the channel ID for the outgoing signature context, or null to skip
 // encryption. Channel binding prevents cross-channel replay.
 
-// In split-view, selects the active composer:
-//   SECTION → THREAD_ID
-//   MAIN    → CHANNEL_ID
+// null sends natively; drafts have no channel ID, so use focus, not the stale URL.
+// Split view: SECTION → THREAD_ID; otherwise → CHANNEL_ID.
 
-// New thread/forum posts return null until a thread ID exists.
 function getSendChannelId() {
-  const threadId = getCurrentThreadId();
-
-  if (threadId) {
-    const active = document.activeElement;
-    if (active) {
-      let el = active;
-      for (let n = 0; n < 20; n++) {
-        if (!el.parentElement) break;
-        el = el.parentElement;
-        if (el.tagName === 'SECTION') return threadId;
-        if (el.tagName === 'MAIN')    return getCurrentChannelId();
-      }
-    }
-    return getCurrentChannelId();
-  }
-
-  // Forum post creation modal: FORM ancestor, no chat-messages ol → no thread ID yet.
   const active = document.activeElement;
-  if (active) {
+  if (active && isDraftTarget(active)) return null;
+
+  const threadId = getCurrentThreadId();
+  if (threadId && active) {
     let el = active;
     for (let n = 0; n < 20; n++) {
       if (!el.parentElement) break;
       el = el.parentElement;
-      if (el.tagName === 'MAIN' || el.tagName === 'SECTION') break;
-      if (el.tagName === 'FORM' && !document.querySelector('ol[data-list-id="chat-messages"]')) return null;
+      if (el.tagName === 'SECTION') return threadId;
+      if (el.tagName === 'MAIN')    return getCurrentChannelId();
     }
   }
-
   return getCurrentChannelId();
 }
  
@@ -339,18 +367,21 @@ function getActiveEntry(channelIdOverride, serverIdOverride) {
   return null;
 }
  
-function isEncryptionActive() {
-  return canDecrypt() && !!getActiveEntry();
+// Pass the ids resolved for the composer that is sending (see getSendChannelId());
+// with no args this checks the URL's parent channel only.
+function isEncryptionActive(channelIdOverride, serverIdOverride) {
+  return canDecrypt() && !!getActiveEntry(channelIdOverride, serverIdOverride);
 }
 
-// Authoritative outbound upload decision, evaluated live at encryption time.
-// AGE_ENCRYPT_FILE/AGE_ENCRYPT_TEXT_MESSAGE consume this result.
-// 'blocked'     — locked or contact state unconfirmed; never send plaintext.
-// 'passthrough' — encryption off or no contact configured for this channel.
-// 'encrypt'     — proceed; entry/channelId are ready.
+// Authoritative outbound decision, evaluated at encryption time.
+// Consumed by AGE_ENCRYPT_FILE/AGE_ENCRYPT_TEXT_MESSAGE.
+// 'blocked'     — explicit failure; callers throw (e.g. missing channel or recipients).
+// 'passthrough' — encryption disabled, extension locked, or no channel contact configured.
+// 'encrypt'     — entry and channelId are ready.
+
 function resolveUploadGate(channelId, guildId) {
   if (!_globalOn) return { outcome: 'passthrough', reason: 'Agecord is turned off.' };
-  if (!canDecrypt()) return { outcome: 'blocked', reason: 'Agecord is locked — unlock it to send attachments in this channel.' };
+  if (!canDecrypt()) return { outcome: 'passthrough', reason: 'Agecord is locked.' };
   const active = getActiveEntry(channelId, guildId);
   if (!active?.entry) return { outcome: 'passthrough', reason: 'No encrypted contact configured for this channel.' };
   return { outcome: 'encrypt', entry: active.entry, channelId: active.channelId };
@@ -382,11 +413,13 @@ function _makeEnterHandler(tb) {
          focused.closest('[class*="messageEditorForm_"]'))) return;
     const raw = tb.innerText?.trim() ?? '';
     if (!raw) return;
-    if (!isEncryptionActive()) return;
-
     // getSendChannelId() must be called synchronously — document.activeElement is
-    // stable on the keydown stack, before any await.
-    if (!getSendChannelId()) return;
+    // stable on the keydown stack, before any await. The entry is resolved for that
+    // same composer (thread pane vs. parent channel), exactly as handleEncryptClick()
+    // does, so the gate and the send can never disagree: no entry => native Enter.
+    const sendChannelId = getSendChannelId();
+    if (!sendChannelId) return;
+    if (!isEncryptionActive(sendChannelId, getCurrentServerId())) return;
 
     // Suppress Enter after confirming we will encrypt but before the _sending check,
     // so spammed Enter presses during an in-flight cycle never reach Discord.
@@ -541,6 +574,23 @@ const _TIMESTAMP_OPTS = {
   S: { dateStyle: 'short', timeStyle: 'medium' },
 };
 
+// Intl constructors cost 20–75 µs per call; instances are reusable. Cached per
+// (resolved style, timezone) so a timezone change still formats correctly.
+const _rtf = new Intl.RelativeTimeFormat(_userLocale, { numeric: 'auto' });
+const _dtfCache = new Map();
+function _getDtf(style, tz) {
+  const resolved = _TIMESTAMP_OPTS[style] ? style : 'f';
+  const key = resolved + '|' + tz;
+  let f = _dtfCache.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat(_userLocale, {
+      timeZone: tz, hourCycle: _userHourCycle, ..._TIMESTAMP_OPTS[resolved],
+    });
+    _dtfCache.set(key, f);
+  }
+  return f;
+}
+
 function formatDiscordTimestamp(unixSeconds, style = 'f') {
   const tz      = Temporal.Now.timeZoneId();
   const instant = Temporal.Instant.fromEpochMilliseconds(unixSeconds * 1000);
@@ -548,7 +598,7 @@ function formatDiscordTimestamp(unixSeconds, style = 'f') {
   if (style === 'R') {
     const diffSecs = (instant.epochMilliseconds - Temporal.Now.instant().epochMilliseconds) / 1000;
     const absSecs  = Math.abs(diffSecs);
-    const rtf      = new Intl.RelativeTimeFormat(_userLocale, { numeric: 'auto' });
+    const rtf      = _rtf;
 
     if (absSecs < 60)       return rtf.format(Math.round(diffSecs),        'second');
     if (absSecs < 3600)     return rtf.format(Math.round(diffSecs / 60),   'minute');
@@ -558,9 +608,7 @@ function formatDiscordTimestamp(unixSeconds, style = 'f') {
     return rtf.format(Math.round(diffSecs / 31536000), 'year');
   }
 
-  const opts = _TIMESTAMP_OPTS[style] ?? _TIMESTAMP_OPTS.f;
-  return new Intl.DateTimeFormat(_userLocale, { timeZone: tz, hourCycle: _userHourCycle, ...opts })
-           .format(instant.epochMilliseconds);
+  return _getDtf(style, tz).format(instant.epochMilliseconds);
 }
 
 // Live 'R'-style timestamps. Each element schedules its own update based on
@@ -605,6 +653,7 @@ function _scheduleRelUpdate(el, unix) {
 // timers retaining detached DOM until their next scheduled tick.
 function _clearRelTimestampsIn(root) {
   if (!root) return;
+  if (_relTimestampEls.size === 0) return; // nothing scheduled — skip the <time> query
   if (root.tagName === 'TIME') {
     const entry = _relTimestampEls.get(root);
     if (entry) { clearTimeout(entry.timer); _relTimestampEls.delete(root); }
@@ -665,8 +714,10 @@ function watchTrayGone(onGone) {
 // ─── Slate plain-text extraction ──────────────────────────────────────────────
 
 // Runs in page context to access emoji DOM.
-// Serializes text and converts <img data-type="emoji"> to [name](url).
-// Falls back to innerText if the page-context handler is unavailable.
+// Serializes text and converts emoji images to [name](url).
+// Timeout resolves to ''; caller aborts sending and preserves composer text.
+// No DOM fallback: split-view may target a different composer.
+
 function getSlateTextViaPageContext() {
   return new Promise((resolve) => {
     const nonce = _iframeNextId++;
@@ -681,8 +732,8 @@ function getSlateTextViaPageContext() {
     window.postMessage({ type: 'AGE_GET_SLATE_TEXT', nonce }, '*');
     const timer = setTimeout(() => {
       window.removeEventListener('message', handler);
-      const fallback = getTextbox()?.innerText?.trim() ?? '';
-      resolve(fallback);
+      console.warn('[age] AGE_GET_SLATE_TEXT timed out — send aborted, text left in composer.');
+      resolve('');
     }, 500);
   });
 }
@@ -773,7 +824,7 @@ const MAX_INLINE_MESSAGE_CHARS = 4000;
 
 async function handleEncryptClick() {
   if (_sending) return;
-  if (!isEncryptionActive()) return;
+  if (!canDecrypt()) return;
   // Bail immediately if the extension context has been invalidated (update/reload/disable).
   // On-demand check so the send path never attempts chrome.runtime IPC against a dead context.
   if (!isContextValid()) return;
@@ -784,14 +835,13 @@ async function handleEncryptClick() {
   // that triggered the send; it may change after an await.
   const sendChannelId = getSendChannelId();
   const sendServerId  = getCurrentServerId();
-  if (!sendChannelId) { _sending = false; return; }
-
   // Pass the resolved composer channelId explicitly so split-view thread
   // composers match entries keyed by the thread's channel ID.
-  const active = getActiveEntry(sendChannelId, sendServerId);
+  const active = sendChannelId ? getActiveEntry(sendChannelId, sendServerId) : null;
+  if (!sendChannelId || !active) { _sending = false; return; }
 
   const rawPlain = await getSlateTextViaPageContext();
-  if (!rawPlain || !active) { _sending = false; return; }
+  if (!rawPlain) { _sending = false; return; }
 
   const { entry } = active;
   try {
@@ -817,7 +867,13 @@ async function handleEncryptClick() {
     function clearOnce() {
       if (_attachClearFired) return;
       _attachClearFired = true;
-      if (_trayOnGone === clearOnce) _trayOnGone = null;
+      if (_trayOnGone === clearOnce) {
+        // Still the active watcher (safety-timeout path): release the shared
+        // observer too. If a newer send replaced _trayOnGone, leave it alone.
+        _trayOnGone = null;
+        _trayObserver.disconnect();
+        _trayState = 'idle';
+      }
       window.postMessage({ type: 'AGE_ATTACHMENT_CLEARED' }, '*');
     }
 
@@ -847,16 +903,18 @@ function _attachToLists(lists, onReady) {
 }
 
 function waitForMessageList(onReady) {
-  const lists = getAllMessageLists();
+  const lists = getMessageRoots();
   if (lists.length > 0) {
     _attachToLists(lists, onReady);
     return;
   }
-  // One-shot observer on <main> — fires at the exact millisecond the ol is inserted.
+  // One-shot observer — fires at the exact millisecond a message root is inserted.
+  // (The body-rooted reconcile pass in startNavObserver rebinds as well, which
+  // covers roots that appear outside <main>.)
   const root = document.querySelector('main') ?? document.body;
   const obs = new MutationObserver(() => {
     if (_contextInvalidated) { obs.disconnect(); return; }
-    const found = getAllMessageLists();
+    const found = getMessageRoots();
     if (found.length > 0) {
       obs.disconnect();
       _attachToLists(found, onReady);
@@ -929,11 +987,17 @@ function attachMsgObserver(list, slot) {
         for (const node of addedNodes) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
 
-          if (node.matches?.('[class*="quotedChatMessage__"]')) {
+          // Nodes added INSIDE the draft preview (its card arrives after the panel).
+          const preview = node.closest?.(DRAFT_PREVIEW_ROOT_SEL);
+          if (preview) {
+            _processQuotedContainer(preview);
+            continue;
+          }
+          if (node.matches?.(ID_LESS_ROOT_SEL)) {
             _processQuotedContainer(node);
             continue;
           }
-          node.querySelectorAll?.('[class*="quotedChatMessage__"]')
+          node.querySelectorAll?.(ID_LESS_ROOT_SEL)
             .forEach(_processQuotedContainer);
         }
       }
@@ -950,6 +1014,8 @@ function attachMsgObserver(list, slot) {
 }
  
 function scanExisting() {
+  // Locked/disabled: processLiFull and processQuotedMessages are no-ops anyway.
+  if (!canDecrypt()) return;
   document.querySelectorAll('li[id^="chat-messages-"]').forEach(processLiFull);
   processQuotedMessages();
 }
@@ -985,7 +1051,7 @@ function showQuotedPlaceholder(container, reason) {
 }
 
 function showQuotedPlaceholders(reason) {
-  document.querySelectorAll('[class*="quotedChatMessage__"]')
+  document.querySelectorAll(ID_LESS_ROOT_SEL)
     .forEach(c => showQuotedPlaceholder(c, reason));
 }
 
@@ -994,22 +1060,6 @@ function scanExistingLocked(reason) {
   showQuotedPlaceholders(reason);
 }
  
-// Re-attaches the Enter hook when Discord recreates the composer without a URL change.
-// Replaces a 1500ms polling interval that ran querySelectorAll 40+ times/min.
-(function _installComposerObserver() {
-  const _composerRoot = document.querySelector('main') ?? document.body;
-  new MutationObserver((mutations) => {
-    if (_contextInvalidated || !_session) return;
-    const editorAdded = mutations.some(({ addedNodes }) =>
-      [...addedNodes].some(n =>
-        n.nodeType === Node.ELEMENT_NODE &&
-        (n.matches?.('[data-slate-editor="true"]') ||
-         n.querySelector?.('[data-slate-editor="true"]'))
-      )
-    );
-    if (editorAdded) attachEnterHook();
-  }).observe(_composerRoot, { childList: true, subtree: true });
-})();
  
 // ─── Emoji helpers ────────────────────────────────────────────────────────────
 
@@ -1773,7 +1823,9 @@ function renderWithEmoji(container, text, emojiSize = 22) {
       container.appendChild(document.createTextNode(text.slice(last, m.index)));
 
     if (isShortcode) {
-      const glyph = EMOJI_MAP[m[1]];
+      // Own-property check: EMOJI_MAP inherits Object.prototype, so ":constructor:"
+      // or ":__proto__:" would otherwise resolve to a function/object.
+      const glyph = Object.hasOwn(EMOJI_MAP, m[1]) ? EMOJI_MAP[m[1]] : undefined;
       if (glyph) appendGlyphSpan(glyph);
       else container.appendChild(document.createTextNode(m[0]));
     } else {
@@ -2130,10 +2182,11 @@ function listenForInterceptorMessages() {
     window.postMessage({ type: 'AGE_ENCRYPT_FILE_ACK', requestId }, '*');
  
     try {
-      // Thread/forum composers lack a channel ID, so fail closed.
+      // Route without a channel id: fail closed. (Drafts never get here;
+      // the interceptor lets them through natively.)
       if (fileChannelId === null) {
         throw Object.assign(
-          new Error('Channel ID unavailable — file not encrypted (thread creation or forum modal).'),
+          new Error('Channel ID unavailable — file not encrypted.'),
           { code: 'BLOCKED' },
         );
       }
@@ -2190,7 +2243,7 @@ function listenForInterceptorMessages() {
     try {
       if (msgChannelId === null || msgChannelId === undefined) {
         throw Object.assign(
-          new Error('Channel ID unavailable — message not encrypted (thread creation or forum modal).'),
+          new Error('Channel ID unavailable — message not encrypted.'),
           { code: 'BLOCKED' },
         );
       }
@@ -2235,9 +2288,13 @@ function _evictStaleProcessedIds() {
     const { liId, url } = _splitAttachId(attachId);
     let inDom;
     if (liId) {
-      inDom = !!document.getElementById(liId);
+      // Draft-preview keys are a data-list-item-id, not an element id (Discord
+      // reuses the message's real ids inside the preview).
+      inDom = liId.startsWith(DRAFT_PREVIEW_PREFIX)
+        ? !!document.querySelector(`section form [data-list-item-id="${liId}"]`)
+        : !!document.getElementById(liId);
     } else {
-      quoted ??= [...document.querySelectorAll('[class*="quotedChatMessage__"]')];
+      quoted ??= [...document.querySelectorAll(ID_LESS_ROOT_SEL)];
       inDom = quoted.some(c => c.querySelector(`a[href="${url}"]`));
     }
     if (!inDom) {
@@ -2333,35 +2390,42 @@ async function applyUnlockPayload(payload) {
 }
 
 function listenForMessages() {
-  chrome.runtime.onMessage.addListener(async (msg) => {
+  // The listener itself is synchronous and returns nothing: no response is
+  // ever sent, so the channel closes immediately in every browser. The async
+  // work runs in handleBackgroundMessage, whose failures are logged here.
+  chrome.runtime.onMessage.addListener((msg) => {
+    handleBackgroundMessage(msg)
+      .catch(e => console.error('[age] background message handler failed:', e?.message ?? e));
+  });
+
+  async function handleBackgroundMessage(msg) {
  
-    if (msg.type === 'UNLOCK') {
+    if (msg?.type === 'UNLOCK') {
       await applyUnlockPayload(msg);
       return;
     }
  
-    if (msg.type === 'CONTACTS_UPDATED') {
+    if (msg?.type === 'CONTACTS_UPDATED') {
       const prevOn      = _globalOn;
       // Capture before the await — UNLOCK arriving mid-await runs in a separate
       // macrotask and would otherwise have its contacts overwritten by our stale snapshot.
       const newContacts = msg.contacts;
-      const genBefore   = _generation;
+      const sessionBefore = _session;
       const localData = await localGet(['globalOn']);
-      // If _generation changed while awaiting, an UNLOCK/RELOCK already updated all state.
-      if (_generation !== genBefore) {
-        console.warn('[age] CONTACTS_UPDATED: generation changed mid-await, discarding this update (an UNLOCK/RELOCK should have already superseded it)');
-        return;
-      }
+      // Only a RELOCK / context teardown during the await invalidates this update.
+      // Navigation or a concurrent UNLOCK also bump _generation but must not drop it:
+      // the update is applied to whatever session is current (newer data wins).
+      if (_contextInvalidated || (sessionBefore && !_session)) return;
       _globalOn = localData.globalOn !== false;
       // Update session contacts without bumping _generation.
       // No-op while locked.
       if (_session) {
         _session.contacts       = newContacts || _session.contacts;
         _session.contactsLoaded = true;
+        _session.selfRecipient  = msg.ageRecipient || _session.selfRecipient;
       }
-      // Always re-relay when contacts change while unlocked: UNLOCK carries an empty
-      // contacts object (loadContacts() hasn't finished yet), so CONTACTS_UPDATED is
-      // what actually sets activeEntry=true in upload-interceptor.js.
+      // Always re-relay when contacts change while unlocked so activeEntry in
+      // upload-interceptor.js tracks the latest contacts.
       if (canDecrypt()) relayInterceptorState(true);
       else if (_globalOn !== prevOn) relayInterceptorState(!!_session?.mldsaPrivBytes);
       if (!_globalOn && prevOn) {
@@ -2382,7 +2446,7 @@ function listenForMessages() {
       return;
     }
  
-    if (msg.type === 'RELOCK') {
+    if (msg?.type === 'RELOCK') {
       _clearSession();
       _relockWorkers();
       _wipeAttachmentState();
@@ -2390,7 +2454,7 @@ function listenForMessages() {
       relayInterceptorState(false);
       showAllPlaceholders('locked');
     }
-  });
+  }
 }
 
 // Pulls unlock state from background during boot. The direct request/response
@@ -2418,9 +2482,8 @@ function startNavObserver() {
   let lastUrl     = location.href;
   let lastChanKey = _navChannelKey(location.href);
 
-  // Observe same-document navigation without a costly body subtree observer.
-  // History API patching is isolated from Discord's page-world calls.
-  // Navigation API covers push, replace, and traverse events.
+  // Same-document navigation is detected through the Navigation API, which covers
+  // push, replace and traverse events; no History API patching is needed.
   function onNav() {
     if (_contextInvalidated) return;
     if (location.href === lastUrl) return;
@@ -2458,13 +2521,26 @@ function startNavObserver() {
 
   navigation.addEventListener('currententrychange', onNav);
 
-  // Watches <main> for message-list replacement and rebinds observers.
-  // Prevents detached <ol> observers from missing new messages.
-  const mainEl = document.querySelector('main') ?? document.body;
-  let _knownLists = getAllMessageLists();
+  // Reconciles message observers and Enter hooks, including detached <ol> nodes.
+  // Observe <body>: panes and draft composers may exist outside <main> or open
+  // without a URL change. Reconcile once per frame; attachEnterHook is idempotent.
+  // Replaces the <main>-rooted composer observer.
+
+  let _knownLists = getMessageRoots();
+  let _rootsCheckQueued = false;
   new MutationObserver(() => {
+    if (_rootsCheckQueued || _contextInvalidated) return;
+    _rootsCheckQueued = true;
+    requestAnimationFrame(() => {
+      _rootsCheckQueued = false;
+      _reconcileDom();
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+
+  function _reconcileDom() {
     if (_contextInvalidated) return;
-    const currentLists = getAllMessageLists();
+    if (_session) attachEnterHook();
+    const currentLists = getMessageRoots();
     const changed = currentLists.length !== _knownLists.length ||
       currentLists.some((l, i) => l !== _knownLists[i]);
     if (changed) {
@@ -2474,7 +2550,7 @@ function startNavObserver() {
       _msgObserver2 = null;
       waitForMessageList();
     }
-  }).observe(mainEl, { childList: true, subtree: true });
+  }
 }
  
 // ─── Encrypted attachment decryption ─────────────────────────────────────────
@@ -2608,6 +2684,7 @@ function _buildDownloadCard(url, strippedName) {
 
   const card = document.createElement('div');
   card.style.cssText = [
+    'color-scheme:dark',
     'display:inline-flex',
     'align-items:center',
     'gap:12px',
@@ -2791,7 +2868,7 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
     'font-family:Roboto,system-ui,sans-serif',
   ].join(';');
   // Clear the spinner badge inside.
-  wrapper.innerHTML = '';
+  wrapper.replaceChildren();
 
   // ── Header (darker) — icon + name + size + button ─────────────────────────
   const header = document.createElement('div');
@@ -2865,7 +2942,7 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
     btn.addEventListener('click', () => {
       // Clear the prompt content — renderDecryptedMessage(null) will re-insert
       // the spinner into this same wrapper node immediately after we return.
-      wrapper.innerHTML = '';
+      wrapper.replaceChildren();
       wrapper.style.cssText = 'margin:2px 0;overflow-wrap:anywhere;min-width:0;word-break:break-word;';
       resolve(true);
     }, { once: true });
@@ -2948,14 +3025,12 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
     if (_processedIds.has(attachId)) {
       const cached = _decryptedCache.get(attachId);
       if (cached) {
-        // Skip the DOM write if the rendered wrapper is already present.
-        // Re-render only when missing, which happens when the virtual
-        // scroller removed and re-inserted the li.
-        const alreadyRendered = !!liElement.querySelector(
-          `[data-age-msg-slot="${CSS.escape(attachId)}"]`
-        );
-        if (!alreadyRendered) {
-          const mosaicItem = hideFileCard(fileCard);
+        // Re-render only if the wrapper is missing after virtual-scroller reinsertion.
+        // Use _rootShowsSlot: attachId contains NUL, which CSS.escape() replaces with U+FFFD.
+        // Always call hideFileCard to re-hide cards recreated by Discord.
+
+        const mosaicItem = hideFileCard(fileCard);
+        if (!_rootShowsSlot(liElement, attachId)) {
           renderDecryptedMessage(liElement, cached, attachId, mosaicItem ?? fileCard);
         }
       }
@@ -3450,6 +3525,16 @@ const FILE_LINK_SEL =
   'a[href^="https://cdn.discordapp.com/attachments/"]' +
   '[rel="noreferrer noopener"]:not([aria-label])';
 
+// Checks for attachId within root; compare in JS because CSS.escape() replaces NUL
+// with U+FFFD. Each root contains at most a few wrappers.
+
+function _rootShowsSlot(root, attachId) {
+  for (const el of root.querySelectorAll('[data-age-msg-slot]')) {
+    if (el.dataset.ageMsgSlot === attachId) return true;
+  }
+  return false;
+}
+
 // Shared encrypted attachment scanner.
 
 // Keys tasks by attachId and DOM root to handle virtualized reinsertions.
@@ -3463,16 +3548,24 @@ function _scanForEncryptedAttachments(root, keyFn, { checkExtraGuards = false } 
     const cdnUrl = nameEl.href;
     if (!cdnUrl) continue;
 
+    const attachId = keyFn(cdnUrl);
+    const _previousRoot = _attachmentInProgress.get(attachId);
+    if (checkExtraGuards) {
+      // Id-less roots share an attachId per URL, including across remounts.
+      // Keep processed/in-flight guards per root; skip only if THIS root has the result
+      // or task. Other roots call processEncryptedAttachment to use the cache or await
+      // the existing task via _awaitStaleInFlight, then render locally.
+
+      if (_processedIds.has(attachId) && _rootShowsSlot(root, attachId)) continue;
+      if (_inFlight.has(attachId) && _previousRoot === root) continue;
+    }
+    if (_previousRoot === root) continue;
+
+    // Resolved after the guards (they only depend on attachId) but BEFORE the
+    // _attachmentInProgress.set below: a missing card must not leave a stale entry.
     const fileCard = nameEl.closest('div[class*="file_"]');
     if (!fileCard) continue;
 
-    const attachId = keyFn(cdnUrl);
-    if (checkExtraGuards) {
-      if (_processedIds.has(attachId)) continue;
-      if (_inFlight.has(attachId)) continue;
-    }
-    const _previousRoot = _attachmentInProgress.get(attachId);
-    if (_previousRoot === root) continue;
     _attachmentInProgress.set(attachId, root);
 
     processEncryptedAttachment(root, fileCard, cdnUrl, rawName, _previousRoot);
@@ -3499,7 +3592,7 @@ function _processQuotedContainer(container) {
 // Uses CDN URL signatures and synthetic ids for stable deduplication.
 function processQuotedMessages() {
   if (!canDecrypt()) return;
-  const containers = document.querySelectorAll('[class*="quotedChatMessage__"]');
+  const containers = document.querySelectorAll(ID_LESS_ROOT_SEL);
   for (const container of containers) {
     _scanForEncryptedAttachments(container, cdnUrl => _attachId(container, cdnUrl), { checkExtraGuards: true });
   }
