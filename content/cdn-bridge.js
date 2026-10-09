@@ -16,6 +16,17 @@
 // Do not trust origin values supplied in message payloads.
 const expectedParentOrigin = new URLSearchParams(location.search).get('parentOrigin');
 
+// Only Discord attachment URLs are fetched; mirrors CDN_ATTACHMENT_PATH_PATTERN
+function isAllowedCdnUrl(raw) {
+  const u = URL.parse(raw);
+  return !!u
+    && u.protocol === 'https:'
+    && u.hostname === 'cdn.discordapp.com'
+    && !u.port
+    && !u.username && !u.password
+    && /^\/attachments\/\d+\//.test(u.pathname);
+}
+
 window.addEventListener('message', async (e) => {
   if (e.source !== window.parent) return;
   if (!expectedParentOrigin || e.origin !== expectedParentOrigin) return;
@@ -30,6 +41,8 @@ window.addEventListener('message', async (e) => {
   try {
     if (!cdnUrl || typeof cdnUrl !== 'string')
       throw new Error('AGE_FETCH_RAW: cdnUrl missing');
+    if (!isAllowedCdnUrl(cdnUrl))
+      throw new Error('AGE_FETCH_RAW: cdnUrl not allowed');
 
     // cache: 'no-store' — ArrayBuffer is transferred (neutered) to content.js;
     // a cached response returns an ArrayBuffer(0) on the second fetch, silently
