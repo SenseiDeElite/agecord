@@ -9,8 +9,7 @@
     "128": "icons/icon-128.png"
   },
   "permissions": [
-    "storage",
-    "tabs"
+    "storage"
   ],
   "host_permissions": [
     "https://discord.com/*",
@@ -60,7 +59,7 @@
         "lib/age.min.js",
         "lib/rustcrypto-wasm.min.js"
       ],
-      "matches": ["https://discord.com/*"]
+      "matches": ["https://discord.com/channels/*"]
     }
   ]
 }
