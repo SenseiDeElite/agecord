@@ -512,11 +512,19 @@ textarea::placeholder {
 }
 
 /* ── Focus ring ──────────────────────────────────────────────────────────── */
-/* Keyboard focus only (:focus-visible). Text fields keep their :focus border
-   change as a secondary cue. */
+/* Keyboard focus only (:focus-visible). Text fields and selects are excluded
+   below: they use their own :focus border + ring instead. */
 :focus-visible {
   outline: 2px solid var(--md-primary);
   outline-offset: 2px;
+}
+
+/* Text fields and selects already show a border + ring on :focus, so skip the
+   outline here to avoid a doubled highlight. */
+input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
 }
 
 /* ── MD3 Switch ──────────────────────────────────────────────────────────── */
