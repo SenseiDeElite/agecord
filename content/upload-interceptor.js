@@ -478,11 +478,11 @@ function withPendingRequest(buildPayload, extraEntryFields = {}) {
   });
 }
 
-function encryptFile(fileName, buffer, channelId, guildId) {
+function encryptFile(fileName, mimeType, buffer, channelId, guildId) {
   return withPendingRequest(
     (requestId) => {
       window.postMessage(
-        { type: 'AGE_ENCRYPT_FILE', requestId, fileName, buffer, channelId, guildId },
+        { type: 'AGE_ENCRYPT_FILE', requestId, fileName, mimeType, buffer, channelId, guildId },
         '*',
         [buffer]
       );
@@ -501,7 +501,7 @@ async function encryptFileList(files, channelId, guildId) {
       continue;
     }
     const plainBuffer = await file.arrayBuffer();
-    const { buffer: encBuffer, encryptedName } = await encryptFile(file.name, plainBuffer, channelId, guildId);
+    const { buffer: encBuffer, encryptedName } = await encryptFile(file.name, file.type, plainBuffer, channelId, guildId);
     dt.items.add(new File([encBuffer], encryptedName, { type: 'application/octet-stream' }));
   }
   return dt;
