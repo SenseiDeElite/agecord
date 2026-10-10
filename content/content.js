@@ -82,16 +82,28 @@ function classifyFile(originalName) {
   return _mediaCategory(ext) ?? 'download';
 }
  
-// Returns <category>.<ext>.age or file.age; preserves valid extensions for MIME detection.
-// Encrypted files pass through unchanged.
-// Leading-dot names have no extension.
-function anonymizeFileName(originalName) {
+// Returns <category>.<ext>.age or file.age; preserves recognized extensions for MIME detection.
+// Encrypted files pass through unchanged. Leading-dot names have no extension.
+
+// Extension validity:
+// - Media (RENDERABLE_*): fixed vocabulary; membership is sufficient.
+// - Non-media: retain only if the sender's browser recognizes the extension
+//   (File.type is non-empty). This filters arbitrary suffixes. 
+// Browser-dependent heuristic; failure drops the suffix, never leaks it.
+// mimeType is untrusted (postMessage); only truthiness is checked.
+// "application/octet-stream" is treated as unrecognized.
+function anonymizeFileName(originalName, mimeType = '') {
   if (originalName.endsWith('.age')) return originalName;
   const dot = originalName.lastIndexOf('.');
-  const ext = dot > 0 ? originalName.slice(dot + 1).toLowerCase() : '';
-  if (!/^[a-z0-9]{1,8}$/.test(ext)) return 'file.age';
-  const base = _mediaCategory(ext) ?? 'file';
-  return `${base}.${ext}.age`;
+  if (dot <= 0) return 'file.age';
+  const ext = originalName.slice(dot + 1).toLowerCase();
+  if (!/^[a-z0-9]+$/.test(ext)) return 'file.age';
+  const media = _mediaCategory(ext);
+  if (media) return `${media}.${ext}.age`;
+  const recognized = typeof mimeType === 'string'
+    && mimeType.trim() !== ''
+    && mimeType.trim().toLowerCase() !== 'application/octet-stream';
+  return recognized ? `file.${ext}.age` : 'file.age';
 }
  
 // ─── Module state ─────────────────────────────────────────────────────────────
@@ -2171,7 +2183,7 @@ function listenForInterceptorMessages() {
     if (e.source !== window) return;
     if (e.data?.type !== 'AGE_ENCRYPT_FILE') return;
  
-    const { requestId, fileName } = e.data;
+    const { requestId, fileName, mimeType } = e.data;
     const plainBuffer = e.data.buffer;
     // Captures channel context before async work to preserve composer origin.
     // Aborts when channel resolution is unreliable.
@@ -2216,7 +2228,7 @@ function listenForInterceptorMessages() {
 
       // Transfer back to page context — zero-copy.
       window.postMessage(
-        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, buffer: fileBytes.buffer, encryptedName: anonymizeFileName(fileName) },
+        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, buffer: fileBytes.buffer, encryptedName: anonymizeFileName(fileName, mimeType) },
         '*',
         [fileBytes.buffer]
       );
