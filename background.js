@@ -22,16 +22,6 @@ import { init as _rustcryptoInit, xchacha20poly1305_encrypt }
 // arrives, but service workers forbid top-level await — store the Promise instead.
 const _wasmReady = _rustcryptoInit();
 
-// Keep chrome.storage.session out of content scripts. This is already the
-// default; the explicit call documents the intent. Not all browsers implement
-// setAccessLevel, so failures are non-fatal.
-try {
-  chrome.storage.session.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' })
-    ?.catch?.(e => console.info('[age] storage.session setAccessLevel unavailable:', e?.message));
-} catch (e) {
-  console.info('[age] storage.session setAccessLevel unavailable:', e?.message);
-}
-
 let _identity          = null;
 let _contactsKeyBytes  = null; // raw Uint8Array, derived by popup's crypto-worker
 let _contacts          = {};
@@ -301,6 +291,7 @@ function handleRequestUnlock(_msg, _sender, sendResponse) {
 }
 
 const handlers = {
+  __proto__:            null, // no inherited keys (toString, constructor, …) as handler names
   UNLOCK:               handleUnlock,
   PING:                 handlePing,
   RELOCK:               handleRelock,
@@ -310,23 +301,53 @@ const handlers = {
   REQUEST_UNLOCK:       handleRequestUnlock,
 };
 
-// Defence in depth: runtime.onMessage only delivers messages from this
-// extension's own contexts, but state-changing and key-handling messages
-// are additionally restricted to the popup, the only legitimate sender.
-const POPUP_ONLY_TYPES = new Set(['UNLOCK', 'RELOCK', 'ENCRYPT_CONTACTS']);
-const POPUP_URL_PREFIX = chrome.runtime.getURL('popup/');
+// ─── Sender policy ────────────────────────────────────────────────────────────
 
-const isOwnSender   = (sender) => sender?.id === chrome.runtime.id;
-const isPopupSender = (sender) =>
-  isOwnSender(sender) && typeof sender.url === 'string' && sender.url.startsWith(POPUP_URL_PREFIX);
+ // runtime.onMessage is limited to this extension's contexts; external senders
+// use onMessageExternal. Enforce explicit sender policies because content
+// scripts on discord.com process untrusted input.
+
+// Default-deny: each type requires a handler and a SENDER_POLICY entry.
+// Null-prototype tables prevent inherited keys such as "toString" and "__proto__".
+
+const POPUP_URL = chrome.runtime.getURL('popup/popup.html');
+const DISCORD_ORIGIN = 'https://discord.com';
+
+// Exact page match, ignoring query/hash. popup/import-helper.html is excluded.
+const isPopup = (sender) =>
+  typeof sender?.url === 'string' && sender.url.split(/[?#]/)[0] === POPUP_URL;
+
+// Top-frame content script on discord.com. Check sender.origin
+// instead of the path: Discord is a SPA and routes can change
+// before boot-time pulls. The manifest restricts injection to /channels/*;
+// this check excludes extension pages, child frames, and lookalike hosts.
+// chrome-extension: and moz-extension: origins cannot match.
+const isDiscordTopFrame = (sender) =>
+  !!sender?.tab && sender.frameId === 0 && sender.origin === DISCORD_ORIGIN;
+
+const SENDER_POLICY = {
+  __proto__:           null,
+  UNLOCK:              isPopup,
+  RELOCK:              isPopup,
+  ENCRYPT_CONTACTS:    isPopup,
+  CONTACTS_UPDATED:    isPopup,
+  PING:                isPopup,
+  RELOAD_DISCORD_TABS: isPopup,
+  REQUEST_UNLOCK:      isDiscordTopFrame,
+};
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg?.type) return false;
-  const handler = handlers[msg.type];
+  const type = msg?.type;
+  if (typeof type !== 'string') return false;
+  const handler = handlers[type];
   if (!handler) return false;
-  if (!isOwnSender(sender)) return false;
-  if (POPUP_ONLY_TYPES.has(msg.type) && !isPopupSender(sender)) {
-    console.warn(`[age] ${msg.type} rejected: sender is not the popup`);
+  const allowed = SENDER_POLICY[type];
+  if (!allowed) {
+    console.error(`[age] ${type} has a handler but no SENDER_POLICY entry; rejected`);
+    return false;
+  }
+  if (!allowed(sender)) {
+    console.warn(`[age] ${type} rejected: unauthorized sender`);
     return false;
   }
   return handler(msg, sender, sendResponse);
