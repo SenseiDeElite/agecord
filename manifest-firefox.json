@@ -33,7 +33,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://discord.com/channels/*"
+        "https://discord.com/*"
       ],
       "js": [
         "content/upload-interceptor.js"
@@ -43,7 +43,7 @@
     },
     {
       "matches": [
-        "https://discord.com/channels/*"
+        "https://discord.com/*"
       ],
       "js": [
         "content/content-loader.js"
@@ -70,7 +70,7 @@
         "lib/age.min.js",
         "lib/rustcrypto-wasm.min.js"
       ],
-      "matches": ["https://discord.com/channels/*"]
+      "matches": ["https://discord.com/*"]
     }
   ]
 }
