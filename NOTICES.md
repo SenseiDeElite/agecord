@@ -155,7 +155,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## [cfg-if 1.0.5](https://github.com/rust-lang/cfg-if), [js-sys 0.3.105](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys), [wasm-bindgen-macro-support 0.2.128](https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support), [wasm-bindgen-macro 0.2.128](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro), [wasm-bindgen-shared 0.2.128](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared), [wasm-bindgen 0.2.128](https://github.com/wasm-bindgen/wasm-bindgen)
+## [cfg-if 1.0.5](https://github.com/rust-lang/cfg-if), [js-sys 0.3.106](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys), [wasm-bindgen-macro-support 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support), [wasm-bindgen-macro 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro), [wasm-bindgen-shared 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared), [wasm-bindgen 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2014 Alex Crichton
@@ -674,7 +674,7 @@ DEALINGS IN THE SOFTWARE.
 ## [cpufeatures 0.3.1](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
-Copyright (c) 2020-2025 The RustCrypto Project Developers
+Copyright (c) 2020-2026 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
