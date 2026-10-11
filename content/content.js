@@ -332,8 +332,8 @@ function cdnChannelId(url) {
 // null sends natively; drafts have no channel ID, so use focus, not the stale URL.
 // Split view: SECTION → THREAD_ID; otherwise → CHANNEL_ID.
 
-function getSendChannelId() {
-  const active = document.activeElement;
+function getSendChannelId(fromEl) {
+  const active = fromEl || document.activeElement;
   if (active && isDraftTarget(active)) return null;
 
   const threadId = getCurrentThreadId();
@@ -443,7 +443,32 @@ function _makeEnterHandler(tb) {
   };
 }
 
+// Capture Enter before Discord's global keybind can submit plaintext from an unfocused composer.
+
+function _outsideEnterGuard(e) {
+  if (e.key !== 'Enter' || e.shiftKey || e.altKey) return;
+  const target = e.target instanceof Element ? e.target : document.body;
+  const composers = getTextboxes();
+  // Focus inside a composer: _makeEnterHandler owns this event.
+  if (composers.some(tb => tb.contains(target))) return;
+  // Other text-entry widgets (search boxes, inline message edit, ...) keep their Enter.
+  if (target.isContentEditable || target.closest('input, textarea, select')) return;
+  const pending = composers.some(tb => {
+    if (!tb.innerText?.trim()) return false;
+    // Ids of the composer holding the text, not of whatever has focus.
+    const channelId = getSendChannelId(tb);
+    return !!channelId && isEncryptionActive(channelId, getCurrentServerId());
+  });
+  if (!pending) return;
+  e.stopImmediatePropagation();
+  // Native buttons/links keep their default action (click/navigate); Discord's keybind
+  // simply never sees the key.
+  if (!target.closest('button, a[href], summary')) e.preventDefault();
+}
+
 function attachEnterHook() {
+  // Idempotent: the same listener + capture flag is only ever registered once.
+  window.addEventListener('keydown', _outsideEnterGuard, { capture: true });
   for (const tb of getTextboxes()) {
     if (tb._ageKeyHandler) continue;
     tb._ageKeyHandler = _makeEnterHandler(tb);
@@ -452,6 +477,7 @@ function attachEnterHook() {
 }
 
 function detachEnterHook() {
+  window.removeEventListener('keydown', _outsideEnterGuard, { capture: true });
   for (const tb of getTextboxes()) {
     if (tb._ageKeyHandler) {
       tb.removeEventListener('keydown', tb._ageKeyHandler, { capture: true });
