@@ -489,7 +489,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [keccak 0.2.2](https://github.com/RustCrypto/sponges), [zeroize 1.9.0](https://github.com/RustCrypto/utils)
+## [keccak 0.2.2](https://github.com/RustCrypto/sponges), [zeroize 1.9.1](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2018-2026 The RustCrypto Project Developers
