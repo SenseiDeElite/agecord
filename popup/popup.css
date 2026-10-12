@@ -1274,3 +1274,50 @@ textarea.mono { font-size: 11px; resize: none; }
     animation-iteration-count: infinite !important;
   }
 }
+
+/* ── Error slots (accessibility) ─────────────────────────────────────────── */
+/* Appended last so equal-specificity ties with .form-group input:focus and
+   .modal input:focus resolve in our favour. */
+
+/* Form-level slot (role="alert"): always rendered, never [hidden] or
+   display:none. Collapse the empty box instead. */
+.error-msg:empty { margin: 0; padding: 0; border: 0; }
+
+/* Dialogs use flex gap:10px; an empty item still takes a gap on each side.
+   10 - 5 - 5 + 10 = one normal gap. */
+.modal .error-msg:empty { margin-block: -5px; }
+
+/* Field-level slot: aria-describedby target only, not live. */
+.field-error {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--md-error);
+  padding-left: 2px;
+}
+.field-error:empty { display: none; }
+
+/* Lockout countdown (role="timer", outside the alert slot). Same side gutters
+   as .error-msg; takes no space while empty. */
+#unlock-countdown { margin: 6px 16px 0; }
+#unlock-countdown:empty { display: none; }
+
+/* Invalid field: specificity (0,2,1) > .form-group input / .modal input. */
+:is(.form-group, .modal-field) :is(input, textarea)[aria-invalid="true"] {
+  border-color: var(--md-error);
+}
+:is(.form-group, .modal-field) :is(input, textarea)[aria-invalid="true"]:focus {
+  box-shadow: 0 0 0 1px var(--md-error);
+}
+
+/* Gecko draws a default red glow on :user-invalid; Chromium does not. */
+:is(input, textarea, select):user-invalid { box-shadow: none; }
+
+/* Visually hidden live node (spinner / strength status). */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
