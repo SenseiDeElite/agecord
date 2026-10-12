@@ -270,8 +270,90 @@
   const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact',
                    'edit-group', 'edit-server', 'my-key', 'about'];
   const show = screenId => {
-    screens.forEach(id => { document.getElementById(`screen-${id}`).hidden = (id !== screenId); });
+    screens.forEach(id => {
+      const el = document.getElementById(`screen-${id}`);
+      const hide = (id !== screenId);
+      // Leaving a screen wipes its errors, so a hidden screen never holds stale
+      // aria-invalid / message text (and re-entry starts clean).
+      if (hide && !el.hidden) clearScreenErrors(el);
+      el.hidden = hide;
+    });
   };
+
+  // Clears every form-level alert, field-error slot and aria-invalid inside a
+  // container. Deliberately leaves #unlock-countdown alone: it is not an error
+  // and its timer keeps running while the lock screen is hidden.
+  function clearScreenErrors(container) {
+    container.querySelectorAll('.error-msg, .field-error').forEach(el => { el.textContent = ''; });
+    container.querySelectorAll('[aria-invalid]').forEach(el => el.removeAttribute('aria-invalid'));
+  }
+
+  // ─── Error reporting (accessibility) ─────────────────────────────────────────
+  
+  // Field errors use aria-describedby and are read on focus; form-level errors use
+  // a persistent role="alert" whose text changes to trigger screen reader announcements.
+  const $ = id => document.getElementById(id);
+  const MEMBERS_REQUIRED_MSG = 'Select at least 1 member.';
+  // Form-level error slot of each member-picker mode (see applyMemberSelection).
+  const MEMBER_ERROR_SLOT = {
+    'add-group':   'add-contact-error',
+    'add-server':  'add-contact-error',
+    'edit-group':  'edit-group-error',
+    'edit-server': 'edit-server-error',
+  };
+
+  // Form-level (non-field) errors. Text only; the slot is always rendered.
+  function showErr(el, msg) { el.textContent = msg; }
+  function clearErr(el)     { el.textContent = ''; }
+
+  // Field-level. Slot id convention: `${field.id}-error`.
+  function setFieldError(field, message) {
+    const slot = $(`${field.id}-error`);
+    if (slot) slot.textContent = message;
+    if (message) field.setAttribute('aria-invalid', 'true');
+    else field.removeAttribute('aria-invalid');
+  }
+  function clearFieldErrors(ids) {
+    ids.forEach(id => { const f = $(id); if (f) setFieldError(f, ''); });
+  }
+  // err = { fieldId, message }. Marks the field, fills its slot, moves focus to it.
+  function showFieldError(err) {
+    const f = $(err.fieldId);
+    setFieldError(f, err.message);
+    f.focus();
+  }
+  // Lets async code throw an error that remembers which field it belongs to.
+  const fieldError = (fieldId, message) => Object.assign(new Error(message), { fieldId });
+
+  // Clear on edit: typing in an invalid field removes its error.
+  document.addEventListener('input', e => {
+    if (e.target.getAttribute?.('aria-invalid') === 'true') setFieldError(e.target, '');
+  });
+
+  // Always-present, visually hidden status nodes (one per spinner). Text is set
+  // when work starts and cleared when it ends.
+  function setStatus(id, text) { $(id).textContent = text; }
+
+  // Field ids per form, used to wipe stale errors.
+  const LOCK_FIELDS          = ['passphrase-input'];
+  const SETUP_FIELDS         = ['setup-passphrase', 'setup-passphrase2'];
+  const IMPORT_KEY_FIELDS    = ['import-blob', 'import-export-passphrase', 'import-passphrase', 'import-passphrase2'];
+  const EXPORT_FIELDS        = ['export-passphrase-input', 'export-new-passphrase', 'export-new-passphrase2'];
+  const CHANGE_PASS_FIELDS   = ['change-pass-current', 'change-pass-new', 'change-pass-new2'];
+  const ADD_ENTRY_FIELDS     = ['contact-channel-id', 'contact-username', 'contact-key',
+                                'group-channel-id', 'group-name',
+                                'server-id-input', 'server-name'];
+  const EDIT_CONTACT_FIELDS  = ['edit-channel-id', 'edit-username', 'edit-key'];
+  const EDIT_GROUP_FIELDS    = ['edit-group-channel-id', 'edit-group-name'];
+  const EDIT_SERVER_FIELDS   = ['edit-server-id-input', 'edit-server-name'];
+
+  // Which field each validator error belongs to, per screen.
+  const CONTACT_IDS_ADD  = { channel: 'contact-channel-id',    name: 'contact-username', key: 'contact-key' };
+  const CONTACT_IDS_EDIT = { channel: 'edit-channel-id',       name: 'edit-username',    key: 'edit-key' };
+  const GROUP_IDS_ADD    = { channel: 'group-channel-id',      name: 'group-name' };
+  const GROUP_IDS_EDIT   = { channel: 'edit-group-channel-id', name: 'edit-group-name' };
+  const SERVER_IDS_ADD   = { id: 'server-id-input',            name: 'server-name' };
+  const SERVER_IDS_EDIT  = { id: 'edit-server-id-input',       name: 'edit-server-name' };
 
   // ─── Session helpers ─────────────────────────────────────────────────────────
 
@@ -597,10 +679,14 @@
     await bgSend({ type: 'RELOCK' });
     document.getElementById('btn-goto-setup').hidden   = true;
     document.getElementById('passphrase-input').value  = '';
-    document.getElementById('unlock-error').hidden     = true;
+    // Stops any running lockout countdown and clears its text, the lock-screen
+    // error and the countdown (the lockout record was just removed above).
+    setLockdownUI(0);
+    clearFieldErrors(LOCK_FIELDS);
     document.getElementById('setup-passphrase').value  = '';
     document.getElementById('setup-passphrase2').value = '';
-    document.getElementById('setup-error').hidden      = true;
+    clearErr(document.getElementById('setup-error'));
+    clearFieldErrors(SETUP_FIELDS);
     show('setup');
   }
 
@@ -635,9 +721,10 @@
   }
 
   function setLockdownUI(lockedUntilMs) {
-    const btn   = document.getElementById('btn-unlock');
-    const errEl = document.getElementById('unlock-error');
-    const inp   = document.getElementById('passphrase-input');
+    const btn      = document.getElementById('btn-unlock');
+    const errEl    = document.getElementById('unlock-error');
+    const countdown = document.getElementById('unlock-countdown');
+    const inp      = document.getElementById('passphrase-input');
 
     if (_lockCountdownInterval) { clearInterval(_lockCountdownInterval); _lockCountdownInterval = null; }
 
@@ -645,7 +732,8 @@
       _isLockedOut = false;
       btn.disabled = false;
       inp.disabled = false;
-      errEl.hidden = true;
+      clearErr(errEl);
+      clearErr(countdown);
       return;
     }
 
@@ -653,6 +741,11 @@
     btn.disabled    = true;
     btn.textContent = 'Unlock'; // reset from any in-progress label
     inp.disabled    = true;
+
+    // The lockout is announced ONCE, through the alert slot. The ticking
+    // countdown lives in its own role="timer" element (not a live region), so
+    // it is readable on demand but silent while it updates every second.
+    showErr(errEl, 'Too many failed attempts. Unlock is temporarily locked.');
 
     function tick() {
       const remaining = lockedUntilMs - Date.now();
@@ -662,18 +755,21 @@
         _isLockedOut = false;
         btn.disabled = false;
         inp.disabled = false;
-        errEl.hidden = true;
+        clearErr(errEl);
+        clearErr(countdown);
         // Clear the lockout record so the next 3 failures start a fresh lockout.
         store.set({ unlockAttempts: 0, unlockLockedUntil: 0 });
         return;
       }
-      showErr(errEl, `Too many failed attempts. Try again in ${fmtCountdown(remaining)}.`);
+      countdown.textContent = `Try again in ${fmtCountdown(remaining)}.`;
     }
     tick();
     _lockCountdownInterval = setInterval(tick, 1000);
   }
 
-  async function checkLockdown() {
+  // Announce stored attempts only on lock-screen open; don't mark the field invalid.
+  // doUnlock() rechecks lockout on submit without repeating the announcement.
+  async function checkLockdown({ announceAttempts = false } = {}) {
     const { unlockLockedUntil = 0, unlockAttempts = 0 } =
       await store.get(['unlockLockedUntil', 'unlockAttempts']);
 
@@ -690,7 +786,7 @@
     }
 
     // No lockout, but show how many attempts remain if any have been used.
-    if (unlockAttempts > 0) {
+    if (announceAttempts && unlockAttempts > 0) {
       const remaining = LOCKOUT_MAX_ATTEMPTS - unlockAttempts;
       showErr(
         document.getElementById('unlock-error'),
@@ -706,7 +802,9 @@
   // transition to the lock screen instead of bare show('lock').
   async function showLockScreen() {
     document.getElementById('passphrase-input').value = '';
-    document.getElementById('unlock-error').hidden    = true;
+    clearErr(document.getElementById('unlock-error'));
+    clearErr(document.getElementById('unlock-countdown'));
+    clearFieldErrors(LOCK_FIELDS);
     // Reset button state in case we're transitioning from an in-progress unlock.
     const btn = document.getElementById('btn-unlock');
     if (!_isLockedOut) {
@@ -715,7 +813,7 @@
     }
     document.getElementById('passphrase-input').disabled = _isLockedOut;
     show('lock');
-    await checkLockdown();
+    await checkLockdown({ announceAttempts: true });
   }
 
   async function recordFailedAttempt() {
@@ -731,10 +829,11 @@
     } else {
       await store.set({ unlockAttempts: newCount, unlockLockedUntil: 0 });
       const remaining = LOCKOUT_MAX_ATTEMPTS - newCount;
-      showErr(
-        document.getElementById('unlock-error'),
-        `Wrong passphrase. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining before lockout.`
-      );
+      // A rejected entry: mark the passphrase field, fill its slot, focus it.
+      showFieldError({
+        fieldId: 'passphrase-input',
+        message: `Wrong passphrase. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining before lockout.`,
+      });
     }
   }
 
@@ -764,7 +863,8 @@
     if (!passphrase) { btn.disabled = false; btn.textContent = 'Unlock'; return; }
 
     const errEl = document.getElementById('unlock-error');
-    errEl.hidden = true;
+    clearErr(errEl);
+    clearFieldErrors(LOCK_FIELDS);
 
     // _decryptFailed: set to true if we should count the attempt as a wrong
     // passphrase. ANY decryption failure means wrong passphrase or corrupt blob.
@@ -860,6 +960,11 @@
   const setupPassEl = document.getElementById('setup-passphrase');
   const strengthBar = document.getElementById('strength-bar');
   const strengthLbl = document.getElementById('strength-label');
+  // The visible label updates on every keystroke but is aria-hidden; screen
+  // readers get the same text via #strength-status, debounced so it is not
+  // re-announced for each character typed.
+  const strengthStatus = document.getElementById('strength-status');
+  let _strengthTimer = null;
 
   setupPassEl.addEventListener('input', () => {
     const p = setupPassEl.value;
@@ -875,6 +980,11 @@
     strengthBar.style.background = colors[score];
     strengthLbl.style.color      = colors[score];
     strengthLbl.textContent      = p.length ? ['Too short','Weak','Weak','Fair','Good','Strong','Very strong'][score] : '';
+    clearTimeout(_strengthTimer);
+    _strengthTimer = setTimeout(() => {
+      strengthStatus.textContent = strengthLbl.textContent
+        ? `Passphrase strength: ${strengthLbl.textContent}` : '';
+    }, 500);
   });
 
   // Rejects non-ASCII and control chars that could break JSON serialisation or protocol fields.
@@ -882,14 +992,18 @@
     return /^[\x20-\x7E]+$/.test(s);
   }
 
-  function validatePassphrase(p) {
+  // Returns { fieldId, message } or null. The caller names the field because the
+  // same rule applies to the setup, import, export and change-passphrase forms.
+  function validatePassphrase(p, fieldId) {
     const errs = [];
     if (p.length < 20)           errs.push('at least 20 characters');
     if (!/[A-Z]/.test(p))        errs.push('an uppercase letter (A–Z)');
     if (!/[a-z]/.test(p))        errs.push('a lowercase letter (a–z)');
     if (!/[0-9]/.test(p))        errs.push('a number (0–9)');
     if (!/[^A-Za-z0-9]/.test(p)) errs.push('a special character (e.g. !&*)');
-    return errs.length ? 'Passphrase must include: ' + errs.join(', ') + '.' : null;
+    return errs.length
+      ? { fieldId, message: 'Passphrase must include: ' + errs.join(', ') + '.' }
+      : null;
   }
 
   document.getElementById('form-setup').addEventListener('submit', async e => {
@@ -898,20 +1012,23 @@
     const pass  = setupPassEl.value;
     const pass2 = document.getElementById('setup-passphrase2').value;
     const errEl = document.getElementById('setup-error');
-    errEl.hidden = true;
+    clearErr(errEl);
+    clearFieldErrors(SETUP_FIELDS);
 
-    const passErr = validatePassphrase(pass);
-    if (passErr)        { showErr(errEl, passErr); return; }
+    const passErr = validatePassphrase(pass, 'setup-passphrase');
+    if (passErr)        { showFieldError(passErr); return; }
     if (pass !== pass2) {
-      showErr(errEl, 'Passphrases do not match.');
       setupPassEl.value = '';
       document.getElementById('setup-passphrase2').value = '';
+      // Only the confirmation field is wrong.
+      showFieldError({ fieldId: 'setup-passphrase2', message: 'Passphrases do not match.' });
       return;
     }
 
     document.getElementById('btn-generate').hidden  = true;
     document.getElementById('btn-show-import').hidden = true;
     document.getElementById('setup-spinner').hidden = false;
+    setStatus('setup-status', 'Generating keypair... do not close this window.');
 
     try {
       const identity  = await generateHybridIdentity();
@@ -963,6 +1080,7 @@
       document.getElementById('btn-generate').hidden  = false;
       document.getElementById('btn-show-import').hidden = false;
       document.getElementById('setup-spinner').hidden = true;
+      setStatus('setup-status', '');
     }
   });
 
@@ -1014,24 +1132,34 @@
     const newPass        = document.getElementById('import-passphrase').value;
     const newPass2       = document.getElementById('import-passphrase2').value;
     const errEl          = document.getElementById('import-error');
-    errEl.hidden = true;
+    clearErr(errEl);
+    clearFieldErrors(IMPORT_KEY_FIELDS);
 
-    if (!encryptedBlob)    { showErr(errEl, 'Paste your encrypted private key blob first.'); return; }
-    if (!exportPass)       { showErr(errEl, 'Enter the export passphrase used when the blob was created.'); return; }
+    if (!encryptedBlob) {
+      showFieldError({ fieldId: 'import-blob', message: 'Paste your encrypted private key blob first.' });
+      return;
+    }
+    if (!exportPass) {
+      showFieldError({ fieldId: 'import-export-passphrase',
+                       message: 'Enter the export passphrase used when the blob was created.' });
+      return;
+    }
 
-    const passErr = validatePassphrase(newPass);
-    if (passErr)           { showErr(errEl, passErr); return; }
+    const passErr = validatePassphrase(newPass, 'import-passphrase');
+    if (passErr)           { showFieldError(passErr); return; }
     if (newPass !== newPass2) {
-      showErr(errEl, 'Passphrases do not match.');
       document.getElementById('import-passphrase').value  = '';
       document.getElementById('import-passphrase2').value = '';
       saveImportDraft();
+      // Only the confirmation field is wrong.
+      showFieldError({ fieldId: 'import-passphrase2', message: 'Passphrases do not match.' });
       return;
     }
 
     const btn = document.getElementById('btn-import');
     btn.hidden = true;
     document.getElementById('import-spinner').hidden = false;
+    setStatus('import-status', 'Importing... do not close this window.');
 
     // Set when the failure is specifically a wrong export passphrase, so the
     // outer catch can clear just that one field rather than all of them.
@@ -1045,22 +1173,29 @@
       try {
         identityBlob = await decryptIdentityBlob(encryptedBlob, exportPass);
       } catch (e) {
+        // fieldError() tags each failure with the field it belongs to, so the
+        // outer catch can mark exactly that field.
         if (e.message === 'CORRUPT_BLOB') {
-          throw new Error('The pasted blob appears truncated or corrupt. Please copy it again in full.');
+          throw fieldError('import-blob',
+            'The pasted blob appears truncated or corrupt. Please copy it again in full.');
         }
         if (e.message === 'OUTDATED_FORMAT') {
-          throw new Error('This export was created with an older version of the extension. ' +
+          throw fieldError('import-blob',
+            'This export was created with an older version of the extension. ' +
             'Please regenerate your keypair on the original device and export again.');
         }
         _wrongExportPass = true;
-        throw new Error('Wrong export passphrase, or the blob is not a valid encrypted key export.');
+        throw fieldError('import-export-passphrase',
+          'Wrong export passphrase, or the blob is not a valid encrypted key export.');
       }
 
       const lines = identityBlob.split('\n');
       if (!lines[0].startsWith('AGE-SECRET-KEY-1') && !lines[0].startsWith('AGE-SECRET-KEY-PQ-1'))
-        throw new Error('Decrypted content is not a valid age identity (expected AGE-SECRET-KEY-1… or AGE-SECRET-KEY-PQ-1…).');
+        throw fieldError('import-blob',
+          'Decrypted content is not a valid age identity (expected AGE-SECRET-KEY-PQ-1…).');
       if (!lines[1]?.startsWith('mldsa87seed:'))
-        throw new Error('Decrypted identity is missing an ML-DSA-87 seed (expected mldsa87seed:…).');
+        throw fieldError('import-blob',
+          'Decrypted identity is missing an ML-DSA-87 seed (expected mldsa87seed:…).');
 
       const identity  = lines[0];
       const recipient = await identityToRecipient(identity);
@@ -1095,14 +1230,16 @@
       await showMain();
 
     } catch (e) {
-      showErr(errEl, 'Import failed: ' + e.message);
       if (_wrongExportPass) {
         document.getElementById('import-export-passphrase').value = '';
         saveImportDraft();
       }
+      if (e.fieldId) showFieldError({ fieldId: e.fieldId, message: e.message });
+      else           showErr(errEl, 'Import failed: ' + e.message);
     } finally {
       btn.hidden = false;
       document.getElementById('import-spinner').hidden = true;
+      setStatus('import-status', '');
     }
   });
 
@@ -1158,78 +1295,90 @@
   // ─── Contact validation ───────────────────────────────────────────────────────
 
   // Validate age recipient (age1pq1… + ;mldsa87:...).
-  // Returns null on success, error string on failure.
+  // Returns null on success, { fieldId, message } on failure (fieldId = the
+  // public-key field the caller is validating).
   // Accepts only X25519+ML-KEM-768 hybrid keys.
   // Checks bech32 format, length bounds, and ML-DSA-87 suffix.
   // Structural validation only; no key agreement performed.
-  function validateRecipient(recipient) {
+  function validateRecipient(recipient, fieldId) {
+    const err = message => ({ fieldId, message });
     if (!recipient.startsWith('age1pq1'))
-      return 'Public key must start with "age1pq1…" (X25519+MLKEM768 hybrid key).';
+      return err('Public key must start with "age1pq1…" (X25519+MLKEM768 hybrid key).');
     if (recipient.startsWith('AGE-SECRET-KEY-'))
-      return 'That is a private key — paste their public key (age1pq1…) instead.';
+      return err('That is a private key — paste their public key (age1pq1…) instead.');
     if (!/;mldsa87:[A-Za-z0-9+/]+=*$/.test(recipient))
-      return 'Public key must be the full key including the ML-DSA-87 component (age1pq1…;mldsa87:…).';
+      return err('Public key must be the full key including the ML-DSA-87 component (age1pq1…;mldsa87:…).');
     // Validate the age1pq1 portion: bech32 charset including '1' (used as an
     // internal separator in the hybrid format), length ~1958 chars total.
     const agePart = recipient.split(';')[0];
     if (!/^age1pq1[ac-hj-np-z02-91]{50,1960}$/.test(agePart))
-      return 'age1pq1... key appears malformed — check that it was copied correctly.';
+      return err('age1pq1... key appears malformed — check that it was copied correctly.');
     return null;
   }
 
   // Validate a contact's fields for add/edit.
   // editingUUID: the UUID being edited (null for new contacts) — excluded from
   // duplicate checks so editing without changes doesn't falsely report a conflict.
-  function validateContactFields(channelId, username, recipient, editingUUID = null) {
-    if (!channelId || !username || !recipient)
-      return 'All fields are required.';
+  // ids: { channel, name, key } — the field ids of the screen being validated.
+  // Returns null, or { fieldId, message } naming the field at fault.
+  function validateContactFields(channelId, username, recipient, editingUUID, ids) {
+    const err = (fieldId, message) => ({ fieldId, message });
+    if (!channelId) return err(ids.channel, 'Channel ID is required.');
+    if (!username)  return err(ids.name,    'Name is required.');
+    if (!recipient) return err(ids.key,     'Public key is required.');
     if (!/^\d+$/.test(channelId))
-      return 'Channel ID must contain digits only.';
+      return err(ids.channel, 'Channel ID must contain digits only.');
     if (channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
-      return `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`;
+      return err(ids.channel, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`);
     if (username.length < MIN_USERNAME || username.length > MAX_USERNAME)
-      return `Contact name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`;
+      return err(ids.name, `Contact name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`);
     if (!isPrintableAscii(username))
-      return 'Contact name must contain printable ASCII characters only.';
+      return err(ids.name, 'Contact name must contain printable ASCII characters only.');
 
     for (const [uuid, c] of Object.entries(_contacts)) {
       if (uuid === editingUUID) continue; // skip the contact being edited
       if (c.channelId === channelId)
-        return 'A contact with this Channel ID already exists.';
+        return err(ids.channel, 'A contact with this Channel ID already exists.');
       if (c.username === username)
-        return `The name "${username}" is already used by another contact.`;
+        return err(ids.name, `The name "${username}" is already used by another contact.`);
       if (c.ageRecipient === recipient)
-        return 'This public key is already assigned to another contact.';
+        return err(ids.key, 'This public key is already assigned to another contact.');
     }
     return null;
   }
 
   // validateGroupFields: mirrors validateContactFields for group add/edit.
   // editingUUID: UUID being edited (null for new groups) — excluded from duplicate check.
-  function validateGroupFields(channelId, name, editingUUID = null) {
-    if (!channelId) return 'Channel ID is required.';
+  // ids: { channel, name } — field ids of the screen being validated.
+  // Returns null, or { fieldId, message }.
+  function validateGroupFields(channelId, name, editingUUID, ids) {
+    const err = (fieldId, message) => ({ fieldId, message });
+    if (!channelId) return err(ids.channel, 'Channel ID is required.');
     if (!/^\d+$/.test(channelId) || channelId.length < MIN_CHANNEL_ID || channelId.length > MAX_CHANNEL_ID)
-      return `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`;
+      return err(ids.channel, `Channel ID must be ${MIN_CHANNEL_ID}–${MAX_CHANNEL_ID} digits.`);
     if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
-      return `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`;
-    if (!isPrintableAscii(name)) return 'Name must contain printable ASCII characters only.';
+      return err(ids.name, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`);
+    if (!isPrintableAscii(name)) return err(ids.name, 'Name must contain printable ASCII characters only.');
     for (const [uuid, c] of Object.entries(_contacts)) {
       if (uuid === editingUUID) continue;
-      if (c.channelId === channelId) return 'A contact or group with this Channel ID already exists.';
+      if (c.channelId === channelId) return err(ids.channel, 'A contact or group with this Channel ID already exists.');
     }
     return null;
   }
 
   // validateServerFields: mirrors validateContactFields for server add/edit.
   // editingUUID: UUID being edited (null for new servers) — excluded from duplicate check.
-  function validateServerFields(serverId, name, editingUUID = null) {
-    if (!serverId || !/^\d{1,20}$/.test(serverId)) return 'Server ID must be 1–20 digits.';
+  // ids: { id, name } — field ids of the screen being validated.
+  // Returns null, or { fieldId, message }.
+  function validateServerFields(serverId, name, editingUUID, ids) {
+    const err = (fieldId, message) => ({ fieldId, message });
+    if (!serverId || !/^\d{1,20}$/.test(serverId)) return err(ids.id, 'Server ID must be 1–20 digits.');
     if (!name || name.length < MIN_USERNAME || name.length > MAX_USERNAME)
-      return `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`;
-    if (!isPrintableAscii(name)) return 'Name must contain printable ASCII characters only.';
+      return err(ids.name, `Name must be ${MIN_USERNAME}–${MAX_USERNAME} characters.`);
+    if (!isPrintableAscii(name)) return err(ids.name, 'Name must contain printable ASCII characters only.');
     for (const [uuid, c] of Object.entries(_contacts)) {
       if (uuid === editingUUID) continue;
-      if (c.type === 'server' && c.serverId === serverId) return 'A server with this Server ID already exists.';
+      if (c.type === 'server' && c.serverId === serverId) return err(ids.id, 'A server with this Server ID already exists.');
     }
     return null;
   }
@@ -1308,7 +1457,8 @@
     document.getElementById('add-fields-contact').hidden = false;
     document.getElementById('add-fields-group').hidden   = true;
     document.getElementById('add-fields-server').hidden  = true;
-    document.getElementById('add-contact-error').hidden  = true;
+    clearErr(document.getElementById('add-contact-error'));
+    clearFieldErrors(ADD_ENTRY_FIELDS);
     DRAFT_FIELDS.forEach(id => { document.getElementById(id).value = ''; });
     resetGroupForm('add');
     resetServerForm('add');
@@ -1326,7 +1476,8 @@
     document.getElementById('add-fields-contact').hidden = type !== 'contact';
     document.getElementById('add-fields-group').hidden   = type !== 'group';
     document.getElementById('add-fields-server').hidden  = type !== 'server';
-    document.getElementById('add-contact-error').hidden  = true;
+    clearErr(document.getElementById('add-contact-error'));
+    clearFieldErrors(ADD_ENTRY_FIELDS);
     if (type === 'contact') {
       const channelId = await inferDmChannelId();
       if (channelId) document.getElementById('contact-channel-id').value = channelId;
@@ -1387,17 +1538,18 @@
   document.getElementById('btn-save-contact').addEventListener('click', async () => {
     const type  = document.getElementById('add-type-select').value;
     const errEl = document.getElementById('add-contact-error');
-    errEl.hidden = true;
+    clearErr(errEl);
+    clearFieldErrors(ADD_ENTRY_FIELDS);
 
     if (type === 'contact') {
       const channelId = document.getElementById('contact-channel-id').value.trim();
       const username  = document.getElementById('contact-username').value.trim();
       const recipient = document.getElementById('contact-key').value.trim();
 
-      const fieldErr = validateContactFields(channelId, username, recipient, null);
-      if (fieldErr) { showErr(errEl, fieldErr); return; }
-      const recipErr = validateRecipient(recipient);
-      if (recipErr)  { showErr(errEl, recipErr); return; }
+      const fieldErr = validateContactFields(channelId, username, recipient, null, CONTACT_IDS_ADD);
+      if (fieldErr) { showFieldError(fieldErr); return; }
+      const recipErr = validateRecipient(recipient, CONTACT_IDS_ADD.key);
+      if (recipErr)  { showFieldError(recipErr); return; }
 
       const contactCount = Object.values(_contacts).filter(c => c.type === 'contact' || !c.type).length;
       if (contactCount >= MAX_CONTACTS) { showErr(errEl, `Contact limit reached (${MAX_CONTACTS} max).`); return; }
@@ -1409,9 +1561,14 @@
       const channelId = document.getElementById('group-channel-id').value.trim();
       const name      = document.getElementById('group-name').value.trim();
 
-      const groupErr = validateGroupFields(channelId, name, null);
-      if (groupErr) { showErr(errEl, groupErr); return; }
-      if (_groupAddMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+      const groupErr = validateGroupFields(channelId, name, null, GROUP_IDS_ADD);
+      if (groupErr) { showFieldError(groupErr); return; }
+      if (_groupAddMembers.length < 1) {
+        // No single input is at fault: form-level message, focus the picker button.
+        showErr(errEl, MEMBERS_REQUIRED_MSG);
+        document.getElementById('btn-group-pick-members').focus();
+        return;
+      }
 
       const uuid = crypto.randomUUID();
       _contacts[uuid] = { id: uuid, type: 'group', channelId, name, memberIds: _groupAddMembers, enabled: true };
@@ -1420,11 +1577,15 @@
       const serverId = document.getElementById('server-id-input').value.trim();
       const name     = document.getElementById('server-name').value.trim();
 
-      const serverErr = validateServerFields(serverId, name, null);
-      if (serverErr) { showErr(errEl, serverErr); return; }
+      const serverErr = validateServerFields(serverId, name, null, SERVER_IDS_ADD);
+      if (serverErr) { showFieldError(serverErr); return; }
       const serverCount = Object.values(_contacts).filter(c => c.type === 'server').length;
       if (serverCount >= MAX_SERVERS) { showErr(errEl, `Server limit reached (${MAX_SERVERS} max).`); return; }
-      if (_serverAddMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+      if (_serverAddMembers.length < 1) {
+        showErr(errEl, MEMBERS_REQUIRED_MSG);
+        document.getElementById('btn-server-pick-members').focus();
+        return;
+      }
 
       const uuid = crypto.randomUUID();
       _contacts[uuid] = { id: uuid, type: 'server', serverId, name, memberIds: _serverAddMembers, enabled: true };
@@ -1514,7 +1675,8 @@
     document.getElementById('edit-channel-id').value = c.channelId;
     document.getElementById('edit-username').value   = c.username;
     document.getElementById('edit-key').value        = c.ageRecipient;
-    document.getElementById('edit-contact-error').hidden = true;
+    clearErr(document.getElementById('edit-contact-error'));
+    clearFieldErrors(EDIT_CONTACT_FIELDS);
     _editingId = _selectedId;
     closeSheet();
     show('edit-contact');
@@ -1527,13 +1689,14 @@
     const username  = document.getElementById('edit-username').value.trim();
     const recipient = document.getElementById('edit-key').value.trim();
     const errEl     = document.getElementById('edit-contact-error');
-    errEl.hidden    = true;
+    clearErr(errEl);
+    clearFieldErrors(EDIT_CONTACT_FIELDS);
 
-    const fieldErr = validateContactFields(channelId, username, recipient, _editingId);
-    if (fieldErr) { showErr(errEl, fieldErr); return; }
+    const fieldErr = validateContactFields(channelId, username, recipient, _editingId, CONTACT_IDS_EDIT);
+    if (fieldErr) { showFieldError(fieldErr); return; }
 
-    const recipErr = validateRecipient(recipient);
-    if (recipErr)  { showErr(errEl, recipErr); return; }
+    const recipErr = validateRecipient(recipient, CONTACT_IDS_EDIT.key);
+    if (recipErr)  { showFieldError(recipErr); return; }
 
     if (_editingId && _contacts[_editingId]) {
       _contacts[_editingId] = {
@@ -1642,6 +1805,11 @@
   }
 
   function applyMemberSelection(mode, uuids) {
+    // The members error is resolved once at least one member is chosen. Compare
+    // the text so an unrelated form-level error (e.g. a limit) is left alone.
+    const slot = $(MEMBER_ERROR_SLOT[mode]);
+    if (uuids.length >= 1 && slot && slot.textContent === MEMBERS_REQUIRED_MSG) clearErr(slot);
+
     if (mode === 'add-group') {
       _groupAddMembers = uuids;
       renderMemberChips(
@@ -1692,7 +1860,8 @@
       document.getElementById('edit-group-name').value       = '';
       document.getElementById('edit-group-member-list').replaceChildren();
       document.getElementById('edit-group-member-count').textContent = `(0 / ${MAX_GROUP_MEMBERS})`;
-      document.getElementById('edit-group-error').hidden = true;
+      clearErr(document.getElementById('edit-group-error'));
+      clearFieldErrors(EDIT_GROUP_FIELDS);
     }
   }
 
@@ -1710,11 +1879,16 @@
     const channelId = document.getElementById('edit-group-channel-id').value.trim();
     const name      = document.getElementById('edit-group-name').value.trim();
     const errEl     = document.getElementById('edit-group-error');
-    errEl.hidden    = true;
+    clearErr(errEl);
+    clearFieldErrors(EDIT_GROUP_FIELDS);
 
-    const groupErr = validateGroupFields(channelId, name, _editingGroupId);
-    if (groupErr) { showErr(errEl, groupErr); return; }
-    if (_groupEditMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+    const groupErr = validateGroupFields(channelId, name, _editingGroupId, GROUP_IDS_EDIT);
+    if (groupErr) { showFieldError(groupErr); return; }
+    if (_groupEditMembers.length < 1) {
+      showErr(errEl, MEMBERS_REQUIRED_MSG);
+      document.getElementById('btn-edit-group-pick-members').focus();
+      return;
+    }
 
     if (_editingGroupId && _contacts[_editingGroupId]) {
       _contacts[_editingGroupId] = { ..._contacts[_editingGroupId], channelId, name, memberIds: _groupEditMembers };
@@ -1755,7 +1929,8 @@
     _groupEditMembers = [...(g.memberIds ?? [])];
     document.getElementById('edit-group-channel-id').value = g.channelId;
     document.getElementById('edit-group-name').value       = g.name;
-    document.getElementById('edit-group-error').hidden     = true;
+    clearErr(document.getElementById('edit-group-error'));
+    clearFieldErrors(EDIT_GROUP_FIELDS);
     renderMemberChips(
       document.getElementById('edit-group-member-list'),
       document.getElementById('edit-group-member-count'),
@@ -1793,7 +1968,8 @@
       document.getElementById('edit-server-name').value     = '';
       document.getElementById('edit-server-member-list').replaceChildren();
       document.getElementById('edit-server-member-count').textContent = '(0)';
-      document.getElementById('edit-server-error').hidden = true;
+      clearErr(document.getElementById('edit-server-error'));
+      clearFieldErrors(EDIT_SERVER_FIELDS);
     }
   }
 
@@ -1811,11 +1987,16 @@
     const serverId = document.getElementById('edit-server-id-input').value.trim();
     const name     = document.getElementById('edit-server-name').value.trim();
     const errEl    = document.getElementById('edit-server-error');
-    errEl.hidden   = true;
+    clearErr(errEl);
+    clearFieldErrors(EDIT_SERVER_FIELDS);
 
-    const serverErr = validateServerFields(serverId, name, _editingServerId);
-    if (serverErr) { showErr(errEl, serverErr); return; }
-    if (_serverEditMembers.length < 1) { showErr(errEl, 'Select at least 1 member.'); return; }
+    const serverErr = validateServerFields(serverId, name, _editingServerId, SERVER_IDS_EDIT);
+    if (serverErr) { showFieldError(serverErr); return; }
+    if (_serverEditMembers.length < 1) {
+      showErr(errEl, MEMBERS_REQUIRED_MSG);
+      document.getElementById('btn-edit-server-pick-members').focus();
+      return;
+    }
 
     if (_editingServerId && _contacts[_editingServerId]) {
       _contacts[_editingServerId] = { ..._contacts[_editingServerId], serverId, name, memberIds: _serverEditMembers };
@@ -1856,7 +2037,8 @@
     _serverEditMembers = [...(s.memberIds ?? [])];
     document.getElementById('edit-server-id-input').value = s.serverId;
     document.getElementById('edit-server-name').value     = s.name;
-    document.getElementById('edit-server-error').hidden   = true;
+    clearErr(document.getElementById('edit-server-error'));
+    clearFieldErrors(EDIT_SERVER_FIELDS);
     renderMemberChips(
       document.getElementById('edit-server-member-list'),
       document.getElementById('edit-server-member-count'),
@@ -2159,8 +2341,10 @@
     document.getElementById('export-passphrase-input').value  = '';
     document.getElementById('export-new-passphrase').value    = '';
     document.getElementById('export-new-passphrase2').value   = '';
-    document.getElementById('export-passphrase-error').hidden = true;
+    clearErr(document.getElementById('export-passphrase-error'));
+    clearFieldErrors(EXPORT_FIELDS);
     document.getElementById('export-spinner').hidden          = true;
+    setStatus('export-status', '');
     document.getElementById('btn-export-confirm').disabled    = false;
     document.getElementById('btn-export-confirm').textContent = 'Encrypt & show';
     closeDialog('modal-export-key');
@@ -2187,22 +2371,30 @@
     const btn         = document.getElementById('btn-export-confirm');
     const spinner     = document.getElementById('export-spinner');
 
-    errEl.hidden = true;
-    if (!unlockPass) { showErr(errEl, 'Enter your unlock passphrase.'); return; }
+    clearErr(errEl);
+    clearFieldErrors(EXPORT_FIELDS);
+    if (!unlockPass) {
+      showFieldError({ fieldId: 'export-passphrase-input', message: 'Enter your unlock passphrase.' });
+      return;
+    }
 
-    const exportPassErr = validatePassphrase(exportPass);
-    if (exportPassErr)              { showErr(errEl, 'Export passphrase: ' + exportPassErr); return; }
+    // The message is read as the description of the "Export passphrase" field,
+    // so it no longer needs an "Export passphrase:" prefix.
+    const exportPassErr = validatePassphrase(exportPass, 'export-new-passphrase');
+    if (exportPassErr)              { showFieldError(exportPassErr); return; }
     if (exportPass !== exportPass2) {
-      showErr(errEl, 'Export passphrases do not match.');
       document.getElementById('export-new-passphrase').value  = '';
       document.getElementById('export-new-passphrase2').value = '';
       saveExportDraft();
+      // Only the confirmation field is wrong.
+      showFieldError({ fieldId: 'export-new-passphrase2', message: 'Export passphrases do not match.' });
       return;
     }
 
     btn.disabled    = true;
     btn.textContent = 'Verifying…';
     spinner.hidden  = false;
+    setStatus('export-status', 'Encrypting... do not close this window.');
 
     try {
       const identity = await loadAndDecryptIdentity(unlockPass, 'Wrong unlock passphrase.');
@@ -2216,19 +2408,23 @@
       openDialog('modal-export-display');
 
     } catch (e) {
-      showErr(errEl, e.message === 'OUTDATED_FORMAT'
-        ? 'Your identity format is outdated. Please regenerate your key.'
-        : 'Export failed: ' + e.message
-      );
+      // Re-enable the controls before focusing a field below.
+      btn.disabled    = false;
+      btn.textContent = 'Encrypt & show';
+      spinner.hidden  = true;
+      setStatus('export-status', '');
       if (e.message === 'Wrong unlock passphrase.') {
         // Confirmed wrong — only this field is invalid, leave the export
         // passphrase pair (which the user may have gotten right) alone.
         document.getElementById('export-passphrase-input').value = '';
         saveExportDraft();
+        showFieldError({ fieldId: 'export-passphrase-input', message: e.message });
+      } else {
+        showErr(errEl, e.message === 'OUTDATED_FORMAT'
+          ? 'Your identity format is outdated. Please regenerate your key.'
+          : 'Export failed: ' + e.message
+        );
       }
-      btn.disabled    = false;
-      btn.textContent = 'Encrypt & show';
-      spinner.hidden  = true;
     }
   });
 
@@ -2258,7 +2454,8 @@
     await bgSend({ type: 'RELOAD_DISCORD_TABS' });
     document.getElementById('setup-passphrase').value  = '';
     document.getElementById('setup-passphrase2').value = '';
-    document.getElementById('setup-error').hidden      = true;
+    clearErr(document.getElementById('setup-error'));
+    clearFieldErrors(SETUP_FIELDS);
     show('setup');
   }
 
@@ -2288,8 +2485,10 @@
     document.getElementById('change-pass-current').value  = '';
     document.getElementById('change-pass-new').value      = '';
     document.getElementById('change-pass-new2').value     = '';
-    document.getElementById('change-pass-error').hidden   = true;
+    clearErr(document.getElementById('change-pass-error'));
+    clearFieldErrors(CHANGE_PASS_FIELDS);
     document.getElementById('change-pass-spinner').hidden = true;
+    setStatus('change-pass-status', '');
     const btn = document.getElementById('btn-change-pass-confirm');
     btn.disabled    = false;
     btn.textContent = 'Change passphrase';
@@ -2311,22 +2510,31 @@
     const errEl       = document.getElementById('change-pass-error');
     const btn         = document.getElementById('btn-change-pass-confirm');
     const spinner     = document.getElementById('change-pass-spinner');
-    errEl.hidden = true;
+    clearErr(errEl);
+    clearFieldErrors(CHANGE_PASS_FIELDS);
 
-    if (!currentPass) { showErr(errEl, 'Enter your current passphrase.'); return; }
-    const newPassErr = validatePassphrase(newPass);
-    if (newPassErr)              { showErr(errEl, newPassErr); return; }
-    if (newPass !== newPass2) {
-      showErr(errEl, 'New passphrases do not match.');
-      document.getElementById('change-pass-new').value  = '';
-      document.getElementById('change-pass-new2').value = '';
+    if (!currentPass) {
+      showFieldError({ fieldId: 'change-pass-current', message: 'Enter your current passphrase.' });
       return;
     }
-    if (newPass === currentPass) { showErr(errEl, 'New passphrase must differ from current.'); return; }
+    const newPassErr = validatePassphrase(newPass, 'change-pass-new');
+    if (newPassErr)              { showFieldError(newPassErr); return; }
+    if (newPass !== newPass2) {
+      document.getElementById('change-pass-new').value  = '';
+      document.getElementById('change-pass-new2').value = '';
+      // Only the confirmation field is wrong.
+      showFieldError({ fieldId: 'change-pass-new2', message: 'New passphrases do not match.' });
+      return;
+    }
+    if (newPass === currentPass) {
+      showFieldError({ fieldId: 'change-pass-new', message: 'New passphrase must differ from current.' });
+      return;
+    }
 
     btn.disabled    = true;
     btn.textContent = 'Verifying…';
     spinner.hidden  = false;
+    setStatus('change-pass-status', 'Re-encrypting... do not close this window.');
 
     try {
       const identity = await loadAndDecryptIdentity(currentPass, 'Wrong current passphrase.');
@@ -2350,16 +2558,20 @@
       setTimeout(() => { btn.textContent = origText; }, 1500);
 
     } catch (e) {
-      showErr(errEl, e.message === 'OUTDATED_FORMAT'
-        ? 'Your identity format is outdated. Please regenerate your key.'
-        : 'Change failed: ' + e.message
-      );
-      if (e.message === 'Wrong current passphrase.') {
-        document.getElementById('change-pass-current').value = '';
-      }
+      // Re-enable the controls before focusing a field below.
       btn.disabled    = false;
       btn.textContent = 'Change passphrase';
       spinner.hidden  = true;
+      setStatus('change-pass-status', '');
+      if (e.message === 'Wrong current passphrase.') {
+        document.getElementById('change-pass-current').value = '';
+        showFieldError({ fieldId: 'change-pass-current', message: e.message });
+      } else {
+        showErr(errEl, e.message === 'OUTDATED_FORMAT'
+          ? 'Your identity format is outdated. Please regenerate your key.'
+          : 'Change failed: ' + e.message
+        );
+      }
     }
   });
 
@@ -2378,33 +2590,6 @@
       throw new Error(wrongPassErr);
     }
   }
-
-  function showErr(el, msg) { el.textContent = msg; el.hidden = false; }
-
-  // Keeps aria-invalid on each field in step with its error message: any input
-  // whose aria-describedby names a visible .error-msg is invalid. Observing the
-  // `hidden` attribute covers every place an error is shown or cleared.
-  (() => {
-    const sync = (errEl) => {
-      if (!errEl.id) return;
-      const invalid = !errEl.hidden;
-      document.querySelectorAll('[aria-describedby]').forEach(field => {
-        if (!field.getAttribute('aria-describedby').split(/\s+/).includes(errEl.id)) return;
-        if (invalid) field.setAttribute('aria-invalid', 'true');
-        else if (![...document.querySelectorAll('.error-msg:not([hidden])')]
-          .some(other => field.getAttribute('aria-describedby').split(/\s+/).includes(other.id))) {
-          field.removeAttribute('aria-invalid');
-        }
-      });
-    };
-    const observer = new MutationObserver(records => {
-      for (const r of records) sync(r.target);
-    });
-    document.querySelectorAll('.error-msg').forEach(el => {
-      observer.observe(el, { attributes: true, attributeFilter: ['hidden'] });
-      sync(el);
-    });
-  })();
 
   // ─── Base64 helpers ───────────────────────────────────────────────────────────
   const toB64   = bytes => bytes.toBase64();
