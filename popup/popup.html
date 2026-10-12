@@ -24,9 +24,11 @@
     <form id="form-lock">
     <div class="form-group">
       <label for="passphrase-input">Passphrase</label>
-      <input id="passphrase-input" aria-describedby="unlock-error" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+      <input id="passphrase-input" aria-describedby="passphrase-input-error" aria-required="true" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+      <div id="passphrase-input-error" class="field-error"></div>
     </div>
-    <div id="unlock-error" class="error-msg" role="alert" hidden></div>
+    <div id="unlock-error" class="error-msg" role="alert"></div>
+    <div id="unlock-countdown" class="hint countdown" role="timer"></div>
 
     <button id="btn-unlock" type="submit" class="btn btn-primary btn-full">Unlock</button>
     <button id="btn-goto-setup" type="button" class="btn btn-text btn-full" hidden>Set up new keypair instead</button>
@@ -44,18 +46,22 @@
     <form id="form-setup">
     <div class="form-group">
       <label for="setup-passphrase">Passphrase</label>
-      <input id="setup-passphrase" aria-describedby="setup-error" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+      <input id="setup-passphrase" aria-describedby="setup-passphrase-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+      <div id="setup-passphrase-error" class="field-error"></div>
       <div id="strength-bar-wrap" aria-hidden="true"><div id="strength-bar"></div></div>
-      <span id="strength-label" class="hint" aria-live="polite"></span>
+      <span id="strength-label" class="hint" aria-hidden="true"></span>
+      <span id="strength-status" class="sr-only" role="status"></span>
     </div>
     <div class="form-group">
       <label for="setup-passphrase2">Confirm passphrase</label>
-      <input id="setup-passphrase2" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
+      <input id="setup-passphrase2" aria-describedby="setup-passphrase2-error" aria-required="true" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
+      <div id="setup-passphrase2-error" class="field-error"></div>
     </div>
-    <div id="setup-error" class="error-msg" role="alert" hidden></div>
+    <div id="setup-error" class="error-msg" role="alert"></div>
 
     <button id="btn-generate" type="submit" class="btn btn-primary btn-full">Generate keypair</button>
-    <div id="setup-spinner" class="spinner-wrap" role="status" hidden>
+    <div id="setup-status" class="sr-only" role="status"></div>
+    <div id="setup-spinner" class="spinner-wrap" hidden>
       <div class="spinner" aria-hidden="true"></div><span>Generating keypair... do not close this window.</span>
     </div>
 
@@ -76,23 +82,28 @@
     <form id="form-import">
     <div class="form-group">
       <label for="import-blob">Encrypted private key blob</label>
-      <textarea id="import-blob" class="mono" aria-describedby="import-error" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false"></textarea>
+      <textarea id="import-blob" class="mono" aria-describedby="import-blob-error" aria-required="true" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false"></textarea>
+      <div id="import-blob-error" class="field-error"></div>
     </div>
     <div class="form-group">
       <label for="import-export-passphrase">Export passphrase</label>
-      <input id="import-export-passphrase" type="password" placeholder="Type export passphrase" autocomplete="current-password">
+      <input id="import-export-passphrase" aria-describedby="import-export-passphrase-error" aria-required="true" type="password" placeholder="Type export passphrase" autocomplete="current-password">
+      <div id="import-export-passphrase-error" class="field-error"></div>
     </div>
     <div class="form-group">
       <label for="import-passphrase">New passphrase</label>
-      <input id="import-passphrase" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+      <input id="import-passphrase" aria-describedby="import-passphrase-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+      <div id="import-passphrase-error" class="field-error"></div>
     </div>
     <div class="form-group">
       <label for="import-passphrase2">Confirm new passphrase</label>
-      <input id="import-passphrase2" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
+      <input id="import-passphrase2" aria-describedby="import-passphrase2-error" aria-required="true" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
+      <div id="import-passphrase2-error" class="field-error"></div>
     </div>
-    <div id="import-error" class="error-msg" role="alert" hidden></div>
+    <div id="import-error" class="error-msg" role="alert"></div>
     <button id="btn-import" type="submit" class="btn btn-primary btn-full">Import &amp; unlock</button>
-    <div id="import-spinner" class="spinner-wrap" role="status" hidden>
+    <div id="import-status" class="sr-only" role="status"></div>
+    <div id="import-spinner" class="spinner-wrap" hidden>
       <div class="spinner" aria-hidden="true"></div><span>Importing... do not close this window.</span>
     </div>
     </form>
@@ -166,16 +177,19 @@
     <div id="add-fields-contact">
       <div class="form-group">
         <label for="contact-channel-id">Channel ID</label>
-        <input id="contact-channel-id" aria-describedby="hint-contact-channel add-contact-error" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <input id="contact-channel-id" aria-describedby="contact-channel-id-error hint-contact-channel" aria-required="true" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <div id="contact-channel-id-error" class="field-error"></div>
         <span class="hint" id="hint-contact-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
       </div>
       <div class="form-group">
         <label for="contact-username">Name</label>
-        <input id="contact-username" type="text" autocomplete="off" placeholder="e.g. George">
+        <input id="contact-username" aria-describedby="contact-username-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. George">
+        <div id="contact-username-error" class="field-error"></div>
       </div>
       <div class="form-group">
         <label for="contact-key">Public key</label>
-        <textarea id="contact-key" autocomplete="off" spellcheck="false" rows="4" placeholder="age1pq1...;mldsa87:..."></textarea>
+        <textarea id="contact-key" aria-describedby="contact-key-error" aria-required="true" autocomplete="off" spellcheck="false" rows="4" placeholder="age1pq1...;mldsa87:..."></textarea>
+        <div id="contact-key-error" class="field-error"></div>
       </div>
     </div>
 
@@ -183,12 +197,14 @@
     <div id="add-fields-group" hidden>
       <div class="form-group">
         <label for="group-channel-id">Channel ID</label>
-        <input id="group-channel-id" aria-describedby="hint-group-channel" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <input id="group-channel-id" aria-describedby="group-channel-id-error hint-group-channel" aria-required="true" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <div id="group-channel-id-error" class="field-error"></div>
         <span class="hint" id="hint-group-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
       </div>
       <div class="form-group">
         <label for="group-name">Name</label>
-        <input id="group-name" type="text" autocomplete="off" placeholder="e.g. My Group">
+        <input id="group-name" aria-describedby="group-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Group">
+        <div id="group-name-error" class="field-error"></div>
       </div>
       <div class="form-group">
         <span class="field-label">Members <span class="member-count" id="group-member-count">(0 / 10)</span></span>
@@ -201,12 +217,14 @@
     <div id="add-fields-server" hidden>
       <div class="form-group">
         <label for="server-id-input">Server ID</label>
-        <input id="server-id-input" aria-describedby="hint-server-id" type="text" placeholder="Paste server ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <input id="server-id-input" aria-describedby="server-id-input-error hint-server-id" aria-required="true" type="text" placeholder="Paste server ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+        <div id="server-id-input-error" class="field-error"></div>
         <span class="hint" id="hint-server-id">discord.com/channels/<strong>SERVER_ID</strong>/CHANNEL_ID</span>
       </div>
       <div class="form-group">
         <label for="server-name">Name</label>
-        <input id="server-name" type="text" autocomplete="off" placeholder="e.g. My Server">
+        <input id="server-name" aria-describedby="server-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Server">
+        <div id="server-name-error" class="field-error"></div>
       </div>
       <div class="form-group">
         <span class="field-label">Members <span class="member-count" id="server-member-count">(0)</span></span>
@@ -215,7 +233,7 @@
       </div>
     </div>
 
-    <div id="add-contact-error" class="error-msg" role="alert" hidden></div>
+    <div id="add-contact-error" class="error-msg" role="alert"></div>
     <button id="btn-save-contact" class="btn btn-primary btn-full" type="button">Save</button>
   </main>
 
@@ -228,18 +246,21 @@
 
     <div class="form-group">
       <label for="edit-channel-id">Channel ID</label>
-      <input id="edit-channel-id" aria-describedby="hint-edit-channel edit-contact-error" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <input id="edit-channel-id" aria-describedby="edit-channel-id-error hint-edit-channel" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <div id="edit-channel-id-error" class="field-error"></div>
       <span class="hint" id="hint-edit-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
     </div>
     <div class="form-group">
       <label for="edit-username">Contact name</label>
-      <input id="edit-username" type="text" autocomplete="off" placeholder="e.g. Alice">
+      <input id="edit-username" aria-describedby="edit-username-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. Alice">
+      <div id="edit-username-error" class="field-error"></div>
     </div>
     <div class="form-group">
       <label for="edit-key">Public key</label>
-      <textarea id="edit-key" autocomplete="off" spellcheck="false" rows="5" placeholder="age1pq1...;mldsa87:..."></textarea>
+      <textarea id="edit-key" aria-describedby="edit-key-error" aria-required="true" autocomplete="off" spellcheck="false" rows="5" placeholder="age1pq1...;mldsa87:..."></textarea>
+      <div id="edit-key-error" class="field-error"></div>
     </div>
-    <div id="edit-contact-error" class="error-msg" role="alert" hidden></div>
+    <div id="edit-contact-error" class="error-msg" role="alert"></div>
 
     <button id="btn-save-edit" class="btn btn-primary btn-full" type="button">Save changes</button>
   </main>
@@ -252,19 +273,21 @@
     </header>
     <div class="form-group">
       <label for="edit-group-channel-id">Channel ID</label>
-      <input id="edit-group-channel-id" aria-describedby="hint-edit-group-channel edit-group-error" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <input id="edit-group-channel-id" aria-describedby="edit-group-channel-id-error hint-edit-group-channel" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <div id="edit-group-channel-id-error" class="field-error"></div>
       <span class="hint" id="hint-edit-group-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
     </div>
     <div class="form-group">
       <label for="edit-group-name">Group name</label>
-      <input id="edit-group-name" type="text" autocomplete="off" placeholder="e.g. Team Alpha">
+      <input id="edit-group-name" aria-describedby="edit-group-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. Team Alpha">
+      <div id="edit-group-name-error" class="field-error"></div>
     </div>
     <div class="form-group">
       <span class="field-label">Members <span class="member-count" id="edit-group-member-count">(0 / 10)</span></span>
       <div id="edit-group-member-list" class="member-chip-list"></div>
       <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
     </div>
-    <div id="edit-group-error" class="error-msg" role="alert" hidden></div>
+    <div id="edit-group-error" class="error-msg" role="alert"></div>
     <button id="btn-save-edit-group" class="btn btn-primary btn-full" type="button">Save changes</button>
   </main>
 
@@ -276,19 +299,21 @@
     </header>
     <div class="form-group">
       <label for="edit-server-id-input">Server ID</label>
-      <input id="edit-server-id-input" aria-describedby="hint-edit-server-id edit-server-error" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <input id="edit-server-id-input" aria-describedby="edit-server-id-input-error hint-edit-server-id" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+      <div id="edit-server-id-input-error" class="field-error"></div>
       <span class="hint" id="hint-edit-server-id">https://discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
     </div>
     <div class="form-group">
       <label for="edit-server-name">Server name</label>
-      <input id="edit-server-name" type="text" autocomplete="off" placeholder="e.g. My Server">
+      <input id="edit-server-name" aria-describedby="edit-server-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Server">
+      <div id="edit-server-name-error" class="field-error"></div>
     </div>
     <div class="form-group">
       <span class="field-label">Members <span class="member-count" id="edit-server-member-count">(0)</span></span>
       <div id="edit-server-member-list" class="member-chip-list"></div>
       <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
     </div>
-    <div id="edit-server-error" class="error-msg" role="alert" hidden></div>
+    <div id="edit-server-error" class="error-msg" role="alert"></div>
     <button id="btn-save-edit-server" class="btn btn-primary btn-full" type="button">Save changes</button>
   </main>
 
@@ -458,18 +483,22 @@
     <form id="form-export">
     <div class="modal-field">
       <label for="export-passphrase-input" class="modal-label">Unlock passphrase</label>
-      <input id="export-passphrase-input" aria-describedby="export-passphrase-error" type="password" placeholder="Type unlock passphrase" autocomplete="current-password">
+      <input id="export-passphrase-input" aria-describedby="export-passphrase-input-error" aria-required="true" type="password" placeholder="Type unlock passphrase" autocomplete="current-password">
+      <div id="export-passphrase-input-error" class="field-error"></div>
     </div>
     <div class="modal-field">
       <label for="export-new-passphrase" class="modal-label">Export passphrase</label>
-      <input id="export-new-passphrase" type="password" placeholder="Type export passphrase" autocomplete="new-password">
+      <input id="export-new-passphrase" aria-describedby="export-new-passphrase-error" aria-required="true" type="password" placeholder="Type export passphrase" autocomplete="new-password">
+      <div id="export-new-passphrase-error" class="field-error"></div>
     </div>
     <div class="modal-field">
       <label for="export-new-passphrase2" class="modal-label">Confirm export passphrase</label>
-      <input id="export-new-passphrase2" type="password" placeholder="Repeat export passphrase" autocomplete="new-password">
+      <input id="export-new-passphrase2" aria-describedby="export-new-passphrase2-error" aria-required="true" type="password" placeholder="Repeat export passphrase" autocomplete="new-password">
+      <div id="export-new-passphrase2-error" class="field-error"></div>
     </div>
-    <div id="export-passphrase-error" class="error-msg" role="alert" hidden></div>
-    <div id="export-spinner" class="spinner-wrap" role="status" hidden>
+    <div id="export-passphrase-error" class="error-msg" role="alert"></div>
+    <div id="export-status" class="sr-only" role="status"></div>
+    <div id="export-spinner" class="spinner-wrap" hidden>
       <div class="spinner" aria-hidden="true"></div><span>Encrypting... do not close this window.</span>
     </div>
     <div class="modal-actions">
@@ -497,18 +526,22 @@
     <form id="form-change-pass">
     <div class="modal-field">
       <label for="change-pass-current" class="modal-label">Current passphrase</label>
-      <input id="change-pass-current" aria-describedby="change-pass-error" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+      <input id="change-pass-current" aria-describedby="change-pass-current-error" aria-required="true" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+      <div id="change-pass-current-error" class="field-error"></div>
     </div>
     <div class="modal-field">
       <label for="change-pass-new" class="modal-label">New passphrase</label>
-      <input id="change-pass-new" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+      <input id="change-pass-new" aria-describedby="change-pass-new-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+      <div id="change-pass-new-error" class="field-error"></div>
     </div>
     <div class="modal-field">
       <label for="change-pass-new2" class="modal-label">Confirm new passphrase</label>
-      <input id="change-pass-new2" type="password" placeholder="Repeat new passphrase" autocomplete="new-password">
+      <input id="change-pass-new2" aria-describedby="change-pass-new2-error" aria-required="true" type="password" placeholder="Repeat new passphrase" autocomplete="new-password">
+      <div id="change-pass-new2-error" class="field-error"></div>
     </div>
-    <div id="change-pass-error" class="error-msg" role="alert" hidden></div>
-    <div id="change-pass-spinner" class="spinner-wrap" role="status" hidden>
+    <div id="change-pass-error" class="error-msg" role="alert"></div>
+    <div id="change-pass-status" class="sr-only" role="status"></div>
+    <div id="change-pass-spinner" class="spinner-wrap" hidden>
       <div class="spinner" aria-hidden="true"></div><span>Re-encrypting... do not close this window.</span>
     </div>
     <div class="modal-actions">
