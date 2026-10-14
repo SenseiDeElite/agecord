@@ -6,9 +6,14 @@
 'use strict';
 
 const statusEl = document.getElementById('status');
+const sealEl   = document.getElementById('seal');
+
 function setStatus(msg, cls) {
   statusEl.textContent = msg;
-  statusEl.className = cls || '';
+  statusEl.className = cls ? `status ${cls}` : 'status';
+  sealEl.classList.toggle('is-lit',    cls === 'ok');
+  sealEl.classList.toggle('is-done',   cls === 'ok');
+  sealEl.classList.toggle('is-danger', cls === 'err');
 }
 document.getElementById('f').addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0];
@@ -24,12 +29,12 @@ document.getElementById('f').addEventListener('change', async (e) => {
       throw new Error('Not a valid contacts export.');
     }
     setStatus('Saving\u2026');
-    // Store tab ID so the popup can close this tab after the import modal is dismissed.
+    // Store tab ID so the popup can close this tab after the import result is dismissed.
     // getCurrent() returns undefined (not null) outside a tab context.
-    const tab   = await chrome.tabs.getCurrent();
+    const tab   = await browser.tabs.getCurrent();
     const tabId = tab?.id ?? null;
 
-    await chrome.storage.session.set({ pending_import: text, pending_import_tab: tabId });
+    await browser.storage.session.set({ pending_import: text, pending_import_tab: tabId });
 
     await browser.action.openPopup();
     setStatus('Done. The extension has reopened.', 'ok');
