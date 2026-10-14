@@ -4,600 +4,841 @@
 -->
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="popup">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
   <title>Agecord</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
 
-  <!-- ── SCREEN: LOCK ──────────────────────────────────────────────────── -->
-  <main id="screen-lock" class="screen" hidden>
-    <div class="screen-header">
-      <span class="lock-icon" aria-hidden="true">🔐</span>
-      <h1>Unlock extension</h1>
-      <p class="subtitle">Enter your passphrase to unlock encryption for this session.</p>
-    </div>
+  <svg width="0" height="0" class="sprite" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="seal-rim" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset=".45" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/>
+      </linearGradient>
+      <linearGradient id="seal-sheen" x1=".2" y1="0" x2=".7" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/>
+      </linearGradient>
 
-    <form id="form-lock">
-    <div class="form-group">
-      <label for="passphrase-input">Passphrase</label>
-      <input id="passphrase-input" aria-describedby="passphrase-input-error" aria-required="true" type="password" placeholder="Type current passphrase" autocomplete="current-password">
-      <div id="passphrase-input-error" class="field-error"></div>
-    </div>
-    <div id="unlock-error" class="error-msg" role="alert"></div>
-    <div id="unlock-countdown" class="hint countdown" role="timer"></div>
+      <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.75" y="10.5" width="14.5" height="10.25" rx="3.25" fill="currentColor" fill-opacity=".18"/>
+        <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>
+        <circle cx="12" cy="15.6" r="1.15" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="i-lock-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.75" y="10.5" width="14.5" height="10.25" rx="3.25" fill="currentColor" fill-opacity=".18"/>
+        <path d="M8 10.5V7.75a4 4 0 0 1 7.6-1.75"/>
+        <circle cx="12" cy="15.6" r="1.15" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="7.5" cy="12" r="4.5" fill="currentColor" fill-opacity=".18"/>
+        <circle cx="7.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>
+        <path d="M12 12h8.75M17.25 12v3.25M20.75 12v2.25"/>
+      </symbol>
+      <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" fill="currentColor" fill-opacity=".18"/>
+        <path d="M12 11v5.5"/>
+        <circle cx="12" cy="7.75" r="1.1" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round">
+        <path d="M12 6.5v7.25"/><circle cx="12" cy="17.75" r="1.2" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></symbol>
+      <symbol id="i-xmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"><path d="m7 7 10 10M17 7 7 17"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 12.75 4 4L18.25 8"/></symbol>
+      <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/><path class="tick" d="m7.75 12.5 3 3 5.5-6" fill="none" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="10.75" cy="10.75" r="6" fill="currentColor" fill-opacity=".14"/><path d="m15.4 15.4 4.1 4.1"/>
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="11" height="11" rx="3" fill="currentColor" fill-opacity=".18"/>
+        <path d="M15 9V7.5A2.5 2.5 0 0 0 12.5 5h-5A2.5 2.5 0 0 0 5 7.5v5A2.5 2.5 0 0 0 7.5 15H9"/>
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 4.5v10M8.25 10.75 12 14.5l3.75-3.75M5 14.5v2.25A2.75 2.75 0 0 0 7.75 19.5h8.5A2.75 2.75 0 0 0 19 16.75V14.5"/>
+      </symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 14.5V4.5M8.25 8.25 12 4.5l3.75 3.75M5 14.5v2.25A2.75 2.75 0 0 0 7.75 19.5h8.5A2.75 2.75 0 0 0 19 16.75V14.5"/>
+      </symbol>
+      <symbol id="i-group" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="9" cy="8.5" r="3.25" fill="currentColor" fill-opacity=".2"/>
+        <path d="M3.5 19c.5-3 2.8-4.6 5.5-4.6s5 1.6 5.5 4.6"/>
+        <circle cx="17" cy="9.5" r="2.5" fill="currentColor" fill-opacity=".2"/>
+        <path d="M16.2 14.5c2.6-.2 4.5 1.2 5 4"/>
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4.5" width="16" height="6.5" rx="2.25" fill="currentColor" fill-opacity=".2"/>
+        <rect x="4" y="13" width="16" height="6.5" rx="2.25" fill="currentColor" fill-opacity=".2"/>
+        <circle cx="8" cy="7.75" r=".95" fill="currentColor" stroke="none"/><circle cx="8" cy="16.25" r=".95" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.5 5.5H8A3.5 3.5 0 0 0 4.5 9v7A3.5 3.5 0 0 0 8 19.5h7a3.5 3.5 0 0 0 3.5-3.5v-2.5M14 4.5h5.5V10M19 5l-7.5 7.5"/>
+      </symbol>
+      <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M7.5 3.75h6L19 9.25V17.5a2.75 2.75 0 0 1-2.75 2.75h-8.5A2.75 2.75 0 0 1 5 17.5v-11A2.75 2.75 0 0 1 7.75 3.75z" fill="currentColor" fill-opacity=".18"/>
+        <path d="M13.5 4v4.25a1 1 0 0 0 1 1H19M8.75 13.25h6.5M8.75 16.5h4"/>
+      </symbol>
+      <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m8.75 7.5-4.5 4.5 4.5 4.5M15.25 7.5l4.5 4.5-4.5 4.5M13.25 5.5l-2.5 13"/></symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m4.75 19.25.8-3.9 9.6-9.6a2.15 2.15 0 0 1 3.05 3.05l-9.6 9.6z" fill="currentColor" fill-opacity=".18"/><path d="m13.75 7.25 3 3"/>
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6.5 7.5 7.3 18a2.25 2.25 0 0 0 2.25 2.1h4.9A2.25 2.25 0 0 0 16.7 18l.8-10.5z" fill="currentColor" fill-opacity=".18"/>
+        <path d="M4.75 7.5h14.5M9.5 7.5V5.75a1.25 1.25 0 0 1 1.25-1.25h2.5a1.25 1.25 0 0 1 1.25 1.25V7.5M10.25 11v5.25M13.75 11v5.25"/>
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19.25 12.5a7.25 7.25 0 1 1-2.2-5.2M19.5 4.5v4.25h-4.25"/></symbol>
+      <symbol id="i-tray" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m3.75 13.5 2.15-6.7A2.5 2.5 0 0 1 8.3 5h7.4a2.5 2.5 0 0 1 2.4 1.8l2.15 6.7V17a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 3.75 17z" fill="currentColor" fill-opacity=".16"/>
+        <path d="M3.75 13.5h4.5a3.75 3.75 0 0 0 7.5 0h4.5"/>
+      </symbol>
+    </defs>
+  </svg>
 
-    <button id="btn-unlock" type="submit" class="btn btn-primary btn-full">Unlock</button>
-    <button id="btn-goto-setup" type="button" class="btn btn-text btn-full" hidden>Set up new keypair instead</button>
-    </form>
-  </main>
+  <div class="app" id="app">
 
-  <!-- ── SCREEN: SETUP ─────────────────────────────────────────────────── -->
-  <main id="screen-setup" class="screen" hidden>
-    <div class="screen-header">
-      <span class="lock-icon" aria-hidden="true">🏛️</span>
-      <h1>Agecord</h1>
-      <p class="subtitle">One-time setup.</p>
-    </div>
-
-    <form id="form-setup">
-    <div class="form-group">
-      <label for="setup-passphrase">Passphrase</label>
-      <input id="setup-passphrase" aria-describedby="setup-passphrase-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
-      <div id="setup-passphrase-error" class="field-error"></div>
-      <div id="strength-bar-wrap" aria-hidden="true"><div id="strength-bar"></div></div>
-      <span id="strength-label" class="hint" aria-hidden="true"></span>
-      <span id="strength-status" class="sr-only" role="status"></span>
-    </div>
-    <div class="form-group">
-      <label for="setup-passphrase2">Confirm passphrase</label>
-      <input id="setup-passphrase2" aria-describedby="setup-passphrase2-error" aria-required="true" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
-      <div id="setup-passphrase2-error" class="field-error"></div>
-    </div>
-    <div id="setup-error" class="error-msg" role="alert"></div>
-
-    <button id="btn-generate" type="submit" class="btn btn-primary btn-full">Generate keypair</button>
-    <div id="setup-status" class="sr-only" role="status"></div>
-    <div id="setup-spinner" class="spinner-wrap" hidden>
-      <div class="spinner" aria-hidden="true"></div><span>Generating keypair... do not close this window.</span>
-    </div>
-
-    <button id="btn-show-import" type="button" class="btn btn-outlined btn-full">Import existing keypair</button>
-    </form>
-  </main>
-
-
-  <!-- ── SCREEN: IMPORT ────────────────────────────────────────────────── -->
-  <main id="screen-import" class="screen screen-form" hidden>
-    <header class="topbar">
-      <button id="btn-back-import" class="icon-btn" aria-label="Back" type="button">←</button>
-      <h1 class="topbar-title">Import keypair</h1>
-    </header>
-
-    <p class="hint screen-intro">Import an existing keypair, then choose a new passphrase to protect it on this device.</p>
-
-    <form id="form-import">
-    <div class="form-group">
-      <label for="import-blob">Encrypted private key blob</label>
-      <textarea id="import-blob" class="mono" aria-describedby="import-blob-error" aria-required="true" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false"></textarea>
-      <div id="import-blob-error" class="field-error"></div>
-    </div>
-    <div class="form-group">
-      <label for="import-export-passphrase">Export passphrase</label>
-      <input id="import-export-passphrase" aria-describedby="import-export-passphrase-error" aria-required="true" type="password" placeholder="Type export passphrase" autocomplete="current-password">
-      <div id="import-export-passphrase-error" class="field-error"></div>
-    </div>
-    <div class="form-group">
-      <label for="import-passphrase">New passphrase</label>
-      <input id="import-passphrase" aria-describedby="import-passphrase-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
-      <div id="import-passphrase-error" class="field-error"></div>
-    </div>
-    <div class="form-group">
-      <label for="import-passphrase2">Confirm new passphrase</label>
-      <input id="import-passphrase2" aria-describedby="import-passphrase2-error" aria-required="true" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
-      <div id="import-passphrase2-error" class="field-error"></div>
-    </div>
-    <div id="import-error" class="error-msg" role="alert"></div>
-    <button id="btn-import" type="submit" class="btn btn-primary btn-full">Import &amp; unlock</button>
-    <div id="import-status" class="sr-only" role="status"></div>
-    <div id="import-spinner" class="spinner-wrap" hidden>
-      <div class="spinner" aria-hidden="true"></div><span>Importing... do not close this window.</span>
-    </div>
-    </form>
-  </main>
-
-  <!-- ── SCREEN: MAIN ──────────────────────────────────────────────────── -->
-  <main id="screen-main" class="screen screen-main" hidden>
-    <div class="main-header">
-      <div class="main-header-glow"></div>
-      <div class="main-header-actions">
-        <button id="btn-my-key" class="icon-btn" title="My public key" aria-label="My public key" type="button">🔑</button>
-        <button id="btn-lock"   class="icon-btn" title="Lock session"  aria-label="Lock session" type="button">🔒</button>
-        <button id="btn-about"  class="icon-btn" title="About"         aria-label="About" type="button">ℹ️</button>
+    <main id="screen-lock" class="screen screen-center" hidden>
+      <div class="hero">
+        <span class="seal seal-xl" aria-hidden="true">
+          <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+          <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+          <svg class="ic glyph g-open"><use href="#i-lock-open"/></svg>
+        </span>
+        <h1>Unlock Agecord</h1>
+        <p>Enter your passphrase to unlock encryption for this session.</p>
       </div>
-      <div class="main-header-hero">
-        <span class="main-header-icon" aria-hidden="true">🏛️</span>
-        <h1 class="main-header-title">Agecord</h1>
+
+      <form id="form-lock">
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="passphrase-input">Passphrase</label>
+            <input id="passphrase-input" class="field-input" aria-describedby="passphrase-input-error" aria-required="true" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+            <div id="passphrase-input-error" class="field-error"></div>
+          </div>
+        </div>
+        <div id="unlock-error" class="form-error" role="alert"></div>
+        <div id="unlock-countdown" class="countdown" role="timer"></div>
+
+        <button id="btn-unlock" type="submit" class="btn btn-block">Unlock</button>
+        <div class="link-row">
+          <button id="btn-goto-setup" type="button" class="btn btn-text" hidden>Set up new keypair</button>
+          <button id="btn-forgot" type="button" class="btn btn-text is-quiet">Forgot passphrase?</button>
+        </div>
+      </form>
+    </main>
+
+    <main id="screen-setup" class="screen screen-center" hidden>
+      <div class="hero">
+        <span class="seal seal-lg" id="setup-seal" aria-hidden="true">
+          <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+          <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+          <svg class="ic glyph g-open"><use href="#i-lock-open"/></svg>
+        </span>
+        <h1>Create your keypair</h1>
+        <p>One-time setup. Your passphrase protects your keys on this device.</p>
       </div>
-      <div class="main-header-toggle-row">
-        <span class="main-header-toggle-label" id="global-toggle-label"><span aria-hidden="true">🛡️</span> Encryption &amp; Decryption</span>
-        <label class="switch">
-          <input id="global-toggle" type="checkbox" role="switch" aria-labelledby="global-toggle-label">
-          <span class="slider"></span>
-        </label>
+
+      <form id="form-setup">
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="setup-passphrase">Passphrase</label>
+            <input id="setup-passphrase" class="field-input" aria-describedby="setup-passphrase-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+            <div id="setup-passphrase-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="setup-passphrase2">Confirm passphrase</label>
+            <input id="setup-passphrase2" class="field-input" aria-describedby="setup-passphrase2-error" aria-required="true" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
+            <div id="setup-passphrase2-error" class="field-error"></div>
+          </div>
+        </div>
+        <div class="strength" id="strength-bar-wrap" aria-hidden="true"><div class="strength-fill" id="strength-bar"></div></div>
+        <span class="strength-label" id="strength-label" aria-hidden="true"></span>
+        <span id="strength-status" class="sr-only" role="status"></span>
+        <div id="setup-error" class="form-error" role="alert"></div>
+
+        <button id="btn-generate" type="submit" class="btn btn-block">Generate keypair</button>
+        <div id="setup-status" class="sr-only" role="status"></div>
+        <div id="setup-spinner" class="spinner-wrap" hidden>
+          <div class="spinner" aria-hidden="true"></div><span>Generating keypair... do not close this window.</span>
+        </div>
+        <button id="btn-show-import" type="button" class="btn btn-tonal btn-block">Import existing keypair</button>
+      </form>
+    </main>
+
+    <main id="screen-import" class="screen" hidden>
+      <header class="navbar">
+        <button id="btn-back-import" class="glass glass-btn" aria-label="Back" type="button"><svg class="ic" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <h1 class="nav-title">Import keypair</h1>
+        <span></span>
+      </header>
+
+      <form id="form-import">
+        <p class="note">Import an existing keypair, then choose a new passphrase to protect it on this device.</p>
+        <div class="sect">Private key</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="import-blob">Encrypted private key blob</label>
+            <textarea id="import-blob" class="field-input" aria-describedby="import-blob-error" aria-required="true" rows="4" placeholder="Paste private key" autocomplete="off" spellcheck="false"></textarea>
+            <div id="import-blob-error" class="field-error"></div>
+          </div>
+        </div>
+
+        <div class="sect">Passphrases</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="import-export-passphrase">Export passphrase</label>
+            <input id="import-export-passphrase" class="field-input" aria-describedby="import-export-passphrase-error" aria-required="true" type="password" placeholder="Type export passphrase" autocomplete="current-password">
+            <div id="import-export-passphrase-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="import-passphrase">New passphrase</label>
+            <input id="import-passphrase" class="field-input" aria-describedby="import-passphrase-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+            <div id="import-passphrase-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="import-passphrase2">Confirm new passphrase</label>
+            <input id="import-passphrase2" class="field-input" aria-describedby="import-passphrase2-error" aria-required="true" type="password" placeholder="Repeat passphrase" autocomplete="new-password">
+            <div id="import-passphrase2-error" class="field-error"></div>
+          </div>
+        </div>
+        <div id="import-error" class="form-error" role="alert"></div>
+
+        <button id="btn-import" type="submit" class="btn btn-block">Import &amp; unlock</button>
+        <div id="import-status" class="sr-only" role="status"></div>
+        <div id="import-spinner" class="spinner-wrap" hidden>
+          <div class="spinner" aria-hidden="true"></div><span>Importing... do not close this window.</span>
+        </div>
+      </form>
+    </main>
+
+    <main id="screen-main" class="screen screen-main" hidden>
+      <header class="navbar">
+        <button id="btn-lock" class="glass glass-btn" title="Lock session" aria-label="Lock session" type="button"><svg class="ic" aria-hidden="true"><use href="#i-lock"/></svg></button>
+        <span></span>
+        <div class="glass glass-group">
+          <button id="btn-my-key" class="glass-btn" title="My public key" aria-label="My public key" type="button"><svg class="ic" aria-hidden="true"><use href="#i-key"/></svg></button>
+          <button id="btn-about" class="glass-btn" title="About" aria-label="About" type="button"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg></button>
+        </div>
+        <span class="nav-mini" aria-hidden="true">Agecord</span>
+      </header>
+
+      <div class="main-scroll">
+        <h1 class="title-xl">Agecord</h1>
+
+        <section class="master">
+          <span class="seal" aria-hidden="true">
+            <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+            <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+            <svg class="ic glyph g-open"><use href="#i-lock-open"/></svg>
+          </span>
+          <span class="row-main">
+            <span class="master-title" id="global-toggle-label">Encryption</span>
+            <span class="master-sub" id="master-sub"></span>
+          </span>
+          <label class="switch">
+            <input id="global-toggle" type="checkbox" role="switch" aria-labelledby="global-toggle-label" aria-describedby="master-sub">
+            <span class="track"><span class="thumb"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span></span>
+          </label>
+        </section>
+
+        <div class="search">
+          <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="contacts-search" type="search" placeholder="Search" aria-label="Search contacts" autocomplete="off">
+        </div>
+
+        <div class="sect">
+          <span>Contacts</span>
+          <span class="sect-actions">
+            <button id="btn-export-contacts" class="icon-btn" title="Export contacts" aria-label="Export contacts" type="button"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg></button>
+            <button id="btn-import-contacts" class="icon-btn" title="Import contacts" aria-label="Import contacts" type="button"><svg class="ic" aria-hidden="true"><use href="#i-upload"/></svg></button>
+          </span>
+        </div>
+
+        <div id="contacts-list" class="tiles"></div>
+
+        <div id="no-contacts" class="empty" hidden>
+          <span class="seal seal-sm" aria-hidden="true">
+            <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+            <svg class="ic glyph g-closed"><use href="#i-tray"/></svg>
+          </span>
+          <strong id="no-contacts-title">No contacts yet</strong>
+          <span id="no-contacts-msg">Add a new entry to start encrypting.</span>
+        </div>
       </div>
-    </div>
 
-    <div class="section-label">
-      <span>Contacts</span>
-      <div class="section-label-actions">
-        <button id="btn-export-contacts" class="icon-btn icon-btn-sm" title="Export contacts" aria-label="Export contacts" type="button">⬇️</button>
-        <button id="btn-import-contacts" class="icon-btn icon-btn-sm" title="Import contacts" aria-label="Import contacts" type="button">⬆️</button>
+      <div class="dock" aria-hidden="true"></div>
+      <button id="btn-add-contact" class="btn fab" type="button"><svg class="ic" aria-hidden="true"><use href="#i-plus"/></svg>Add</button>
+    </main>
+
+    <main id="screen-add-contact" class="screen" hidden>
+      <header class="navbar">
+        <button id="btn-back-add" class="glass glass-btn" aria-label="Back" type="button"><svg class="ic" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <h1 class="nav-title">New entry</h1>
+        <button id="btn-save-contact" class="glass glass-pill" type="button">Save</button>
+      </header>
+
+      <div class="segmented" role="radiogroup" aria-label="Entry type" id="add-type">
+        <input type="radio" name="add-type" id="add-type-contact" value="contact" checked><label for="add-type-contact">Contact</label>
+        <input type="radio" name="add-type" id="add-type-group" value="group"><label for="add-type-group">Group</label>
+        <input type="radio" name="add-type" id="add-type-server" value="server"><label for="add-type-server">Server</label>
+        <span class="thumb" aria-hidden="true"></span>
       </div>
-    </div>
 
-    <input id="contacts-search" type="search" placeholder="Search..." aria-label="Search contacts" autocomplete="off">
-
-    <div id="contacts-list" class="contacts-list">
-      <div id="no-contacts" class="empty-state">No contacts yet.<br>Add one below.</div>
-    </div>
-
-    <button id="btn-add-contact" class="fab" type="button">+ Add</button>
-  </main>
-
-  <!-- ── MODAL: IMPORT CONTACTS RESULT ─────────────────────────────────── -->
-  <dialog id="modal-import-contacts" class="modal" closedby="any" aria-labelledby="modal-import-contacts-title" data-cancel="btn-import-contacts-ok">
-    <h2 id="modal-import-contacts-title">Import contacts</h2>
-    <p id="modal-import-contacts-msg"></p>
-    <div class="modal-actions">
-      <button id="btn-import-contacts-ok" class="btn btn-primary" type="button">OK</button>
-    </div>
-  </dialog>
-
-  <!-- ── SCREEN: ADD ENTRY ─────────────────────────────────────────────── -->
-  <main id="screen-add-contact" class="screen screen-form" hidden>
-    <header class="topbar">
-      <button id="btn-back-add" class="icon-btn" aria-label="Back" type="button">←</button>
-      <h1 class="topbar-title">Add</h1>
-    </header>
-
-    <div class="form-group">
-      <label for="add-type-select">Type</label>
-      <select id="add-type-select" class="md-select">
-        <option value="contact">Contact</option>
-        <option value="group">Group</option>
-        <option value="server">Server</option>
-      </select>
-    </div>
-
-    <!-- Contact fields -->
-    <div id="add-fields-contact">
-      <div class="form-group">
-        <label for="contact-channel-id">Channel ID</label>
-        <input id="contact-channel-id" aria-describedby="contact-channel-id-error hint-contact-channel" aria-required="true" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
-        <div id="contact-channel-id-error" class="field-error"></div>
-        <span class="hint" id="hint-contact-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+      <div id="add-fields-contact">
+        <div class="sect">Details</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="contact-channel-id">Channel ID</label>
+            <input id="contact-channel-id" class="field-input mono" aria-describedby="contact-channel-id-error hint-contact-channel" aria-required="true" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+            <div id="contact-channel-id-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="contact-username">Name</label>
+            <input id="contact-username" class="field-input" aria-describedby="contact-username-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. George">
+            <div id="contact-username-error" class="field-error"></div>
+          </div>
+        </div>
+        <div class="foot" id="hint-contact-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></div>
+        <div class="sect">Recipient</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="contact-key">Public key</label>
+            <textarea id="contact-key" class="field-input" aria-describedby="contact-key-error" aria-required="true" autocomplete="off" spellcheck="false" rows="4" placeholder="age1pq1...;mldsa87:..."></textarea>
+            <div id="contact-key-error" class="field-error"></div>
+          </div>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="contact-username">Name</label>
-        <input id="contact-username" aria-describedby="contact-username-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. George">
-        <div id="contact-username-error" class="field-error"></div>
+
+      <div id="add-fields-group" hidden>
+        <div class="sect">Details</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="group-channel-id">Channel ID</label>
+            <input id="group-channel-id" class="field-input mono" aria-describedby="group-channel-id-error hint-group-channel" aria-required="true" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+            <div id="group-channel-id-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="group-name">Name</label>
+            <input id="group-name" class="field-input" aria-describedby="group-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Group">
+            <div id="group-name-error" class="field-error"></div>
+          </div>
+        </div>
+        <div class="foot" id="hint-group-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></div>
+        <div class="sect">Members</div>
+        <div class="tiles">
+          <button id="btn-group-pick-members" class="row" type="button">
+            <span class="row-main"><span class="row-title">Select members</span></span>
+            <span class="row-end" id="group-member-count">0 / 10</span>
+          </button>
+        </div>
+        <div id="group-member-list" class="chips"></div>
       </div>
-      <div class="form-group">
-        <label for="contact-key">Public key</label>
-        <textarea id="contact-key" aria-describedby="contact-key-error" aria-required="true" autocomplete="off" spellcheck="false" rows="4" placeholder="age1pq1...;mldsa87:..."></textarea>
-        <div id="contact-key-error" class="field-error"></div>
+
+      <div id="add-fields-server" hidden>
+        <div class="sect">Details</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="server-id-input">Server ID</label>
+            <input id="server-id-input" class="field-input mono" aria-describedby="server-id-input-error hint-server-id" aria-required="true" type="text" placeholder="Paste server ID" inputmode="numeric" autocomplete="off" spellcheck="false">
+            <div id="server-id-input-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="server-name">Name</label>
+            <input id="server-name" class="field-input" aria-describedby="server-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Server">
+            <div id="server-name-error" class="field-error"></div>
+          </div>
+        </div>
+        <div class="foot" id="hint-server-id">discord.com/channels/<strong>SERVER_ID</strong>/CHANNEL_ID</div>
+        <div class="sect">Members</div>
+        <div class="tiles">
+          <button id="btn-server-pick-members" class="row" type="button">
+            <span class="row-main"><span class="row-title">Select members</span></span>
+            <span class="row-end" id="server-member-count">0</span>
+          </button>
+        </div>
+        <div id="server-member-list" class="chips"></div>
       </div>
-    </div>
 
-    <!-- Group fields -->
-    <div id="add-fields-group" hidden>
-      <div class="form-group">
-        <label for="group-channel-id">Channel ID</label>
-        <input id="group-channel-id" aria-describedby="group-channel-id-error hint-group-channel" aria-required="true" type="text" placeholder="Paste channel ID" inputmode="numeric" autocomplete="off" spellcheck="false">
-        <div id="group-channel-id-error" class="field-error"></div>
-        <span class="hint" id="hint-group-channel">discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
+      <div id="add-contact-error" class="form-error" role="alert"></div>
+    </main>
+
+    <main id="screen-edit-contact" class="screen" hidden>
+      <header class="navbar">
+        <button id="btn-back-edit" class="glass glass-btn" aria-label="Back" type="button"><svg class="ic" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <h1 class="nav-title">Edit contact</h1>
+        <button id="btn-save-edit" class="glass glass-pill" type="button">Save</button>
+      </header>
+
+      <div class="sect">Details</div>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="edit-channel-id">Channel ID</label>
+          <input id="edit-channel-id" class="field-input mono" aria-describedby="edit-channel-id-error hint-edit-channel" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+          <div id="edit-channel-id-error" class="field-error"></div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="edit-username">Contact name</label>
+          <input id="edit-username" class="field-input" aria-describedby="edit-username-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. Alice">
+          <div id="edit-username-error" class="field-error"></div>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="group-name">Name</label>
-        <input id="group-name" aria-describedby="group-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Group">
-        <div id="group-name-error" class="field-error"></div>
+      <div class="foot" id="hint-edit-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></div>
+
+      <div class="sect">Recipient</div>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="edit-key">Public key</label>
+          <textarea id="edit-key" class="field-input" aria-describedby="edit-key-error" aria-required="true" autocomplete="off" spellcheck="false" rows="5" placeholder="age1pq1...;mldsa87:..."></textarea>
+          <div id="edit-key-error" class="field-error"></div>
+        </div>
       </div>
-      <div class="form-group">
-        <span class="field-label">Members <span class="member-count" id="group-member-count">(0 / 10)</span></span>
-        <div id="group-member-list" class="member-chip-list"></div>
-        <button id="btn-group-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
+      <div id="edit-contact-error" class="form-error" role="alert"></div>
+    </main>
+
+    <main id="screen-edit-group" class="screen" hidden>
+      <header class="navbar">
+        <button id="btn-back-edit-group" class="glass glass-btn" aria-label="Back" type="button"><svg class="ic" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <h1 class="nav-title">Edit group</h1>
+        <button id="btn-save-edit-group" class="glass glass-pill" type="button">Save</button>
+      </header>
+
+      <div class="sect">Details</div>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="edit-group-channel-id">Channel ID</label>
+          <input id="edit-group-channel-id" class="field-input mono" aria-describedby="edit-group-channel-id-error hint-edit-group-channel" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+          <div id="edit-group-channel-id-error" class="field-error"></div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="edit-group-name">Group name</label>
+          <input id="edit-group-name" class="field-input" aria-describedby="edit-group-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. Team Alpha">
+          <div id="edit-group-name-error" class="field-error"></div>
+        </div>
       </div>
-    </div>
+      <div class="foot" id="hint-edit-group-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></div>
 
-    <!-- Server fields -->
-    <div id="add-fields-server" hidden>
-      <div class="form-group">
-        <label for="server-id-input">Server ID</label>
-        <input id="server-id-input" aria-describedby="server-id-input-error hint-server-id" aria-required="true" type="text" placeholder="Paste server ID" inputmode="numeric" autocomplete="off" spellcheck="false">
-        <div id="server-id-input-error" class="field-error"></div>
-        <span class="hint" id="hint-server-id">discord.com/channels/<strong>SERVER_ID</strong>/CHANNEL_ID</span>
-      </div>
-      <div class="form-group">
-        <label for="server-name">Name</label>
-        <input id="server-name" aria-describedby="server-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Server">
-        <div id="server-name-error" class="field-error"></div>
-      </div>
-      <div class="form-group">
-        <span class="field-label">Members <span class="member-count" id="server-member-count">(0)</span></span>
-        <div id="server-member-list" class="member-chip-list"></div>
-        <button id="btn-server-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
-      </div>
-    </div>
-
-    <div id="add-contact-error" class="error-msg" role="alert"></div>
-    <button id="btn-save-contact" class="btn btn-primary btn-full" type="button">Save</button>
-  </main>
-
-  <!-- ── SCREEN: EDIT CONTACT ──────────────────────────────────────────── -->
-  <main id="screen-edit-contact" class="screen screen-form" hidden>
-    <header class="topbar">
-      <button id="btn-back-edit" class="icon-btn" aria-label="Back" type="button">←</button>
-      <h1 class="topbar-title">Edit Contact</h1>
-    </header>
-
-    <div class="form-group">
-      <label for="edit-channel-id">Channel ID</label>
-      <input id="edit-channel-id" aria-describedby="edit-channel-id-error hint-edit-channel" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
-      <div id="edit-channel-id-error" class="field-error"></div>
-      <span class="hint" id="hint-edit-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
-    </div>
-    <div class="form-group">
-      <label for="edit-username">Contact name</label>
-      <input id="edit-username" aria-describedby="edit-username-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. Alice">
-      <div id="edit-username-error" class="field-error"></div>
-    </div>
-    <div class="form-group">
-      <label for="edit-key">Public key</label>
-      <textarea id="edit-key" aria-describedby="edit-key-error" aria-required="true" autocomplete="off" spellcheck="false" rows="5" placeholder="age1pq1...;mldsa87:..."></textarea>
-      <div id="edit-key-error" class="field-error"></div>
-    </div>
-    <div id="edit-contact-error" class="error-msg" role="alert"></div>
-
-    <button id="btn-save-edit" class="btn btn-primary btn-full" type="button">Save changes</button>
-  </main>
-
-  <!-- ── SCREEN: EDIT GROUP ────────────────────────────────────────────── -->
-  <main id="screen-edit-group" class="screen screen-form" hidden>
-    <header class="topbar">
-      <button id="btn-back-edit-group" class="icon-btn" aria-label="Back" type="button">←</button>
-      <h1 class="topbar-title">Edit group</h1>
-    </header>
-    <div class="form-group">
-      <label for="edit-group-channel-id">Channel ID</label>
-      <input id="edit-group-channel-id" aria-describedby="edit-group-channel-id-error hint-edit-group-channel" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
-      <div id="edit-group-channel-id-error" class="field-error"></div>
-      <span class="hint" id="hint-edit-group-channel">https://discord.com/channels/@me/<strong>CHANNEL_ID</strong></span>
-    </div>
-    <div class="form-group">
-      <label for="edit-group-name">Group name</label>
-      <input id="edit-group-name" aria-describedby="edit-group-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. Team Alpha">
-      <div id="edit-group-name-error" class="field-error"></div>
-    </div>
-    <div class="form-group">
-      <span class="field-label">Members <span class="member-count" id="edit-group-member-count">(0 / 10)</span></span>
-      <div id="edit-group-member-list" class="member-chip-list"></div>
-      <button id="btn-edit-group-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
-    </div>
-    <div id="edit-group-error" class="error-msg" role="alert"></div>
-    <button id="btn-save-edit-group" class="btn btn-primary btn-full" type="button">Save changes</button>
-  </main>
-
-  <!-- ── SCREEN: EDIT SERVER ───────────────────────────────────────────── -->
-  <main id="screen-edit-server" class="screen screen-form" hidden>
-    <header class="topbar">
-      <button id="btn-back-edit-server" class="icon-btn" aria-label="Back" type="button">←</button>
-      <h1 class="topbar-title">Edit server</h1>
-    </header>
-    <div class="form-group">
-      <label for="edit-server-id-input">Server ID</label>
-      <input id="edit-server-id-input" aria-describedby="edit-server-id-input-error hint-edit-server-id" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
-      <div id="edit-server-id-input-error" class="field-error"></div>
-      <span class="hint" id="hint-edit-server-id">https://discord.com/channels/<strong>SERVER_ID</strong>/channel</span>
-    </div>
-    <div class="form-group">
-      <label for="edit-server-name">Server name</label>
-      <input id="edit-server-name" aria-describedby="edit-server-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Server">
-      <div id="edit-server-name-error" class="field-error"></div>
-    </div>
-    <div class="form-group">
-      <span class="field-label">Members <span class="member-count" id="edit-server-member-count">(0)</span></span>
-      <div id="edit-server-member-list" class="member-chip-list"></div>
-      <button id="btn-edit-server-pick-members" class="btn btn-outlined btn-full" type="button">Select members...</button>
-    </div>
-    <div id="edit-server-error" class="error-msg" role="alert"></div>
-    <button id="btn-save-edit-server" class="btn btn-primary btn-full" type="button">Save changes</button>
-  </main>
-
-  <!-- ── SHEET: MEMBER PICKER ──────────────────────────────────────────── -->
-  <dialog id="sheet-member-picker" class="bottom-sheet bottom-sheet-tall" closedby="any" aria-labelledby="member-picker-title">
-    <div class="sheet-handle"></div>
-    <div class="sheet-title" id="member-picker-title">Select members</div>
-    <input id="member-picker-search" type="search" placeholder="Search contacts..." aria-label="Search contacts">
-    <div id="member-picker-list"></div>
-    <div class="sheet-footer">
-      <button id="btn-member-picker-done" class="btn btn-primary btn-full" type="button">Done</button>
-    </div>
-  </dialog>
-
-  <!-- ── SHEET: GROUP DETAIL ───────────────────────────────────────────── -->
-  <dialog id="sheet-group" class="bottom-sheet" closedby="any" aria-labelledby="sheet-group-name" data-cancel="btn-close-group-sheet">
-    <div class="sheet-handle"></div>
-    <div class="sheet-title" id="sheet-group-name"></div>
-    <div class="sheet-fp-label">Channel ID</div>
-    <div class="sheet-fingerprint mono" id="sheet-group-channel"></div>
-    <div class="sheet-row">
-      <span id="sheet-group-toggle-label">Encrypt in this group</span>
-      <label class="switch">
-        <input id="sheet-group-toggle" type="checkbox" role="switch" aria-labelledby="sheet-group-toggle-label">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <button id="btn-edit-group"   class="btn btn-primary btn-full" type="button">Edit group</button>
-    <button id="btn-delete-group" class="btn btn-outlined-error btn-full" type="button">Delete group</button>
-    <button id="btn-close-group-sheet" class="btn btn-text btn-full" type="button">Close</button>
-  </dialog>
-
-  <!-- ── SHEET: SERVER DETAIL ──────────────────────────────────────────── -->
-  <dialog id="sheet-server" class="bottom-sheet" closedby="any" aria-labelledby="sheet-server-name" data-cancel="btn-close-server-sheet">
-    <div class="sheet-handle"></div>
-    <div class="sheet-title" id="sheet-server-name"></div>
-    <div class="sheet-fp-label">Server ID</div>
-    <div class="sheet-fingerprint mono" id="sheet-server-id-display"></div>
-    <div class="sheet-row">
-      <span id="sheet-server-toggle-label">Encrypt in this server</span>
-      <label class="switch">
-        <input id="sheet-server-toggle" type="checkbox" role="switch" aria-labelledby="sheet-server-toggle-label">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <button id="btn-edit-server"   class="btn btn-primary btn-full" type="button">Edit server</button>
-    <button id="btn-delete-server" class="btn btn-outlined-error btn-full" type="button">Delete server</button>
-    <button id="btn-close-server-sheet" class="btn btn-text btn-full" type="button">Close</button>
-  </dialog>
-  <main id="screen-my-key" class="screen screen-form" hidden>
-    <header class="topbar">
-      <button id="btn-back-key" class="icon-btn" aria-label="Back" type="button">←</button>
-      <h1 class="topbar-title">My public key</h1>
-    </header>
-
-    <p class="hint screen-intro screen-intro-lg">Share this with contacts so they can encrypt messages to you.</p>
-    <div class="my-key-card">
-      <div class="my-key-card-toprow">
-        <span class="key-box-label">Public key</span>
-        <button id="btn-copy-key" class="key-copy-btn" title="Copy to clipboard" aria-label="Copy public key" type="button">
-          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          <span id="btn-copy-key-label">Copy</span>
+      <div class="sect">Members</div>
+      <div class="tiles">
+        <button id="btn-edit-group-pick-members" class="row" type="button">
+          <span class="row-main"><span class="row-title">Select members</span></span>
+          <span class="row-end" id="edit-group-member-count">0 / 10</span>
         </button>
       </div>
-      <div class="my-key-card-text" id="my-key-box"></div>
-    </div>
+      <div id="edit-group-member-list" class="chips"></div>
+      <div id="edit-group-error" class="form-error" role="alert"></div>
+    </main>
 
-    <hr class="divider">
-    <div class="sheet-fp-label fp-centered">SHAKE256 Fingerprint</div>
-    <div class="sheet-fingerprint fp-centered" id="my-key-fp">Computing fingerprint...</div>
+    <main id="screen-edit-server" class="screen" hidden>
+      <header class="navbar">
+        <button id="btn-back-edit-server" class="glass glass-btn" aria-label="Back" type="button"><svg class="ic" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <h1 class="nav-title">Edit server</h1>
+        <button id="btn-save-edit-server" class="glass glass-pill" type="button">Save</button>
+      </header>
 
-    <div class="danger-zone">
-      <h2 class="section-label section-label-danger">Advanced</h2>
-      <button id="btn-change-passphrase" class="btn btn-outlined-error btn-full" type="button">Change passphrase</button>
-      <button id="btn-export-key"        class="btn btn-outlined-error btn-full" type="button">Export private key</button>
-      <button id="btn-regen"             class="btn btn-outlined-error btn-full" type="button">Regenerate keypair</button>
-      <button id="btn-clear-data"        class="btn btn-outlined-error btn-full" type="button">Clear storage</button>
-    </div>
-  </main>
-
-
-  <!-- ── SCREEN: ABOUT ────────────────────────────────────────────────── -->
-  <main id="screen-about" class="screen" hidden>
-    <header class="topbar">
-      <button id="btn-back-about" class="icon-btn" aria-label="Back" type="button">←</button>
-      <h1 class="topbar-title">About</h1>
-    </header>
-
-    <div class="about-body">
-
-      <div class="about-hero">
-        <span class="about-hero-icon" aria-hidden="true">🏛️</span>
-        <span class="about-hero-name">Agecord</span>
-        <span class="about-hero-ver" id="about-version"></span>
-      </div>
-
-      <div>
-        <div class="about-section-title">Source code</div>
-        <div class="about-card">
-          <button class="about-row" id="about-repo-link" type="button">
-            <span class="about-row-icon" aria-hidden="true">{ }</span>
-            <span class="about-row-text">
-              <span class="about-row-label">senseideelite/agecord</span>
-            </span>
-            <span class="about-row-badge" aria-hidden="true">↗</span>
-          </button>
+      <div class="sect">Details</div>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="edit-server-id-input">Server ID</label>
+          <input id="edit-server-id-input" class="field-input mono" aria-describedby="edit-server-id-input-error hint-edit-server-id" aria-required="true" type="text" placeholder="Numbers only" inputmode="numeric" autocomplete="off" spellcheck="false">
+          <div id="edit-server-id-input-error" class="field-error"></div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="edit-server-name">Server name</label>
+          <input id="edit-server-name" class="field-input" aria-describedby="edit-server-name-error" aria-required="true" type="text" autocomplete="off" placeholder="e.g. My Server">
+          <div id="edit-server-name-error" class="field-error"></div>
         </div>
       </div>
+      <div class="foot" id="hint-edit-server-id">https://discord.com/channels/<strong>SERVER_ID</strong>/channel</div>
 
-      <div>
-        <div class="about-section-title">License</div>
-        <div class="about-card">
-          <button class="about-row" id="about-license-link" type="button">
-            <span class="about-row-icon" aria-hidden="true">📄</span>
-            <span class="about-row-text">
-              <span class="about-row-label">GNU General Public License v3.0</span>
-              <span class="about-row-sub">No warranty or liability.</span>
-            </span>
-            <span class="about-row-badge" aria-hidden="true">↗</span>
-          </button>
+      <div class="sect">Members</div>
+      <div class="tiles">
+        <button id="btn-edit-server-pick-members" class="row" type="button">
+          <span class="row-main"><span class="row-title">Select members</span></span>
+          <span class="row-end" id="edit-server-member-count">0</span>
+        </button>
+      </div>
+      <div id="edit-server-member-list" class="chips"></div>
+      <div id="edit-server-error" class="form-error" role="alert"></div>
+    </main>
+
+    <main id="screen-my-key" class="screen" hidden>
+      <header class="navbar">
+        <button id="btn-back-key" class="glass glass-btn" aria-label="Back" type="button"><svg class="ic" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <h1 class="nav-title">My public key</h1>
+        <span></span>
+      </header>
+
+      <div class="sect">Public key</div>
+      <div class="tiles">
+        <div class="key-card">
+          <div class="key-top">
+            <span>Share with contacts</span>
+            <button id="btn-copy-key" class="chip-btn is-accent" title="Copy to clipboard" aria-label="Copy public key" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg><span id="btn-copy-key-label">Copy</span></button>
+          </div>
+          <div class="key-text" id="my-key-box"></div>
         </div>
       </div>
+      <div class="foot">Share this with contacts so they can encrypt messages to you.</div>
 
-      <div>
-        <div class="about-section-title">Notices</div>
-        <div class="about-card">
-          <button class="about-row" id="about-notices-link" type="button">
-            <span class="about-row-icon" aria-hidden="true">📜</span>
-            <span class="about-row-text">
-              <span class="about-row-label">Third-Party Notices</span>
-              <span class="about-row-sub">typage, RustCrypto and others</span>
-            </span>
-            <span class="about-row-badge" aria-hidden="true">↗</span>
-          </button>
-        </div>
+      <div class="sect">SHAKE256 fingerprint</div>
+      <div class="tiles"><div class="fp" id="my-key-fp">Computing fingerprint...</div></div>
+
+      <h2 class="sect">Advanced</h2>
+      <div class="tiles">
+        <button id="btn-change-passphrase" class="row" type="button">
+          <span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-key"/></svg></span>
+          <span class="row-main"><span class="row-title">Change passphrase</span></span>
+        </button>
+        <button id="btn-export-key" class="row" type="button">
+          <span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-download"/></svg></span>
+          <span class="row-main"><span class="row-title">Export private key</span></span>
+        </button>
+        <button id="btn-regen" class="row is-danger" type="button">
+          <span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-refresh"/></svg></span>
+          <span class="row-main"><span class="row-title">Regenerate keypair</span></span>
+        </button>
+        <button id="btn-clear-data" class="row is-danger" type="button">
+          <span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-trash"/></svg></span>
+          <span class="row-main"><span class="row-title">Clear storage</span></span>
+        </button>
+      </div>
+    </main>
+
+    <main id="screen-about" class="screen" hidden>
+      <header class="navbar">
+        <button id="btn-back-about" class="glass glass-btn" aria-label="Back" type="button"><svg class="ic" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <h1 class="nav-title">About</h1>
+        <span></span>
+      </header>
+
+      <div class="hero">
+        <span class="seal seal-lg is-lit" aria-hidden="true">
+          <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+          <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+          <svg class="ic glyph g-open"><use href="#i-lock-open"/></svg>
+        </span>
+        <h2>Agecord</h2>
+        <p id="about-version"></p>
       </div>
 
-      <p class="about-legal">
-        Not affiliated with Discord Inc. Research project, use at your own risk.
-      </p>
+      <div class="tiles">
+        <button class="row" id="about-repo-link" type="button">
+          <span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-code"/></svg></span>
+          <span class="row-main"><span class="row-title">Source code</span><span class="row-sub">senseideelite/agecord</span></span>
+          <svg class="ic row-end" aria-hidden="true"><use href="#i-ext"/></svg>
+        </button>
+        <button class="row" id="about-license-link" type="button">
+          <span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-doc"/></svg></span>
+          <span class="row-main"><span class="row-title">GNU GPL v3.0</span><span class="row-sub">No warranty or liability</span></span>
+          <svg class="ic row-end" aria-hidden="true"><use href="#i-ext"/></svg>
+        </button>
+        <button class="row" id="about-notices-link" type="button">
+          <span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-doc"/></svg></span>
+          <span class="row-main"><span class="row-title">Third-party notices</span><span class="row-sub">typage, RustCrypto and others</span></span>
+          <svg class="ic row-end" aria-hidden="true"><use href="#i-ext"/></svg>
+        </button>
+      </div>
 
-    </div>
-  </main>
+      <p class="legal">Not affiliated with Discord Inc. Research project, use at your own risk.</p>
+    </main>
 
-  <!-- ── SHEET: CONTACT DETAIL ─────────────────────────────────────────── -->
-  <dialog id="sheet-contact" class="bottom-sheet" closedby="any" aria-labelledby="sheet-contact-name" data-cancel="btn-close-sheet">
-    <div class="sheet-handle"></div>
-    <div class="sheet-title" id="sheet-contact-name"></div>
-    <div class="sheet-fp-label">SHAKE256 Fingerprint</div>
-    <div class="sheet-fingerprint" id="sheet-contact-fp">Computing fingerprint...</div>
-    <div class="sheet-row">
-      <span id="sheet-contact-toggle-label">Encrypt to this contact</span>
-      <label class="switch">
-        <input id="sheet-contact-toggle" type="checkbox" role="switch" aria-labelledby="sheet-contact-toggle-label">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <button id="btn-edit-contact"   class="btn btn-primary btn-full" type="button">Edit contact</button>
-    <button id="btn-delete-contact" class="btn btn-outlined-error btn-full" type="button">Delete contact</button>
-    <button id="btn-close-sheet"    class="btn btn-text btn-full" type="button">Close</button>
-  </dialog>
+    <div id="toast" class="toast glass" popover="manual" aria-hidden="true"><svg class="ic" aria-hidden="true"><use href="#i-check-circle"/></svg><span id="toast-text"></span></div>
+    <div id="toast-live" class="sr-only" role="status"></div>
+  </div>
 
-  <!-- ── MODAL: EXPORT PRIVATE KEY ────────────────────────────────────── -->
-  <dialog id="modal-export-key" class="modal" aria-labelledby="modal-export-key-title" data-cancel="btn-export-cancel">
-    <h2 id="modal-export-key-title">Export private key</h2>
-    <p class="modal-note">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
-    <form id="form-export">
-    <div class="modal-field">
-      <label for="export-passphrase-input" class="modal-label">Unlock passphrase</label>
-      <input id="export-passphrase-input" aria-describedby="export-passphrase-input-error" aria-required="true" type="password" placeholder="Type unlock passphrase" autocomplete="current-password">
-      <div id="export-passphrase-input-error" class="field-error"></div>
+  <dialog id="modal-import-contacts" class="alert" closedby="any" aria-labelledby="modal-import-contacts-title" data-cancel="btn-import-contacts-ok">
+    <div class="alert-body" tabindex="-1">
+      <span class="seal seal-sm is-lit" id="import-result-seal" aria-hidden="true">
+        <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+        <svg class="ic glyph g-closed"><use href="#i-check"/></svg>
+        <svg class="ic glyph g-warn"><use href="#i-alert"/></svg>
+      </span>
+      <h2 id="modal-import-contacts-title">Import complete</h2>
+      <p id="modal-import-contacts-msg"></p>
     </div>
-    <div class="modal-field">
-      <label for="export-new-passphrase" class="modal-label">Export passphrase</label>
-      <input id="export-new-passphrase" aria-describedby="export-new-passphrase-error" aria-required="true" type="password" placeholder="Type export passphrase" autocomplete="new-password">
-      <div id="export-new-passphrase-error" class="field-error"></div>
-    </div>
-    <div class="modal-field">
-      <label for="export-new-passphrase2" class="modal-label">Confirm export passphrase</label>
-      <input id="export-new-passphrase2" aria-describedby="export-new-passphrase2-error" aria-required="true" type="password" placeholder="Repeat export passphrase" autocomplete="new-password">
-      <div id="export-new-passphrase2-error" class="field-error"></div>
-    </div>
-    <div id="export-passphrase-error" class="error-msg" role="alert"></div>
-    <div id="export-status" class="sr-only" role="status"></div>
-    <div id="export-spinner" class="spinner-wrap" hidden>
-      <div class="spinner" aria-hidden="true"></div><span>Encrypting... do not close this window.</span>
-    </div>
-    <div class="modal-actions">
-      <button id="btn-export-cancel" type="button"  class="btn btn-text">Cancel</button>
-      <button id="btn-export-confirm" type="submit" class="btn btn-error">Encrypt &amp; show</button>
-    </div>
-    </form>
-  </dialog>
-
-  <!-- ── MODAL: EXPORT KEY DISPLAY ────────────────────────────────────── -->
-  <dialog id="modal-export-display" class="modal" aria-labelledby="modal-export-display-title" data-cancel="btn-export-close">
-    <h2 id="modal-export-display-title">Encrypted private key blob</h2>
-    <p class="modal-note">This blob is encrypted with your export passphrase. Copy and save it alongside the export passphrase in a trusted password manager. Anyone with both can fully restore your keypair.</p>
-    <textarea id="export-key-blob" class="modal-textarea" rows="6" readonly aria-label="Encrypted private key blob" spellcheck="false"></textarea>
-    <div class="modal-actions">
-      <button id="btn-export-copy"  class="btn btn-primary" type="button">Copy &amp; close</button>
-      <button id="btn-export-close" class="btn btn-text" type="button">Close</button>
+    <div class="alert-actions">
+      <button id="btn-import-contacts-ok" class="btn" type="button">Done</button>
     </div>
   </dialog>
 
-  <!-- ── MODAL: CHANGE PASSPHRASE ─────────────────────────────────────── -->
-  <dialog id="modal-change-passphrase" class="modal" aria-labelledby="modal-change-passphrase-title" data-cancel="btn-change-pass-cancel">
-    <h2 id="modal-change-passphrase-title">Change passphrase</h2>
-    <p class="modal-note">Your data will be re-encrypted with the new passphrase.</p>
-    <form id="form-change-pass">
-    <div class="modal-field">
-      <label for="change-pass-current" class="modal-label">Current passphrase</label>
-      <input id="change-pass-current" aria-describedby="change-pass-current-error" aria-required="true" type="password" placeholder="Type current passphrase" autocomplete="current-password">
-      <div id="change-pass-current-error" class="field-error"></div>
+  <dialog id="modal-delete-contact" class="alert" closedby="any" aria-labelledby="modal-delete-contact-title" data-cancel="btn-delete-cancel">
+    <div class="alert-body" tabindex="-1">
+      <span class="seal seal-sm is-danger" aria-hidden="true">
+        <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+        <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+        <svg class="ic glyph g-warn"><use href="#i-alert"/></svg>
+      </span>
+      <h2 id="modal-delete-contact-title">Delete recipient?</h2>
+      <p id="modal-delete-msg"></p>
     </div>
-    <div class="modal-field">
-      <label for="change-pass-new" class="modal-label">New passphrase</label>
-      <input id="change-pass-new" aria-describedby="change-pass-new-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
-      <div id="change-pass-new-error" class="field-error"></div>
-    </div>
-    <div class="modal-field">
-      <label for="change-pass-new2" class="modal-label">Confirm new passphrase</label>
-      <input id="change-pass-new2" aria-describedby="change-pass-new2-error" aria-required="true" type="password" placeholder="Repeat new passphrase" autocomplete="new-password">
-      <div id="change-pass-new2-error" class="field-error"></div>
-    </div>
-    <div id="change-pass-error" class="error-msg" role="alert"></div>
-    <div id="change-pass-status" class="sr-only" role="status"></div>
-    <div id="change-pass-spinner" class="spinner-wrap" hidden>
-      <div class="spinner" aria-hidden="true"></div><span>Re-encrypting... do not close this window.</span>
-    </div>
-    <div class="modal-actions">
-      <button id="btn-change-pass-cancel" type="button"  class="btn btn-text">Cancel</button>
-      <button id="btn-change-pass-confirm" type="submit" class="btn btn-primary">Change passphrase</button>
-    </div>
-    </form>
-  </dialog>
-
-  <!-- ── MODAL: CLEAR ALL DATA ─────────────────────────────────────────── -->
-  <dialog id="modal-clear-data" class="modal" aria-labelledby="modal-clear-data-title" data-cancel="btn-clear-data-cancel">
-    <h2 id="modal-clear-data-title"><span aria-hidden="true">⚠️</span> Clear all data?</h2>
-    <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
-    <p id="clear-data-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
-    <input id="clear-data-confirm-input" aria-labelledby="clear-data-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
-    <div class="modal-actions">
-      <button id="btn-clear-data-cancel"  class="btn btn-text" type="button">Cancel</button>
-      <button id="btn-clear-data-confirm" class="btn btn-error" disabled type="button">Erase &amp; start over</button>
+    <div class="alert-actions">
+      <button id="btn-delete-cancel" class="btn btn-tonal" type="button">Cancel</button>
+      <button id="btn-delete-confirm" class="btn btn-danger" type="button">Delete</button>
     </div>
   </dialog>
 
-  <!-- ── MODAL: REGEN CONFIRM ──────────────────────────────────────────── -->
-  <dialog id="modal-regen" class="modal" aria-labelledby="modal-regen-title" data-cancel="btn-regen-cancel">
-    <h2 id="modal-regen-title"><span aria-hidden="true">⚠️</span> Regenerate keypair?</h2>
-    <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> Contacts will be disabled.</p>
-    <p id="regen-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
-    <input id="regen-confirm-input" aria-labelledby="regen-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
-    <div class="modal-actions">
-      <button id="btn-regen-cancel"  class="btn btn-text" type="button">Cancel</button>
-      <button id="btn-regen-confirm" class="btn btn-error" disabled type="button">Regenerate</button>
+  <dialog id="modal-clear-data" class="alert" aria-labelledby="modal-clear-data-title" data-cancel="btn-clear-data-cancel">
+    <div class="alert-body" tabindex="-1">
+      <span class="seal seal-sm is-danger" aria-hidden="true">
+        <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+        <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+        <svg class="ic glyph g-warn"><use href="#i-alert"/></svg>
+      </span>
+      <h2 id="modal-clear-data-title">Clear all data?</h2>
+      <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="clear-data-confirm-input">Type CONFIRM to proceed</label>
+          <input id="clear-data-confirm-input" class="field-input alert-input" type="text" placeholder="CONFIRM" autocomplete="off" autocapitalize="characters" spellcheck="false" autofocus>
+        </div>
+      </div>
+    </div>
+    <div class="alert-actions">
+      <button id="btn-clear-data-cancel" class="btn btn-tonal" type="button">Cancel</button>
+      <button id="btn-clear-data-confirm" class="btn btn-danger" type="button" disabled>Erase</button>
     </div>
   </dialog>
 
-  <!-- ── MODAL: DELETE CONTACT ─────────────────────────────────────────── -->
-  <dialog id="modal-delete-contact" class="modal" closedby="any" aria-labelledby="modal-delete-contact-title" data-cancel="btn-delete-cancel">
-    <h2 id="modal-delete-contact-title">Delete recipient?</h2>
-    <p id="modal-delete-msg"></p>
-    <div class="modal-actions">
-      <button id="btn-delete-cancel"  class="btn btn-text" type="button">Cancel</button>
-      <button id="btn-delete-confirm" class="btn btn-error" type="button">Delete</button>
+  <dialog id="modal-regen" class="alert" aria-labelledby="modal-regen-title" data-cancel="btn-regen-cancel">
+    <div class="alert-body" tabindex="-1">
+      <span class="seal seal-sm is-danger" aria-hidden="true">
+        <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+        <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+        <svg class="ic glyph g-warn"><use href="#i-alert"/></svg>
+      </span>
+      <h2 id="modal-regen-title">Regenerate keypair?</h2>
+      <p>This will create a new keypair. <strong>All previous encrypted messages become unreadable.</strong> Contacts will be disabled.</p>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="regen-confirm-input">Type CONFIRM to proceed</label>
+          <input id="regen-confirm-input" class="field-input alert-input" type="text" placeholder="CONFIRM" autocomplete="off" autocapitalize="characters" spellcheck="false" autofocus>
+        </div>
+      </div>
+    </div>
+    <div class="alert-actions">
+      <button id="btn-regen-cancel" class="btn btn-tonal" type="button">Cancel</button>
+      <button id="btn-regen-confirm" class="btn btn-danger" type="button" disabled>Regenerate</button>
     </div>
   </dialog>
 
-  <!-- ── MODAL: RESET KEYPAIR ──────────────────────────────────────────── -->
-  <dialog id="modal-reset-keypair" class="modal" aria-labelledby="modal-reset-keypair-title" data-cancel="btn-reset-cancel">
-    <h2 id="modal-reset-keypair-title"><span aria-hidden="true">⚠️</span> Erase everything?</h2>
-    <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup.</p>
-    <p>Only continue if you have forgotten your passphrase.</p>
-    <p id="reset-confirm-label">Type <strong>CONFIRM</strong> to proceed:</p>
-    <input id="reset-confirm-input" aria-labelledby="reset-confirm-label" type="text" placeholder="CONFIRM" autocomplete="off">
-    <div class="modal-actions">
-      <button id="btn-reset-cancel"  class="btn btn-text" type="button">Cancel</button>
-      <button id="btn-reset-confirm" class="btn btn-error" disabled type="button">Erase &amp; start over</button>
+  <dialog id="modal-reset-keypair" class="alert" aria-labelledby="modal-reset-keypair-title" data-cancel="btn-reset-cancel">
+    <div class="alert-body" tabindex="-1">
+      <span class="seal seal-sm is-danger" aria-hidden="true">
+        <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+        <svg class="ic glyph g-closed"><use href="#i-lock"/></svg>
+        <svg class="ic glyph g-warn"><use href="#i-alert"/></svg>
+      </span>
+      <h2 id="modal-reset-keypair-title">Erase everything?</h2>
+      <p>This will <strong>permanently delete your keypair and all contacts.</strong> Encrypted messages will be unreadable forever – there is no recovery without a backup. Only continue if you have forgotten your passphrase.</p>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="reset-confirm-input">Type CONFIRM to proceed</label>
+          <input id="reset-confirm-input" class="field-input alert-input" type="text" placeholder="CONFIRM" autocomplete="off" autocapitalize="characters" spellcheck="false" autofocus>
+        </div>
+      </div>
+    </div>
+    <div class="alert-actions">
+      <button id="btn-reset-cancel" class="btn btn-tonal" type="button">Cancel</button>
+      <button id="btn-reset-confirm" class="btn btn-danger" type="button" disabled>Erase</button>
     </div>
   </dialog>
 
+  <dialog id="sheet-contact" class="sheet" closedby="any" aria-labelledby="sheet-contact-name" data-cancel="btn-close-sheet">
+    <div class="grabber" tabindex="-1" autofocus></div>
+    <button id="btn-close-sheet" class="chip-btn is-icon sheet-close" type="button" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-xmark"/></svg></button>
+    <div class="sheet-body">
+      <div class="sheet-hero">
+        <span class="avatar avatar-xl" id="sheet-contact-avatar" aria-hidden="true"></span>
+        <h2 id="sheet-contact-name"></h2>
+        <p>Direct message</p>
+      </div>
+
+      <div class="sect">SHAKE256 fingerprint</div>
+      <div class="tiles"><div class="fp" id="sheet-contact-fp">Computing fingerprint...</div></div>
+
+      <div class="tiles">
+        <label class="row" for="sheet-contact-toggle">
+          <span class="row-main"><span class="row-title" id="sheet-contact-toggle-label">Encrypt to this contact</span></span>
+          <span class="switch"><input id="sheet-contact-toggle" type="checkbox" role="switch" aria-labelledby="sheet-contact-toggle-label"><span class="track"><span class="thumb"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span></span></span>
+        </label>
+      </div>
+
+      <div class="tiles">
+        <button id="btn-edit-contact" class="row is-accent" type="button"><span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-pencil"/></svg></span><span class="row-main"><span class="row-title">Edit contact</span></span></button>
+        <button id="btn-delete-contact" class="row is-danger" type="button"><span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-trash"/></svg></span><span class="row-main"><span class="row-title">Delete contact</span></span></button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="sheet-group" class="sheet" closedby="any" aria-labelledby="sheet-group-name" data-cancel="btn-close-group-sheet">
+    <div class="grabber" tabindex="-1" autofocus></div>
+    <button id="btn-close-group-sheet" class="chip-btn is-icon sheet-close" type="button" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-xmark"/></svg></button>
+    <div class="sheet-body">
+      <div class="sheet-hero">
+        <span class="avatar avatar-xl is-group" aria-hidden="true"><svg class="ic"><use href="#i-group"/></svg></span>
+        <h2 id="sheet-group-name"></h2>
+        <p id="sheet-group-sub"></p>
+      </div>
+
+      <div class="sect">Channel ID</div>
+      <div class="tiles"><div class="fp-id" id="sheet-group-channel"></div></div>
+
+      <div class="tiles">
+        <label class="row" for="sheet-group-toggle">
+          <span class="row-main"><span class="row-title" id="sheet-group-toggle-label">Encrypt in this group</span></span>
+          <span class="switch"><input id="sheet-group-toggle" type="checkbox" role="switch" aria-labelledby="sheet-group-toggle-label"><span class="track"><span class="thumb"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span></span></span>
+        </label>
+      </div>
+
+      <div class="tiles">
+        <button id="btn-edit-group" class="row is-accent" type="button"><span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-pencil"/></svg></span><span class="row-main"><span class="row-title">Edit group</span></span></button>
+        <button id="btn-delete-group" class="row is-danger" type="button"><span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-trash"/></svg></span><span class="row-main"><span class="row-title">Delete group</span></span></button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="sheet-server" class="sheet" closedby="any" aria-labelledby="sheet-server-name" data-cancel="btn-close-server-sheet">
+    <div class="grabber" tabindex="-1" autofocus></div>
+    <button id="btn-close-server-sheet" class="chip-btn is-icon sheet-close" type="button" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-xmark"/></svg></button>
+    <div class="sheet-body">
+      <div class="sheet-hero">
+        <span class="avatar avatar-xl is-server" aria-hidden="true"><svg class="ic"><use href="#i-server"/></svg></span>
+        <h2 id="sheet-server-name"></h2>
+        <p id="sheet-server-sub"></p>
+      </div>
+
+      <div class="sect">Server ID</div>
+      <div class="tiles"><div class="fp-id" id="sheet-server-id-display"></div></div>
+
+      <div class="tiles">
+        <label class="row" for="sheet-server-toggle">
+          <span class="row-main"><span class="row-title" id="sheet-server-toggle-label">Encrypt in this server</span></span>
+          <span class="switch"><input id="sheet-server-toggle" type="checkbox" role="switch" aria-labelledby="sheet-server-toggle-label"><span class="track"><span class="thumb"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span></span></span>
+        </label>
+      </div>
+
+      <div class="tiles">
+        <button id="btn-edit-server" class="row is-accent" type="button"><span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-pencil"/></svg></span><span class="row-main"><span class="row-title">Edit server</span></span></button>
+        <button id="btn-delete-server" class="row is-danger" type="button"><span class="ico" aria-hidden="true"><svg class="ic"><use href="#i-trash"/></svg></span><span class="row-main"><span class="row-title">Delete server</span></span></button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="sheet-member-picker" class="sheet sheet-tall" closedby="any" aria-labelledby="member-picker-title">
+    <div class="grabber" tabindex="-1" autofocus></div>
+    <div class="sheet-top">
+      <button id="btn-member-picker-cancel" class="chip-btn" type="button">Cancel</button>
+      <div class="sheet-title" id="member-picker-title">Select members<span class="sheet-sub" id="member-picker-count" aria-live="polite"></span></div>
+      <button id="btn-member-picker-done" class="chip-btn is-accent is-bold" type="button">Done</button>
+    </div>
+    <div class="sheet-body">
+      <div class="search">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="member-picker-search" type="search" placeholder="Search contacts" aria-label="Search contacts" autocomplete="off">
+      </div>
+      <div class="tiles" id="member-picker-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="modal-export-key" class="sheet" aria-labelledby="modal-export-key-title" data-cancel="btn-export-cancel">
+    <div class="grabber" tabindex="-1" autofocus></div>
+    <div class="sheet-top">
+      <button id="btn-export-cancel" class="chip-btn" type="button">Cancel</button>
+      <div class="sheet-title" id="modal-export-key-title">Export key</div>
+      <span></span>
+    </div>
+    <div class="sheet-body">
+      <form id="form-export">
+        <p class="note">The exported blob is encrypted with Argon2id + XChaCha20-Poly1305 using a separate export passphrase. Store both in a trusted password manager.</p>
+        <div class="sect">Passphrases</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="export-passphrase-input">Unlock passphrase</label>
+            <input id="export-passphrase-input" class="field-input" aria-describedby="export-passphrase-input-error" aria-required="true" type="password" placeholder="Type unlock passphrase" autocomplete="current-password">
+            <div id="export-passphrase-input-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="export-new-passphrase">Export passphrase</label>
+            <input id="export-new-passphrase" class="field-input" aria-describedby="export-new-passphrase-error" aria-required="true" type="password" placeholder="Type export passphrase" autocomplete="new-password">
+            <div id="export-new-passphrase-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="export-new-passphrase2">Confirm export passphrase</label>
+            <input id="export-new-passphrase2" class="field-input" aria-describedby="export-new-passphrase2-error" aria-required="true" type="password" placeholder="Repeat export passphrase" autocomplete="new-password">
+            <div id="export-new-passphrase2-error" class="field-error"></div>
+          </div>
+        </div>
+        <div id="export-passphrase-error" class="form-error" role="alert"></div>
+        <div id="export-status" class="sr-only" role="status"></div>
+        <div id="export-spinner" class="spinner-wrap" hidden>
+          <div class="spinner" aria-hidden="true"></div><span>Encrypting... do not close this window.</span>
+        </div>
+        <button id="btn-export-confirm" type="submit" class="btn btn-danger btn-block">Encrypt &amp; show</button>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog id="modal-export-display" class="sheet" aria-labelledby="modal-export-display-title" data-cancel="btn-export-close">
+    <div class="grabber" tabindex="-1" autofocus></div>
+    <div class="sheet-top">
+      <span></span>
+      <div class="sheet-title" id="modal-export-display-title">Encrypted key blob</div>
+      <button id="btn-export-close-x" class="chip-btn is-accent is-bold" type="button">Done</button>
+    </div>
+    <div class="sheet-body">
+      <p class="note">This blob is encrypted with your export passphrase. Copy and save it alongside the export passphrase in a trusted password manager. Anyone with both can fully restore your keypair.</p>
+      <div class="sect">Encrypted blob</div>
+      <div class="tiles">
+        <div class="field">
+          <label class="field-label" for="export-key-blob">Encrypted private key blob</label>
+          <textarea id="export-key-blob" class="field-input" rows="5" readonly spellcheck="false"></textarea>
+        </div>
+      </div>
+      <button id="btn-export-copy" class="btn btn-block" type="button"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Copy &amp; close</button>
+      <button id="btn-export-close" class="btn btn-text btn-block" type="button">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="modal-change-passphrase" class="sheet" aria-labelledby="modal-change-passphrase-title" data-cancel="btn-change-pass-cancel">
+    <div class="grabber" tabindex="-1" autofocus></div>
+    <div class="sheet-top">
+      <button id="btn-change-pass-cancel" class="chip-btn" type="button">Cancel</button>
+      <div class="sheet-title" id="modal-change-passphrase-title">Change passphrase</div>
+      <span></span>
+    </div>
+    <div class="sheet-body">
+      <form id="form-change-pass">
+        <p class="note">Your data will be re-encrypted with the new passphrase.</p>
+        <div class="sect">Passphrases</div>
+        <div class="tiles">
+          <div class="field">
+            <label class="field-label" for="change-pass-current">Current passphrase</label>
+            <input id="change-pass-current" class="field-input" aria-describedby="change-pass-current-error" aria-required="true" type="password" placeholder="Type current passphrase" autocomplete="current-password">
+            <div id="change-pass-current-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="change-pass-new">New passphrase</label>
+            <input id="change-pass-new" class="field-input" aria-describedby="change-pass-new-error" aria-required="true" type="password" placeholder="Type new passphrase" autocomplete="new-password">
+            <div id="change-pass-new-error" class="field-error"></div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="change-pass-new2">Confirm new passphrase</label>
+            <input id="change-pass-new2" class="field-input" aria-describedby="change-pass-new2-error" aria-required="true" type="password" placeholder="Repeat new passphrase" autocomplete="new-password">
+            <div id="change-pass-new2-error" class="field-error"></div>
+          </div>
+        </div>
+        <div id="change-pass-error" class="form-error" role="alert"></div>
+        <div id="change-pass-status" class="sr-only" role="status"></div>
+        <div id="change-pass-spinner" class="spinner-wrap" hidden>
+          <div class="spinner" aria-hidden="true"></div><span>Re-encrypting... do not close this window.</span>
+        </div>
+        <button id="btn-change-pass-confirm" type="submit" class="btn btn-block">Change passphrase</button>
+      </form>
+    </div>
+  </dialog>
 
   <script src="popup.js"></script>
 </body>
