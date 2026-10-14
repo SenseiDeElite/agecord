@@ -8,87 +8,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
   <title>Import Contacts – Agecord</title>
-  <style>
-    :root { color-scheme: dark; }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Roboto', system-ui, sans-serif;
-      background: #0f131a;
-      color: #e3e8f0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      min-height: 100dvh;
-      gap: 18px;
-      padding: 16px;
-    }
-    .card {
-      background: #1c2532;
-      border: 1px solid #2e3d4f;
-      border-radius: 24px;
-      padding: 32px 28px;
-      max-width: 380px;
-      width: 90%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 14px;
-      text-align: center;
-    }
-    .icon  { font-size: 36px; line-height: 1; }
-    h1     { font-size: 18px; font-weight: 500; }
-    p      { font-size: 13px; color: #a8b8cc; line-height: 1.5; }
-    label {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 24px;
-      height: 40px;
-      background: #64b5f6;
-      color: #003258;
-      border-radius: 100px;
-      font-weight: 500;
-      cursor: pointer;
-      font-size: 14px;
-      transition: background 160ms;
-      user-select: none;
-    }
-    label:hover { background: #90caf9; }
-    /* Visually hidden rather than display:none, so the picker stays in the tab
-       order and a keyboard user can open it. */
-    input[type=file] {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
-    label:has(input:focus-visible) { outline: 2px solid #64b5f6; outline-offset: 3px; }
-    #status {
-      font-size: 13px;
-      color: #a8b8cc;
-      min-height: 20px;
-      line-height: 1.5;
-    }
-    #status.ok  { color: #57f287; }
-    #status.err { color: #ffb4ab; }
-  </style>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <main class="card">
-    <span class="icon" aria-hidden="true">&#x2B06;&#xFE0F;</span>
-    <h1>Import Contacts</h1>
-    <p>Select your <strong>agecord</strong> JSON export file.</p>
-    <label>
-      Choose file
-      <input id="f" type="file" accept=".json,application/json">
-    </label>
-    <div id="status" role="status" aria-live="polite"></div>
+
+  <svg width="0" height="0" class="sprite" aria-hidden="true" focusable="false">
+    <defs>
+      <linearGradient id="seal-rim" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset=".45" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/>
+      </linearGradient>
+      <linearGradient id="seal-sheen" x1=".2" y1="0" x2=".7" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity=".38"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".18"/>
+      </linearGradient>
+      <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 14.5V4.5M8.25 8.25 12 4.5l3.75 3.75M5 14.5v2.25A2.75 2.75 0 0 0 7.75 19.5h8.5A2.75 2.75 0 0 0 19 16.75V14.5"/>
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 12.75 4 4L18.25 8"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round">
+        <path d="M12 6.5v7.25"/><circle cx="12" cy="17.75" r="1.2" fill="currentColor" stroke="none"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <main class="page page-center">
+    <div class="page-card">
+      <div class="hero">
+        <span class="seal seal-lg" id="seal" aria-hidden="true">
+          <svg class="seal-shape" viewBox="0 0 100 100"><path class="seal-body"/><path class="seal-sheen"/></svg>
+          <svg class="ic glyph g-closed"><use href="#i-upload"/></svg>
+          <svg class="ic glyph g-open"><use href="#i-check"/></svg>
+          <svg class="ic glyph g-warn"><use href="#i-alert"/></svg>
+        </span>
+        <h1>Import contacts</h1>
+        <p>Select your <strong>Agecord</strong> JSON export file.</p>
+      </div>
+
+      <label class="btn btn-block">
+        Choose file
+        <input id="f" class="sr-only" type="file" accept=".json,application/json">
+      </label>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </div>
   </main>
   <script src="import-helper.js"></script>
 </body>
