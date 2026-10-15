@@ -6,8 +6,8 @@
 // popup.js — Agecord
 
 // Storage: identity blob encrypted with Argon2id + XChaCha20-Poly1305,
-//          stored as base64 in chrome.storage.local (identity_blob).
-// Session: decrypted identity in chrome.storage.session; background keeps
+//          stored as base64 in browser.storage.local (identity_blob).
+// Session: decrypted identity in browser.storage.session; background keeps
 //          memory copy and exposes only ML-DSA-87 signing key to content.
 // Crypto:  handled by crypto-worker.js to keep UI responsive.
 // Contacts: Argon2id key derivation in crypto-worker.js; raw key bytes sent
@@ -26,12 +26,12 @@
   let Encrypter, generateHybridIdentity, identityToRecipient;
   let ml_dsa87_keygen, ml_dsa87_verifying_key_from_seed, shake256;
   const cryptoReady = Promise.all([
-    import(chrome.runtime.getURL('lib/age.min.js')).then(m => {
+    import(browser.runtime.getURL('lib/age.min.js')).then(m => {
       Encrypter              = m.Encrypter;
       generateHybridIdentity = m.generateHybridIdentity;
       identityToRecipient    = m.identityToRecipient;
     }),
-    import(chrome.runtime.getURL('lib/rustcrypto-wasm.min.js')).then(async m => {
+    import(browser.runtime.getURL('lib/rustcrypto-wasm.min.js')).then(async m => {
       await m.init();
       ml_dsa87_keygen                  = m.ml_dsa87_keygen;
       ml_dsa87_verifying_key_from_seed = m.ml_dsa87_verifying_key_from_seed;
@@ -55,9 +55,9 @@
 
   // ─── Storage helpers ────────────────────────────────────────────────────────
   const store = {
-    get:    keys => chrome.storage.local.get(keys),
-    set:    data => chrome.storage.local.set(data),
-    remove: keys => chrome.storage.local.remove(keys),
+    get:    keys => browser.storage.local.get(keys),
+    set:    data => browser.storage.local.set(data),
+    remove: keys => browser.storage.local.remove(keys),
   };
 
   async function getAgeRecipient() {
@@ -141,7 +141,7 @@
     // Fall back to the session-cached contacts if the passphrase is unavailable
     // or local decryption fails.
     try {
-      const s = await chrome.storage.session.get('age_contacts');
+      const s = await browser.storage.session.get('age_contacts');
       if (s.age_contacts && typeof s.age_contacts === 'object') {
         return s.age_contacts;
       }
@@ -156,10 +156,10 @@
   // All tab-relay operations go through the background service worker.
 
   function bgSend(msg) {
-    // chrome.runtime.sendMessage returns a Promise natively in MV3.
+    // browser.runtime.sendMessage returns a Promise natively in MV3.
     // Swallow lastError (no listener on the other end during early boot) so the
     // promise rejects cleanly rather than throwing an uncaught extension error.
-    return chrome.runtime.sendMessage(msg).catch(e => {
+    return browser.runtime.sendMessage(msg).catch(e => {
       void e; // lastError consumed — callers already handle null/undefined responses
       return undefined;
     });
@@ -265,26 +265,147 @@
   // it to skip redundant decryption. bgUnlockResume() never sets it.
   let _contactsFreshFromUnlock = false;
   
+  // ─── UI helpers ──────────────────────────────────────────────────────────────
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // <svg><use href="#id"/></svg> from the sprite in popup.html.
+  function icon(id) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'ic');
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', `#${id}`);
+    svg.append(use);
+    return svg;
+  }
+
+  const AVATAR_HUES = [255, 30, 325, 170, 5, 235, 350, 95, 15, 245, 340, 45];
+  function hueFor(id) {
+    let h = 0;
+    for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return AVATAR_HUES[h % AVATAR_HUES.length];
+  }
+  const initialOf = name => (name ?? '').trim().charAt(0).toUpperCase() || '?';
+
+  function setContactAvatar(el, contact) {
+    el.textContent = initialOf(contact.username);
+    el.style.setProperty('--ah', hueFor(contact.id));
+  }
+
+  // Avatar for any entry: initial in a circle (contact), group icon in a squircle,
+  // server icon in an octagon. Group and server hues are fixed in CSS.
+  function makeAvatar(entry, extraClass = '') {
+    const type = entry.type ?? 'contact';
+    const el = document.createElement('span');
+    el.setAttribute('aria-hidden', 'true');
+    if (type === 'group' || type === 'server') {
+      el.className = `avatar is-${type} ${extraClass}`.trim();
+      el.append(icon(type === 'group' ? 'i-group' : 'i-server'));
+    } else {
+      el.className = `avatar ${extraClass}`.trim();
+      setContactAvatar(el, entry);
+    }
+    return el;
+  }
+
+  const memberCountLabel = n => `${n} member${n === 1 ? '' : 's'}`;
+  function entrySub(entry) {
+    const n = entry.memberIds?.length ?? 0;
+    if (entry.type === 'group')  return `Group · ${memberCountLabel(n)}`;
+    if (entry.type === 'server') return `Server · ${memberCountLabel(n)}`;
+    return 'Direct message';
+  }
+
+  function renderFingerprint(el, text) {
+    const groups = text.split(/\s+/).filter(Boolean);
+    const isHex = groups.length > 1 && groups.every(g => /^[0-9A-F]{4}$/.test(g));
+    el.classList.toggle('is-plain', !isHex);
+    if (!isHex) { el.textContent = text; return; }
+    el.replaceChildren();
+    groups.forEach((g, i) => {
+      if (i) el.append(' ');
+      el.append(Object.assign(document.createElement('span'), { textContent: g }));
+    });
+  }
+
+  // Master status line under the Encryption switch.
+  function updateMasterSub() {
+    const sub = $('master-sub');
+    if ($('global-toggle').checked) {
+      const n = Object.values(_contacts).filter(c => c.enabled).length;
+      sub.textContent = `Armed for ${n} recipient${n === 1 ? '' : 's'}`;
+    } else {
+      sub.textContent = 'Paused. Messages send as plain text.';
+    }
+  }
+
+  let _announceTimer = null;
+  function announce(text) {
+    const live = $('toast-live');
+    clearTimeout(_announceTimer);
+    live.textContent = '';
+    _announceTimer = setTimeout(() => {
+      live.textContent = text;
+      _announceTimer = setTimeout(() => { live.textContent = ''; }, 3000);
+    }, 60);
+  }
+
+  let _toastTimer = null;
+  function showToast(text) {
+    const toast = $('toast');
+    $('toast-text').textContent = text;
+    if (!toast.matches(':popover-open')) toast.showPopover();
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => { if (toast.matches(':popover-open')) toast.hidePopover(); }, 1900);
+    announce(text);
+  }
+
+  document.addEventListener('pointermove', e => {
+    const glass = e.target.closest?.('.glass');
+    if (!glass) return;
+    const r = glass.getBoundingClientRect();
+    glass.style.setProperty('--px', `${e.clientX - r.left}px`);
+    glass.style.setProperty('--py', `${e.clientY - r.top}px`);
+  }, { passive: true });
+
   // ─── Screen router ──────────────────────────────────────────────────────────
   
-  const screens = ['lock', 'setup', 'import', 'main', 'add-contact', 'edit-contact',
-                   'edit-group', 'edit-server', 'my-key', 'about'];
-  const show = screenId => {
-    screens.forEach(id => {
-      const el = document.getElementById(`screen-${id}`);
-      const hide = (id !== screenId);
-      // Leaving a screen wipes its errors, so a hidden screen never holds stale
-      // aria-invalid / message text (and re-entry starts clean).
-      if (hide && !el.hidden) clearScreenErrors(el);
-      el.hidden = hide;
-    });
+  const SCREEN_DEPTH = {
+    'lock': 0, 'setup': 0,
+    'import': 1, 'main': 1,
+    'add-contact': 2, 'edit-contact': 2, 'edit-group': 2, 'edit-server': 2, 'my-key': 2, 'about': 2,
+  };
+  const screens = Object.keys(SCREEN_DEPTH);
+  let _currentScreen = null;
+
+  const show = (screenId, dir) => {
+    const swap = () => {
+      screens.forEach(id => {
+        const el = document.getElementById(`screen-${id}`);
+        const hide = (id !== screenId);
+        // Leaving a screen wipes its errors, so a hidden screen never holds stale
+        // aria-invalid / message text (and re-entry starts clean).
+        if (hide && !el.hidden) clearScreenErrors(el);
+        el.hidden = hide;
+      });
+    };
+    const from = _currentScreen;
+    _currentScreen = screenId;
+    if (!from || from === screenId || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      swap();
+      return;
+    }
+    document.documentElement.dataset.dir =
+      dir ?? (SCREEN_DEPTH[screenId] < SCREEN_DEPTH[from] ? 'back' : 'fwd');
+    document.startViewTransition(swap);
   };
 
   // Clears every form-level alert, field-error slot and aria-invalid inside a
   // container. Deliberately leaves #unlock-countdown alone: it is not an error
   // and its timer keeps running while the lock screen is hidden.
   function clearScreenErrors(container) {
-    container.querySelectorAll('.error-msg, .field-error').forEach(el => { el.textContent = ''; });
+    container.querySelectorAll('.form-error, .field-error').forEach(el => { el.textContent = ''; });
     container.querySelectorAll('[aria-invalid]').forEach(el => el.removeAttribute('aria-invalid'));
   }
 
@@ -303,7 +424,12 @@
   };
 
   // Form-level (non-field) errors. Text only; the slot is always rendered.
-  function showErr(el, msg) { el.textContent = msg; }
+  // Save lives in the nav bar on the add/edit screens, so the slot under the fields
+  // can sit below the fold: bring a new message into view.
+  function showErr(el, msg) {
+    el.textContent = msg;
+    if (msg) el.scrollIntoView({ block: 'nearest' });
+  }
   function clearErr(el)     { el.textContent = ''; }
 
   // Field-level. Slot id convention: `${field.id}-error`.
@@ -359,7 +485,7 @@
 
   async function getSessionIdentity() {
     try {
-      const r = await chrome.storage.session.get(['age_unlocked', 'age_identity']);
+      const r = await browser.storage.session.get(['age_unlocked', 'age_identity']);
       return r.age_unlocked === true ? (r.age_identity ?? null) : null;
     } catch {}
     return null;
@@ -367,27 +493,27 @@
 
   async function setSession(identity) {
     try {
-      await chrome.storage.session.set({ age_unlocked: true, age_identity: identity });
+      await browser.storage.session.set({ age_unlocked: true, age_identity: identity });
     } catch {}
   }
 
   // Persisted so the background can recover after a SW restart without waiting for UNLOCK.
   async function setSessionRecipient(recipient) {
     try {
-      if (recipient) await chrome.storage.session.set({ age_recipient: recipient });
+      if (recipient) await browser.storage.session.set({ age_recipient: recipient });
     } catch {}
   }
 
   // Persisted so the background can recover contacts after a SW restart without waiting for UNLOCK.
   async function setSessionContacts(contacts) {
     try {
-      await chrome.storage.session.set({ age_contacts: contacts });
+      await browser.storage.session.set({ age_contacts: contacts });
     } catch {}
   }
 
   async function clearSession() {
     try {
-      await chrome.storage.session.remove(
+      await browser.storage.session.remove(
         ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient',
          'age_passphrase', 'pending_unlock']);
     } catch {}
@@ -396,13 +522,13 @@
   // Cached so saveContacts/loadContacts can re-derive the contacts key after a SW restart.
   async function setSessionPassphrase(passphrase) {
     try {
-      if (passphrase) await chrome.storage.session.set({ age_passphrase: passphrase });
+      if (passphrase) await browser.storage.session.set({ age_passphrase: passphrase });
     } catch {}
   }
 
   async function getSessionPassphrase() {
     try {
-      const r = await chrome.storage.session.get('age_passphrase');
+      const r = await browser.storage.session.get('age_passphrase');
       return r.age_passphrase ?? null;
     } catch {}
     return null;
@@ -413,8 +539,8 @@
   async function setPendingUnlock(val) {
     try {
       await (val
-        ? chrome.storage.session.set({ pending_unlock: true })
-        : chrome.storage.session.remove('pending_unlock'));
+        ? browser.storage.session.set({ pending_unlock: true })
+        : browser.storage.session.remove('pending_unlock'));
     } catch {}
   }
 
@@ -427,7 +553,7 @@
   // Ownership transfers and buffers detach after send.
   function runCryptoWorker(msg, transfer = []) {
     return new Promise((resolve, reject) => {
-      const workerUrl = chrome.runtime.getURL('popup/crypto-worker.js');
+      const workerUrl = browser.runtime.getURL('popup/crypto-worker.js');
       let worker;
       try {
         worker = new Worker(workerUrl, { type: 'module' });
@@ -590,7 +716,7 @@
       // Seed contacts from session storage so the list renders instantly on reopen,
       // before the background has re-established the contacts key.
       try {
-        const s = await chrome.storage.session.get('age_contacts');
+        const s = await browser.storage.session.get('age_contacts');
         if (s.age_contacts && typeof s.age_contacts === 'object')
           _contacts = s.age_contacts;
       } catch {}
@@ -609,7 +735,7 @@
       // Clears stale partial session data from racing doUnlock().
       // Restores clean lock state; user re-enters passphrase.
       try {
-        const s = await chrome.storage.session.get('pending_unlock');
+        const s = await browser.storage.session.get('pending_unlock');
         if (s.pending_unlock) await clearSession();
       } catch {}
       document.getElementById('btn-goto-setup').hidden = false;
@@ -617,8 +743,8 @@
     }
   }
 
-  // ─── Confirm-modal helper ────────────────────────────────────────────────────
-  
+  // ─── Dialog + confirm-alert helpers ──────────────────────────────────────────
+
   // Route native cancel events through the dialog's cancel button for shared cleanup.
   const openDialog = id => {
     const d = document.getElementById(id);
@@ -630,23 +756,23 @@
   });
 
   // Requires typing CONFIRM before destructive actions.
-  // Open resets input; typing enables confirm; cancel closes; confirm runs callback.
-  // IDs are explicit because existing markup uses inconsistent naming.
+  // Typing enables confirm; cancel closes; confirm runs the callback. Closing by any
+  // route (cancel, confirm, Esc) wipes the typed word and re-disables confirm.
+  // openBtn may be one id or several. IDs are explicit because the markup names
+  // its alerts inconsistently.
   function wireConfirmModal({ openBtn, cancelBtn, confirmBtn, modal, input, onConfirm, confirmWord = 'CONFIRM' }) {
-    const openEl    = document.getElementById(openBtn);
     const cancelEl  = document.getElementById(cancelBtn);
     const confirmEl = document.getElementById(confirmBtn);
     const modalEl   = document.getElementById(modal);
     const inputEl   = document.getElementById(input);
 
-    openEl.addEventListener('click', () => {
+    [].concat(openBtn).forEach(id => {
+      document.getElementById(id).addEventListener('click', () => modalEl.showModal());
+    });
+    cancelEl.addEventListener('click', () => modalEl.close());
+    modalEl.addEventListener('close', () => {
       inputEl.value      = '';
       confirmEl.disabled = true;
-      modalEl.showModal();
-    });
-    cancelEl.addEventListener('click', () => {
-      inputEl.value  = '';
-      modalEl.close();
     });
     inputEl.addEventListener('input', e => {
       confirmEl.disabled = (e.target.value !== confirmWord);
@@ -687,11 +813,12 @@
     document.getElementById('setup-passphrase2').value = '';
     clearErr(document.getElementById('setup-error'));
     clearFieldErrors(SETUP_FIELDS);
-    show('setup');
+    updateStrength();
+    show('setup', 'back');
   }
 
   wireConfirmModal({
-    openBtn:    'btn-goto-setup',
+    openBtn:    ['btn-goto-setup', 'btn-forgot'],
     cancelBtn:  'btn-reset-cancel',
     confirmBtn: 'btn-reset-confirm',
     modal:      'modal-reset-keypair',
@@ -703,7 +830,7 @@
   
   // 3 consecutive failures → 10-minute lock.
   // Lockout duration is fixed; counter resets after expiry.
-  // State persists in chrome.storage.local to survive popup restarts.
+  // State persists in browser.storage.local to survive popup restarts.
   // Keys: unlockAttempts (0–2), unlockLockedUntil (ms timestamp).
   const LOCKOUT_MAX_ATTEMPTS = 3;
   const LOCKOUT_DURATION_MS  = 10 * 60 * 1000; // 10 minutes
@@ -966,7 +1093,9 @@
   const strengthStatus = document.getElementById('strength-status');
   let _strengthTimer = null;
 
-  setupPassEl.addEventListener('input', () => {
+  const setupSeal = document.getElementById('setup-seal');
+
+  function updateStrength() {
     const p = setupPassEl.value;
     let score = 0;
     if (p.length >= 20) score++;
@@ -975,17 +1104,22 @@
     if (/[a-z]/.test(p)) score++;
     if (/[0-9]/.test(p)) score++;
     if (/[^A-Za-z0-9]/.test(p)) score++;
-    const colors = ['#ed4245','#ed4245','#fee75c','#fee75c','#57f287','#57f287','#57f287'];
-    strengthBar.style.width      = Math.round((score / 6) * 100) + '%';
-    strengthBar.style.background = colors[score];
-    strengthLbl.style.color      = colors[score];
-    strengthLbl.textContent      = p.length ? ['Too short','Weak','Weak','Fair','Good','Strong','Very strong'][score] : '';
+    const level  = !p ? 0 : score <= 2 ? 1 : score === 3 ? 2 : score === 4 ? 3 : 4;
+    const charge = level / 4;
+    strengthBar.style.width = `${charge * 100}%`;
+    strengthBar.classList.toggle('is-weak', level === 1);
+    strengthLbl.classList.toggle('is-weak', level === 1);
+    strengthLbl.textContent = ['', 'Weak', 'Fair', 'Good', 'Strong'][level];
+    setupSeal.style.setProperty('--charge', charge);
+    setupSeal.classList.toggle('is-lit', level === 4);
     clearTimeout(_strengthTimer);
     _strengthTimer = setTimeout(() => {
       strengthStatus.textContent = strengthLbl.textContent
         ? `Passphrase strength: ${strengthLbl.textContent}` : '';
     }, 500);
-  });
+  }
+
+  setupPassEl.addEventListener('input', updateStrength);
 
   // Rejects non-ASCII and control chars that could break JSON serialisation or protocol fields.
   function isPrintableAscii(s) {
@@ -1020,6 +1154,7 @@
     if (pass !== pass2) {
       setupPassEl.value = '';
       document.getElementById('setup-passphrase2').value = '';
+      updateStrength();
       // Only the confirmation field is wrong.
       showFieldError({ fieldId: 'setup-passphrase2', message: 'Passphrases do not match.' });
       return;
@@ -1071,6 +1206,7 @@
       // sitting in these fields for the rest of the session.
       setupPassEl.value = '';
       document.getElementById('setup-passphrase2').value = '';
+      updateStrength();
 
       await showMain();
 
@@ -1092,11 +1228,11 @@
     async function save() {
       const draft = { ts: Date.now() };
       fieldIds.forEach(id => { draft[id] = document.getElementById(id).value; });
-      try { await chrome.storage.session.set({ [sessionKey]: draft }); } catch {}
+      try { await browser.storage.session.set({ [sessionKey]: draft }); } catch {}
     }
     async function restore() {
       try {
-        const result = await chrome.storage.session.get(sessionKey);
+        const result = await browser.storage.session.get(sessionKey);
         const draft = result[sessionKey];
         if (!draft || Date.now() - draft.ts > DRAFT_TTL) return false;
         fieldIds.forEach(id => { if (draft[id]) document.getElementById(id).value = draft[id]; });
@@ -1104,7 +1240,7 @@
       } catch { return false; }
     }
     async function clear() {
-      try { await chrome.storage.session.remove(sessionKey); } catch {}
+      try { await browser.storage.session.remove(sessionKey); } catch {}
     }
     return { save, restore, clear };
   }
@@ -1276,6 +1412,7 @@
 
   document.getElementById('global-toggle').addEventListener('change', async (e) => {
     _globalOn = e.target.checked;
+    updateMasterSub();
     await store.set({ globalOn: _globalOn });
     await bgContactsUpdated();
   });
@@ -1385,10 +1522,11 @@
 
   // ─── Contacts list ────────────────────────────────────────────────────────────
 
-  function renderContacts(query = '') {
+  // query defaults to the search box so re-renders after a toggle keep the filter.
+  function renderContacts(query = $('contacts-search').value) {
     const list  = document.getElementById('contacts-list');
     const empty = document.getElementById('no-contacts');
-    list.querySelectorAll('.contact-card').forEach(el => el.remove());
+    list.replaceChildren();
 
     const q = query.trim().toLowerCase();
     const entries = Object.values(_contacts).filter(c => {
@@ -1405,45 +1543,46 @@
       return la.localeCompare(lb, undefined, { sensitivity: 'base' });
     });
 
+    list.hidden  = entries.length === 0;
     empty.hidden = entries.length > 0;
+    $('no-contacts-title').textContent = q ? 'No matches' : 'No contacts yet';
+    $('no-contacts-msg').textContent   = q
+      ? 'Nothing matches your search. Add a new entry to start encrypting.'
+      : 'Add a new entry to start encrypting.';
 
     entries.forEach(c => {
       const uuid = c.id;
-      // A real <button> so cards are keyboard-focusable and announced as actionable.
-      const card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'contact-card';
+      const type = c.type ?? 'contact';
+      const label = type === 'contact' ? c.username : c.name;
 
-      const type   = c.type ?? 'contact';
-      const icon   = type === 'group' ? '👥' : type === 'server' ? '🌐' : '👤';
-      const label  = type === 'contact' ? c.username : c.name;
-
+      // A real <button> so rows are keyboard-focusable and announced as actionable.
       // Phrasing content only (a <button> may not contain <div>).
-      const avatar = Object.assign(document.createElement('span'), {
-        className:   'contact-avatar',
-        textContent: icon,
-      });
-      const name = Object.assign(document.createElement('span'), {
-        className:   'contact-name',
-        textContent: label,
-      });
-      const chipLabel = c.enabled ? '🔒 Encrypted' : '🔓 Disabled';
-      const chip = Object.assign(document.createElement('span'), {
-        className:   `contact-chip ${c.enabled ? 'chip-on' : 'chip-off'}`,
-        textContent: chipLabel,
-      });
-      const info = document.createElement('span');
-      info.className = 'contact-info';
-      info.append(name, chip);
-      card.append(avatar, info);
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'row';
 
-      card.addEventListener('click', () => {
+      const title = Object.assign(document.createElement('span'), { className: 'row-title', textContent: label });
+      const sub   = Object.assign(document.createElement('span'), { className: 'row-sub',   textContent: entrySub({ ...c, type }) });
+      const main  = Object.assign(document.createElement('span'), { className: 'row-main' });
+      main.append(title, sub);
+
+      // Lit lock = encryption on for this entry. The glyph differs too, so the state
+      // is never colour alone.
+      const mark = document.createElement('span');
+      mark.className = c.enabled ? 'lockmark is-on' : 'lockmark';
+      mark.setAttribute('role', 'img');
+      mark.setAttribute('aria-label', c.enabled ? 'Encryption on' : 'Encryption off');
+      mark.append(icon(c.enabled ? 'i-lock' : 'i-lock-open'));
+
+      row.append(makeAvatar({ ...c, type }), main, mark);
+      row.addEventListener('click', () => {
         if (type === 'group')  openGroupSheet(uuid);
         else if (type === 'server') openServerSheet(uuid);
         else openContactSheet(uuid);
       });
-      list.appendChild(card);
+      list.appendChild(row);
     });
+    updateMasterSub();
   }
 
   document.getElementById('contacts-search').addEventListener('input', e => {
@@ -1452,8 +1591,10 @@
 
   // ─── FAB / unified add screen ─────────────────────────────────────────────────
 
+  const addType = () => document.querySelector('input[name="add-type"]:checked').value;
+
   function resetAddScreen() {
-    document.getElementById('add-type-select').value = 'contact';
+    document.getElementById('add-type-contact').checked = true;
     document.getElementById('add-fields-contact').hidden = false;
     document.getElementById('add-fields-group').hidden   = true;
     document.getElementById('add-fields-server').hidden  = true;
@@ -1471,7 +1612,7 @@
     show('add-contact');
   });
 
-  document.getElementById('add-type-select').addEventListener('change', async (e) => {
+  document.getElementById('add-type').addEventListener('change', async (e) => {
     const type = e.target.value;
     document.getElementById('add-fields-contact').hidden = type !== 'contact';
     document.getElementById('add-fields-group').hidden   = type !== 'group';
@@ -1512,7 +1653,7 @@
 
   function inferFromTab(pattern, groupName) {
     return async () => {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const url = tabs[0]?.url;
       if (!url) return null;
       // exec() throws on URLs it can't parse at all (e.g. "about:blank");
@@ -1536,7 +1677,7 @@
   });
 
   document.getElementById('btn-save-contact').addEventListener('click', async () => {
-    const type  = document.getElementById('add-type-select').value;
+    const type  = addType();
     const errEl = document.getElementById('add-contact-error');
     clearErr(errEl);
     clearFieldErrors(ADD_ENTRY_FIELDS);
@@ -1599,6 +1740,7 @@
       await clearDraft();
       resetAddScreen();
       await showMain();
+      showToast('Saved');
     });
   });
 
@@ -1608,11 +1750,12 @@
     _selectedId = uuid;
     const c    = _contacts[uuid];
     const fpEl = document.getElementById('sheet-contact-fp');
+    setContactAvatar(document.getElementById('sheet-contact-avatar'), c);
     document.getElementById('sheet-contact-name').textContent = c.username;
     document.getElementById('sheet-contact-toggle').checked   = c.enabled;
-    fpEl.textContent = 'Computing…';
+    renderFingerprint(fpEl, 'Computing fingerprint…');
     openDialog('sheet-contact');
-    fpEl.textContent = await keyFingerprint(c.ageRecipient);
+    renderFingerprint(fpEl, await keyFingerprint(c.ageRecipient));
   }
 
   function closeSheet() {
@@ -1667,6 +1810,7 @@
     await bgContactsUpdated();
     closeSheet();
     renderContacts();
+    showToast('Deleted');
   });
 
   document.getElementById('btn-edit-contact').addEventListener('click', () => {
@@ -1713,12 +1857,13 @@
       await saveContacts(_contacts);
       await bgContactsUpdated();
       await showMain();
+      showToast('Changes saved');
     });
   });
 
   // ─── Member picker ────────────────────────────────────────────────────────────
   
-  // Shared bottom-sheet used by both group and server creation/edit screens.
+  // Shared sheet used by both group and server creation/edit screens.
   // _pickerContext: { mode: 'add-group'|'edit-group'|'add-server'|'edit-server',
   //                   maxMembers: number, selectedUUIDs: Set<string> }
 
@@ -1738,8 +1883,10 @@
     const maxMembers = _pickerContext?.maxMembers ?? Infinity;
     contacts.forEach(c => {
       const checked = _pickerContext?.selectedUUIDs.has(c.id) ?? false;
+      // The checkbox is visually hidden but stays focusable; .pick-check draws the state.
       const row = document.createElement('label');
-      row.className = 'member-picker-row';
+      row.className = 'pick-row row';
+      row.dataset.id = c.id;
       const cb = document.createElement('input');
       cb.type    = 'checkbox';
       cb.checked = checked;
@@ -1753,18 +1900,29 @@
           _pickerContext.selectedUUIDs.delete(c.id);
         }
         renderMemberPicker(document.getElementById('member-picker-search').value);
+        // The rows were rebuilt; hand keyboard focus back to the one just toggled.
+        [...list.children].find(r => r.dataset.id === c.id)?.querySelector('input')?.focus();
       });
-      const lbl = document.createElement('span');
-      lbl.textContent = c.username;
-      row.append(cb, lbl);
+      const name = Object.assign(document.createElement('span'), { className: 'row-title', textContent: c.username });
+      const main = Object.assign(document.createElement('span'), { className: 'row-main' });
+      main.append(name);
+      const check = document.createElement('span');
+      check.className = 'pick-check';
+      check.setAttribute('aria-hidden', 'true');
+      check.append(icon('i-check'));
+      row.append(cb, makeAvatar(c, 'avatar-sm'), main, check);
       list.appendChild(row);
     });
     if (!contacts.length) {
       const msg = document.createElement('p');
-      msg.style.cssText = 'color:var(--md-on-surface-variant);font-size:13px;padding:16px;text-align:center;';
+      msg.className = 'pick-empty';
       msg.textContent = q ? 'No contacts match.' : 'No contacts yet — add contacts first.';
       list.appendChild(msg);
     }
+    // Only touch the live region when the text changes, so typing in search is silent.
+    const countEl = document.getElementById('member-picker-count');
+    const countText = `${_pickerContext?.selectedUUIDs.size ?? 0} selected`;
+    if (countEl.textContent !== countText) countEl.textContent = countText;
   }
 
   function openMemberPicker(context) {
@@ -1781,6 +1939,8 @@
   document.getElementById('member-picker-search').addEventListener('input', e => {
     renderMemberPicker(e.target.value);
   });
+  // Cancel discards the picker's changes; Done applies them.
+  document.getElementById('btn-member-picker-cancel').addEventListener('click', closeMemberPicker);
   document.getElementById('btn-member-picker-done').addEventListener('click', () => {
     closeMemberPicker();
     if (!_pickerContext) return;
@@ -1793,13 +1953,13 @@
   function renderMemberChips(containerEl, countEl, uuids, maxMembers) {
     containerEl.replaceChildren();
     const displayMax = maxMembers === Infinity ? '' : ` / ${maxMembers}`;
-    if (countEl) countEl.textContent = `(${uuids.length}${displayMax})`;
+    if (countEl) countEl.textContent = `${uuids.length}${displayMax}`;
     uuids.forEach(uuid => {
       const c = _contacts[uuid];
       if (!c) return;
       const chip = document.createElement('span');
-      chip.className   = 'member-chip';
-      chip.textContent = c.username;
+      chip.className = 'chip';
+      chip.append(makeAvatar(c), c.username);
       containerEl.appendChild(chip);
     });
   }
@@ -1853,13 +2013,13 @@
       document.getElementById('group-channel-id').value = '';
       document.getElementById('group-name').value       = '';
       document.getElementById('group-member-list').replaceChildren();
-      document.getElementById('group-member-count').textContent = `(0 / ${MAX_GROUP_MEMBERS})`;
+      document.getElementById('group-member-count').textContent = `0 / ${MAX_GROUP_MEMBERS}`;
     } else {
       _groupEditMembers = [];
       document.getElementById('edit-group-channel-id').value = '';
       document.getElementById('edit-group-name').value       = '';
       document.getElementById('edit-group-member-list').replaceChildren();
-      document.getElementById('edit-group-member-count').textContent = `(0 / ${MAX_GROUP_MEMBERS})`;
+      document.getElementById('edit-group-member-count').textContent = `0 / ${MAX_GROUP_MEMBERS}`;
       clearErr(document.getElementById('edit-group-error'));
       clearFieldErrors(EDIT_GROUP_FIELDS);
     }
@@ -1900,6 +2060,7 @@
       await saveContacts(_contacts);
       await bgContactsUpdated();
       await showMain();
+      showToast('Changes saved');
     });
   });
 
@@ -1909,6 +2070,7 @@
     _selectedGroupId = uuid;
     const g = _contacts[uuid];
     document.getElementById('sheet-group-name').textContent    = g.name;
+    document.getElementById('sheet-group-sub').textContent     = entrySub(g);
     document.getElementById('sheet-group-channel').textContent = g.channelId;
     document.getElementById('sheet-group-toggle').checked      = g.enabled;
     openDialog('sheet-group');
@@ -1961,13 +2123,13 @@
       document.getElementById('server-id-input').value = '';
       document.getElementById('server-name').value     = '';
       document.getElementById('server-member-list').replaceChildren();
-      document.getElementById('server-member-count').textContent = '(0)';
+      document.getElementById('server-member-count').textContent = '0';
     } else {
       _serverEditMembers = [];
       document.getElementById('edit-server-id-input').value = '';
       document.getElementById('edit-server-name').value     = '';
       document.getElementById('edit-server-member-list').replaceChildren();
-      document.getElementById('edit-server-member-count').textContent = '(0)';
+      document.getElementById('edit-server-member-count').textContent = '0';
       clearErr(document.getElementById('edit-server-error'));
       clearFieldErrors(EDIT_SERVER_FIELDS);
     }
@@ -2008,6 +2170,7 @@
       await saveContacts(_contacts);
       await bgContactsUpdated();
       await showMain();
+      showToast('Changes saved');
     });
   });
 
@@ -2017,6 +2180,7 @@
     _selectedServerId = uuid;
     const s = _contacts[uuid];
     document.getElementById('sheet-server-name').textContent       = s.name;
+    document.getElementById('sheet-server-sub').textContent        = entrySub(s);
     document.getElementById('sheet-server-id-display').textContent = s.serverId;
     document.getElementById('sheet-server-toggle').checked         = s.enabled;
     openDialog('sheet-server');
@@ -2084,40 +2248,43 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    showToast('Contacts exported');
   });
 
   // ─── Import contacts ──────────────────────────────────────────────────────────
 
-  async function doImportContacts(json) {
-    const msgEl = document.getElementById('modal-import-contacts-msg');
-    const modal  = document.getElementById('modal-import-contacts');
+  // One result alert for every outcome: lit check on success, danger seal on failure.
+  function showImportResult(ok, message) {
+    $('modal-import-contacts-title').textContent = ok ? 'Import complete' : 'Import failed';
+    $('modal-import-contacts-msg').textContent   = message;
+    $('import-result-seal').classList.toggle('is-lit', ok);
+    $('import-result-seal').classList.toggle('is-danger', !ok);
+    openDialog('modal-import-contacts');
+  }
 
+  async function doImportContacts(json) {
     // Reject oversized files before JSON.parse to prevent freezing the UI thread.
     if (json.length > IMPORT_SIZE_LIMIT) {
-      msgEl.textContent = 'File too large — contacts exports must be under 1 MB.';
-      openDialog('modal-import-contacts');
+      showImportResult(false, `File too large — contacts exports must be under ${(IMPORT_SIZE_LIMIT / 1024 / 1024).toFixed(1)} MiB.`);
       return;
     }
 
     let parsed;
     try { parsed = JSON.parse(json); }
     catch {
-      msgEl.textContent = 'Could not parse file — make sure it is a valid contacts export.';
-      openDialog('modal-import-contacts');
+      showImportResult(false, 'Could not parse file — make sure it is a valid contacts export.');
       return;
     }
 
     // Reject v1 outright (version !== 2, or bare array without version field).
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== CONTACTS_VERSION) {
-      msgEl.textContent = 'Unsupported format — only v2 exports (version: 2) are accepted. v1 imports are no longer supported.';
-      openDialog('modal-import-contacts');
+      showImportResult(false, 'Unsupported format — only v2 exports (version: 2) are accepted. v1 imports are no longer supported.');
       return;
     }
 
     const entries = parsed.entries;
     if (!Array.isArray(entries)) {
-      msgEl.textContent = 'Unrecognised format — expected a v2 contacts export JSON with an "entries" array.';
-      openDialog('modal-import-contacts');
+      showImportResult(false, 'Unrecognised format — expected a v2 contacts export JSON with an "entries" array.');
       return;
     }
 
@@ -2250,12 +2417,11 @@
     if (serversAdded)   parts.push(`${serversAdded} server${serversAdded !== 1 ? 's' : ''} added`);
     if (skipped)        parts.push(`${skipped} skipped (invalid or duplicate)`);
     if (limitSkipped)   parts.push(`${limitSkipped} skipped (limit reached)`);
-    msgEl.textContent = 'Import complete — ' + (parts.join(', ') || 'nothing changed') + '.';
-    openDialog('modal-import-contacts');
+    showImportResult(true, (parts.join(', ') || 'Nothing changed') + '.');
   }
 
   document.getElementById('btn-import-contacts').addEventListener('click', () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('popup/import-helper.html') });
+    browser.tabs.create({ url: browser.runtime.getURL('popup/import-helper.html') });
   });
 
   let _importHelperTabId = null;
@@ -2264,18 +2430,18 @@
     if (_importHelperTabId === null) return;
     const id = _importHelperTabId;
     _importHelperTabId = null;
-    chrome.tabs.remove(id).catch(() => {});
+    browser.tabs.remove(id).catch(() => {});
   }
 
   async function checkPendingImport() {
     try {
-      const data = await chrome.storage.session.get(['pending_import', 'pending_import_tab']);
+      const data = await browser.storage.session.get(['pending_import', 'pending_import_tab']);
       if (!data.pending_import) return;
       // If the vault is locked at this point, the user must have manually locked it
       if (document.getElementById('screen-lock').hidden === false) {
-        await chrome.storage.session.remove(['pending_import', 'pending_import_tab']);
+        await browser.storage.session.remove(['pending_import', 'pending_import_tab']);
         if (data.pending_import_tab != null)
-          chrome.tabs.remove(data.pending_import_tab).catch(() => {});
+          browser.tabs.remove(data.pending_import_tab).catch(() => {});
         return;
       }
       // Wait for showMain() contact load to finish before import.
@@ -2286,7 +2452,7 @@
         _mainReadyPromise = null;
       }
       _importHelperTabId = data.pending_import_tab ?? null;
-      await chrome.storage.session.remove(['pending_import', 'pending_import_tab']);
+      await browser.storage.session.remove(['pending_import', 'pending_import_tab']);
       await doImportContacts(data.pending_import);
     } catch {}
   }
@@ -2310,9 +2476,9 @@
     const ageRecipient = await getAgeRecipient();
     if (!ageRecipient) return;
     document.getElementById('my-key-box').textContent = ageRecipient;
-    document.getElementById('my-key-fp').textContent = 'Computing fingerprint…';
+    renderFingerprint(document.getElementById('my-key-fp'), 'Computing fingerprint…');
     show('my-key');
-    document.getElementById('my-key-fp').textContent = await keyFingerprint(ageRecipient);
+    renderFingerprint(document.getElementById('my-key-fp'), await keyFingerprint(ageRecipient));
   }
 
   document.getElementById('btn-copy-key').addEventListener('click', async () => {
@@ -2322,11 +2488,12 @@
     const btn   = document.getElementById('btn-copy-key');
     const label = document.getElementById('btn-copy-key-label');
     btn.classList.add('copied');
-    label.textContent = 'Copied!';
+    label.textContent = 'Copied';
+    announce('Public key copied');
     setTimeout(() => {
       btn.classList.remove('copied');
       label.textContent = 'Copy';
-    }, 1800);
+    }, 1600);
   });
 
   // ─── Export private key ───────────────────────────────────────────────────────
@@ -2434,10 +2601,13 @@
   }
   document.getElementById('btn-export-copy').addEventListener('click', async () => {
     const blob = document.getElementById('export-key-blob').value;
-    try { await navigator.clipboard.writeText(blob); } catch { }
+    let copied = false;
+    try { await navigator.clipboard.writeText(blob); copied = true; } catch { }
     closeExportDisplay();
+    if (copied) showToast('Copied to clipboard');
   });
   document.getElementById('btn-export-close').addEventListener('click', closeExportDisplay);
+  document.getElementById('btn-export-close-x').addEventListener('click', closeExportDisplay);
 
   // ─── Keypair regeneration ─────────────────────────────────────────────────────
 
@@ -2456,7 +2626,9 @@
     document.getElementById('setup-passphrase2').value = '';
     clearErr(document.getElementById('setup-error'));
     clearFieldErrors(SETUP_FIELDS);
-    show('setup');
+    updateStrength();
+    show('setup', 'back');
+    showToast('Keypair regenerated');
   }
 
   wireConfirmModal({
@@ -2552,10 +2724,7 @@
       await saveContacts(_contacts);
 
       resetChangePassModal();
-      const origText = 'Change passphrase';
-      btn.textContent = '✓ Done';
-      btn.disabled    = false;
-      setTimeout(() => { btn.textContent = origText; }, 1500);
+      showToast('Passphrase changed');
 
     } catch (e) {
       // Re-enable the controls before focusing a field below.
@@ -2598,17 +2767,10 @@
   async function keyFingerprint(recipient) {
     if (!recipient) return '(no key)';
     try {
-      // 64 bytes → 128 hex chars, displayed as 8 groups of 4 per line.
       const bytes = shake256(new TextEncoder().encode(recipient), 64);
-
       let hex = '';
       for (const b of bytes) hex += b.toString(16).padStart(2, '0');
-      hex = hex.toUpperCase();
-      return hex.match(/.{1,4}/g).reduce((lines, chunk, i) => {
-        if (i % 8 === 0) lines.push('');
-        lines[lines.length - 1] += (lines[lines.length - 1] ? ' ' : '') + chunk;
-        return lines;
-      }, []).join('\n');
+      return hex.toUpperCase().match(/.{4}/g).join(' ');
     } catch {
       return recipient.slice(0, 16) + '…' + recipient.slice(-12);
     }
@@ -2623,15 +2785,15 @@
     'about-license-link': 'https://github.com/SenseiDeElite/agecord/blob/main/LICENSE',
   };
   Object.entries(_aboutLinks).forEach(([id, url]) => {
-    document.getElementById(id).addEventListener('click', () => { chrome.tabs.create({ url }); });
+    document.getElementById(id).addEventListener('click', () => { browser.tabs.create({ url }); });
   });
 
   document.getElementById('about-notices-link').addEventListener('click', () => {
-    chrome.tabs.create({ url: chrome.runtime.getURL('licenses.html') });
+    browser.tabs.create({ url: browser.runtime.getURL('licenses.html') });
   });
 
   function showAbout() {
-    const ver = chrome.runtime.getManifest().version;
+    const ver = browser.runtime.getManifest().version;
     document.getElementById('about-version').textContent = 'v' + ver;
     show('about');
   }
