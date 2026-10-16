@@ -1068,6 +1068,16 @@ function scanExisting() {
   processQuotedMessages();
 }
 
+// Discord wraps spoiler attachments in a hashed-class container (spoilerContainer__xxxx)
+// inside the attachment's mosaicItem_ element, around the file card. Match by substring.
+const NATIVE_SPOILER_SEL = '[class*="spoilerContainer"]';
+
+// True when the sender marked this attachment as a spoiler.
+function isSpoilerAttachment(fileCard) {
+  const mosaicItem = fileCard?.closest('div[class*="mosaicItem_"]');
+  return !!mosaicItem?.querySelector(NATIVE_SPOILER_SEL);
+}
+
 // Hide a Discord file card (and its mosaic wrapper) so no empty space remains
 // where the raw attachment was. Returns the mosaic wrapper (or null) as an
 // insertAfter anchor for the caller.
@@ -2559,10 +2569,15 @@ const _attachmentInProgress = new Map();
  
 // Centralizes attachment state resets and blob release handling.
 // Preserves cache on unlock; fully clears state on relock/session changes.
+// cardKeys of spoiler attachments the user has revealed; survives virtual-scroller
+// re-renders so a video being watched isn't re-covered when it scrolls back in.
+const _revealedAttachments = new Set();
+
 function _wipeAttachmentState({ includeCache = true } = {}) {
   _inFlight.clear();
   _attachmentInProgress.clear();
   if (includeCache) {
+    _revealedAttachments.clear();
     _revokeAllCachedMedia();
     _processedIds.clear();
     _decryptedCache.clear();
@@ -2661,9 +2676,40 @@ function _buildDownloadCard(url, strippedName) {
   return card;
 }
 
+// Covers decrypted media until the user clicks. The content is rendered (so layout and
+// size are final) but stays visibility:hidden and inert until revealed, so it can't be
+// seen, focused or played through the cover.
+function _wrapAttachmentSpoiler(content, cardKey) {
+  const sp = _agcEl('div', 'agc-att-spoiler');
+  const innerEl = _agcEl('div', 'agc-att-spoiler-inner');
+  innerEl.appendChild(content);
+  sp.appendChild(innerEl);
+
+  if (_revealedAttachments.has(cardKey)) {
+    sp.classList.add('is-revealed');
+    return sp;
+  }
+
+  const cover = _agcEl('button', 'agc-att-spoiler-cover');
+  cover.type = 'button';
+  cover.setAttribute('aria-label', 'Spoiler — click to reveal');
+  cover.appendChild(_agcEl('span', 'agc-att-spoiler-label', 'Spoiler'));
+  cover.addEventListener('click', (e) => {
+    // Reveal only; the click must not reach Discord or the media underneath.
+    e.preventDefault();
+    e.stopPropagation();
+    _revealedAttachments.add(cardKey);
+    sp.classList.add('is-revealed');
+    cover.remove();
+  });
+  sp.appendChild(cover);
+  return sp;
+}
+
 function renderDecryptedAttachment(liElement, fileCard, url, originalName, type, cdnUrl) {
   const strippedName = stripAgeSuffix(originalName);
  
+  const isSpoiler = isSpoilerAttachment(fileCard);
   const mosaicItem = hideFileCard(fileCard);
  
   // Remove any previous render for this specific attachment only.
@@ -2686,15 +2732,17 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
   wrapper.dataset.ageAttachment = cardKey;
   wrapper.className = 'agc agc-att';
 
+  let body;
   if (type === 'image') {
-    wrapper.appendChild(_buildImageAttachment(url, strippedName));
+    body = _buildImageAttachment(url, strippedName);
   } else if (type === 'video') {
-    wrapper.appendChild(_buildVideoAttachment(url));
+    body = _buildVideoAttachment(url);
   } else if (type === 'audio') {
-    wrapper.appendChild(_buildAudioAttachment(url));
+    body = _buildAudioAttachment(url);
   } else {
-    wrapper.appendChild(_buildDownloadCard(url, strippedName));
+    body = _buildDownloadCard(url, strippedName);
   }
+  wrapper.appendChild(isSpoiler ? _wrapAttachmentSpoiler(body, cardKey) : body);
  
   // Insert after the hidden mosaic item (or file card) in the DOM flow.
   const insertAfter = mosaicItem ?? fileCard;
