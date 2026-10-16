@@ -1104,7 +1104,7 @@ function showQuotedPlaceholder(container, reason) {
   if (!hasAgeFile) return;
   container.querySelectorAll('[data-age-msg], [data-age-msg-slot], [data-age-attachment]')
     .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
-  const text = reason === 'disabled' ? _status('Decryption disabled.') : _status('Extension locked.');
+  const text = reason === 'disabled' ? _status('Decryption disabled.', 'lock-open') : _status('Extension locked.', 'lock');
   renderDecryptedMessage(container, text, undefined, lastAnchor);
 }
 
@@ -1250,10 +1250,24 @@ const _AGC_ICONS = {
     ['path', { d: 'M8 10.5V8a4 4 0 0 1 8 0v2.5' }],
     ['circle', { cx: 12, cy: 15.6, r: 1.15, ..._DOT }],
   ]],
+  'lock-open': [1.75, [
+    ['rect', { x: 4.75, y: 10.5, width: 14.5, height: 10.25, rx: 3.25, ..._FILL }],
+    ['path', { d: 'M8 10.5V7.75a4 4 0 0 1 7.6-1.75' }],
+    ['circle', { cx: 12, cy: 15.6, r: 1.15, ..._DOT }],
+  ]],
+  'key': [1.75, [
+    ['circle', { cx: 7.5, cy: 12, r: 4.5, ..._FILL }],
+    ['circle', { cx: 7.5, cy: 12, r: 1.1, ..._DOT }],
+    ['path', { d: 'M12 12h8.75M17.25 12v3.25M20.75 12v2.25' }],
+  ]],
   'info': [1.75, [
     ['circle', { cx: 12, cy: 12, r: 9, ..._FILL }],
     ['path', { d: 'M12 11v5.5' }],
     ['circle', { cx: 12, cy: 7.75, r: 1.1, ..._DOT }],
+  ]],
+  'alert': [2.25, [
+    ['path', { d: 'M12 6.5v7.25' }],
+    ['circle', { cx: 12, cy: 17.75, r: 1.2, ..._DOT }],
   ]],
   'check': [2.5, [
     ['path', { d: 'm6 12.75 4 4L18.25 8' }],
@@ -2855,7 +2869,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
   if (contactsLoaded() && !getActiveEntry()) {
     _attachmentInProgress.delete(_attachId(liElement, cdnUrl));
     const _noEntryMosaicItem = hideFileCard(fileCard);
-    renderDecryptedMessage(liElement, _status('No entry configured for this channel.'), undefined, _noEntryMosaicItem ?? fileCard);
+    renderDecryptedMessage(liElement, _status('No entry configured for this channel.', 'key'), undefined, _noEntryMosaicItem ?? fileCard);
     return;
   }
 
@@ -2866,7 +2880,7 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
   if (isForwardedAttachment(liElement)) {
     _attachmentInProgress.delete(_attachId(liElement, cdnUrl));
     const mosaicItem = hideFileCard(fileCard);
-    renderDecryptedMessage(liElement, _status('Message forwarding is not supported.', true), null, mosaicItem ?? fileCard);
+    renderDecryptedMessage(liElement, _status('Message forwarding is not supported.', 'alert', true), null, mosaicItem ?? fileCard);
     return;
   }
 
@@ -2941,12 +2955,12 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
         if (precheck.reason === 'locked') {
           // Extension locked mid-flight — retriable once unlocked.
           mosaicItem = hideFileCard(fileCard);
-          renderDecryptedMessage(liElement, _status('Extension locked.'));
+          renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'));
         } else if (precheck.reason === 'no-entry') {
           // Skips channels without configured entries.
           // Clears attachment state so future updates can retry.
           mosaicItem = hideFileCard(fileCard);
-          renderDecryptedMessage(liElement, _status('No entry configured for this channel.'));
+          renderDecryptedMessage(liElement, _status('No entry configured for this channel.', 'key'));
         }
         // else reason === 'retry': contacts genuinely haven't arrived from the
         // background yet — the finally block releases so the next UNLOCK/
@@ -2969,7 +2983,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
       // rather than attempt decryption with a byte layout the worker doesn't expect.
       if (new Uint8Array(fileBuffer)[0] !== SIG_VERSION) {
         renderDecryptedMessage(liElement,
-          _status('This message was signed using an older signature version.'),
+          _status('This message was signed using an older signature version.', 'info'),
           attachId, mosaicItem ?? fileCard);
         return;
       }
@@ -3002,7 +3016,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
       if (_generation !== capturedGeneration) return;
 
       if (!workerResult.sigValid) {
-        renderDecryptedMessage(liElement, _status('Signature invalid — possible tampering.', true), attachId, mosaicItem ?? fileCard);
+        renderDecryptedMessage(liElement, _status('Signature invalid — possible tampering.', 'alert', true), attachId, mosaicItem ?? fileCard);
         return;
       }
 
@@ -3023,11 +3037,11 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
       if ((e?.message ?? e) === 'NOT_UNLOCKED') {
         // NOT_UNLOCKED indicates a worker-state race; otherwise treat it as a regression.
         console.error('[age] NOT_UNLOCKED decrypting text attachment — worker desynced from session state:', { attachId });
-        renderDecryptedMessage(liElement, _status('Extension locked.'), attachId, _errMosaicItem ?? fileCard);
+        renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'), attachId, _errMosaicItem ?? fileCard);
         return;
       }
       console.info('[age] message.txt.age decrypt skipped (not a valid age file or not encrypted):', e?.message ?? e);
-      renderDecryptedMessage(liElement, _status("Couldn't decrypt."), attachId, _errMosaicItem ?? fileCard);
+      renderDecryptedMessage(liElement, _status("Couldn't decrypt.", 'lock-open'), attachId, _errMosaicItem ?? fileCard);
     } finally {
       // Single release point for every exit above (success, each error/skip
       // branch, and thrown errors) — replaces what used to be a separate
@@ -3108,11 +3122,11 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     if (!precheck.ready) {
       if (precheck.reason === 'locked') {
         const _lockedMosaicItem = hideFileCard(fileCard);
-        renderDecryptedMessage(liElement, _status('Extension locked.'), undefined, _lockedMosaicItem ?? fileCard);
+        renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'), undefined, _lockedMosaicItem ?? fileCard);
       } else if (precheck.reason === 'no-entry') {
         // contacts loaded, entry missing (including zero contacts configured) → not a retriable error
         const _noEMosaicItem = hideFileCard(fileCard);
-        renderDecryptedMessage(liElement, _status('No entry configured for this channel.'), undefined, _noEMosaicItem ?? fileCard);
+        renderDecryptedMessage(liElement, _status('No entry configured for this channel.', 'key'), undefined, _noEMosaicItem ?? fileCard);
       }
       // reason === 'retry': contacts haven't arrived yet — release silently, matches text path.
       return;
@@ -3128,7 +3142,7 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     if (new Uint8Array(fileBuffer)[0] !== SIG_VERSION) {
       const _verMosaicItem = hideFileCard(fileCard);
       renderDecryptedMessage(liElement,
-        _status('This file was signed using an older signature version.'),
+        _status('This file was signed using an older signature version.', 'info'),
         undefined, _verMosaicItem ?? fileCard);
       return;
     }
@@ -3188,7 +3202,7 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     if (!workerResult.sigValid) {
       liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
         .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
-      renderDecryptedMessage(liElement, _status('Signature invalid — possible tampering.', true), undefined, _attMosaicItem ?? fileCard);
+      renderDecryptedMessage(liElement, _status('Signature invalid — possible tampering.', 'alert', true), undefined, _attMosaicItem ?? fileCard);
       return;
     }
 
@@ -3215,10 +3229,10 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
       .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
     if ((e?.message ?? e) === 'NOT_UNLOCKED') {
       // Only expected for a RELOCK race; already logged by the catch handler.
-      renderDecryptedMessage(liElement, _status('Extension locked.'), undefined, _earlyMosaicItem ?? fileCard);
+      renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'), undefined, _earlyMosaicItem ?? fileCard);
       return;
     }
-    renderDecryptedMessage(liElement, _status("Couldn't decrypt."), undefined, _earlyMosaicItem ?? fileCard);
+    renderDecryptedMessage(liElement, _status("Couldn't decrypt.", 'lock-open'), undefined, _earlyMosaicItem ?? fileCard);
   } finally {
     // Centralized cleanup for all exit paths.
     _attachmentInProgress.delete(attachId);
@@ -3231,13 +3245,16 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
  
 // ─── Status badge helpers ─────────────────────────────────────────────────────
 
-function _status(text, danger = false) {
-  return { status: text, danger };
+// Tagged status notice: text + icon name (see _AGC_ICONS). Danger tint is
+// reserved for errors; locked/disabled/info states stay unlit.
+function _status(text, icon, danger = false) {
+  return { status: text, icon, danger };
 }
 
-// Builds a status chip around selectable text.
-function _makeStatusBadge(text, danger) {
+// Builds a status chip: icon (decorative, non-selectable) + selectable text.
+function _makeStatusBadge(text, icon, danger) {
   const outer = _agcEl('span', danger ? 'agc-status is-danger' : 'agc-status');
+  outer.appendChild(_agcIcon(icon));
   outer.appendChild(_agcEl('span', 'agc-status-text', text));
   return outer;
 }
@@ -3291,7 +3308,7 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
     wrapper.appendChild(_makeDecryptingBadge());
   } else if (typeof plaintext === 'object') {
     // Tagged status notice from _status().
-    wrapper.appendChild(_makeStatusBadge(plaintext.status, plaintext.danger));
+    wrapper.appendChild(_makeStatusBadge(plaintext.status, plaintext.icon, plaintext.danger));
   } else {
     // Cap at 4 000 characters — senders already enforce this, but guard anyway
     // to prevent runaway DOM growth from crafted messages.
@@ -3352,8 +3369,8 @@ function showAgePlaceholder(li, reason) {
     .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
 
   const text = reason === 'disabled'
-    ? _status('Decryption disabled.')
-    : _status('Extension locked.');
+    ? _status('Decryption disabled.', 'lock-open')
+    : _status('Extension locked.', 'lock');
 
   renderDecryptedMessage(li, text, undefined, lastAnchor);
 }
