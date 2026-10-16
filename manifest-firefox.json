@@ -48,6 +48,9 @@
       "js": [
         "content/content-loader.js"
       ],
+      "css": [
+        "content/content.css"
+      ],
       "run_at": "document_idle"
     }
   ],
