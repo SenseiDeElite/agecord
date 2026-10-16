@@ -1228,10 +1228,6 @@ function isJumboEmoji(plaintext) {
 // no actual syntax highlighting is performed.
 
 // ─── Obsidian UI helpers ──────────────────────────────────────────────────────
-// All styling lives in content/content.css (injected by the manifest). Top-level
-// wrappers carry the `agc` class, which holds the design tokens; everything inside
-// is plain classes. Icon geometry mirrors the popup's SVG sprite (popup/popup.html):
-// 24x24 grid, round caps and joins, enclosed forms filled at .18.
 
 const _SVG_NS = 'http://www.w3.org/2000/svg';
 const _FILL = { fill: 'currentColor', 'fill-opacity': .18 };
@@ -1305,8 +1301,6 @@ function _agcEl(tag, cls, text) {
   return el;
 }
 
-// Lit lock mark: the "this is live, decrypted" marker. Not selectable, so copied
-// message text never includes it.
 function _makeLockMark() {
   const m = _agcEl('span', 'agc-lock');
   m.setAttribute('role', 'img');
@@ -2755,7 +2749,6 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
 
   header.append(iconWrap, nameMeta, btn);
 
-  // ── Memory note: inset tonal well, concentric with the card ───────────────
   const warn = _agcEl('div', 'agc-note');
   warn.append(
     _agcIcon('info'),
