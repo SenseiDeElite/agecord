@@ -178,15 +178,14 @@
 
   .agc-status {
     display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-    padding: 3px 12px 3px 8px; border-radius: 999px;
+    padding: 3px 12px; border-radius: 999px;
     font: 600 13px/18px var(--agc-font); letter-spacing: -.005em;
     color: var(--agc-ink-2); background: var(--agc-tile-2);
     box-shadow: inset 0 0 0 1px var(--agc-hair);
-    .agc-ic { font-size: 16px; color: var(--agc-ink-3); }
     &.is-danger { color: var(--agc-danger); background: oklch(from var(--agc-danger-lit) l c h / .14); box-shadow: none; }
-    &.is-danger .agc-ic { color: var(--agc-danger); }
   }
   .agc-status-text { min-width: 0; user-select: text; }
+  .agc-status:has(> .agc-spinner) { padding-left: 8px; }
   .agc-spinner {
     width: 16px; height: 16px; flex: none; border-radius: 50%;
     background: conic-gradient(from 0turn, transparent 8%, var(--agc-accent));
