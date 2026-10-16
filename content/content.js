@@ -382,7 +382,9 @@ function getActiveEntry(channelIdOverride, serverIdOverride) {
 // Pass the ids resolved for the composer that is sending (see getSendChannelId());
 // with no args this checks the URL's parent channel only.
 function isEncryptionActive(channelIdOverride, serverIdOverride) {
-  return canDecrypt() && !!getActiveEntry(channelIdOverride, serverIdOverride);
+  const active = getActiveEntry(channelIdOverride, serverIdOverride);
+  // Send side only: an entry with no recipients never encrypts.
+  return canDecrypt() && !!active && entryHasRecipients(active.entry);
 }
 
 // Authoritative outbound decision, evaluated at encryption time.
@@ -396,6 +398,7 @@ function resolveUploadGate(channelId, guildId) {
   if (!canDecrypt()) return { outcome: 'passthrough', reason: 'Agecord is locked.' };
   const active = getActiveEntry(channelId, guildId);
   if (!active?.entry) return { outcome: 'passthrough', reason: 'No encrypted contact configured for this channel.' };
+  if (!entryHasRecipients(active.entry)) return { outcome: 'passthrough', reason: 'No recipients for this entry.' };
   return { outcome: 'encrypt', entry: active.entry, channelId: active.channelId };
 }
  
@@ -550,6 +553,13 @@ function buildSignedAgeFile(ageBytes, entry, channelId) {
 // Returns recipient strings for outbound encryption.
 // Includes all targets plus selfRecipient.
 // Shared by text and file encryption paths.
+// True when the entry itself has at least one usable recipient (self excluded).
+function entryHasRecipients(entry) {
+  const contacts = currentContacts();
+  if (entry.type === 'contact' || !entry.type) return !!entry.ageRecipient;
+  return (entry.memberIds ?? []).some(id => !!contacts[id]?.ageRecipient);
+}
+
 function buildRecipientList(entry) {
   const contacts   = currentContacts();
   const recipients = [];
@@ -807,7 +817,7 @@ async function clearViaPageContext() {
 // Shared by typed-send and long-text paste paths.
 async function encryptTextAsMessage(plain, entry, channelId) {
   const recipients = buildRecipientList(entry);
-  if (recipients.length === 0) throw new Error('No recipients — is an encrypted contact selected?');
+  if (!entryHasRecipients(entry) || recipients.length === 0) throw new Error('No recipients — is an encrypted contact selected?');
   const ageBuffer = await workerCompressEncrypt(plain, recipients);
   const ageBytes  = new Uint8Array(ageBuffer);
   return buildSignedAgeFile(ageBytes, entry, channelId);
@@ -876,7 +886,7 @@ async function handleEncryptClick() {
   // Pass the resolved composer channelId explicitly so split-view thread
   // composers match entries keyed by the thread's channel ID.
   const active = sendChannelId ? getActiveEntry(sendChannelId, sendServerId) : null;
-  if (!sendChannelId || !active) { _sending = false; return; }
+  if (!sendChannelId || !active || !entryHasRecipients(active.entry)) { _sending = false; return; }
 
   const rawPlain = await getSlateTextViaPageContext();
   if (!rawPlain) { _sending = false; return; }
@@ -1217,117 +1227,126 @@ function isJumboEmoji(plaintext) {
 // HLJS_LANGUAGES used only to decide whether to show a language header —
 // no actual syntax highlighting is performed.
 
-const _codeBlockBg      = '#111827';
-const _codeBlockBorder  = '#3a4a6b';
-const _codeBlockHeader  = '#1c2840';
-const _codeBlockText    = '#cdd9f0';
-const _codeBlockLangFg  = '#889ce6';
+// ─── Obsidian UI helpers ──────────────────────────────────────────────────────
+// All styling lives in content/content.css (injected by the manifest). Top-level
+// wrappers carry the `agc` class, which holds the design tokens; everything inside
+// is plain classes. Icon geometry mirrors the popup's SVG sprite (popup/popup.html):
+// 24x24 grid, round caps and joins, enclosed forms filled at .18.
+
+const _SVG_NS = 'http://www.w3.org/2000/svg';
+const _FILL = { fill: 'currentColor', 'fill-opacity': .18 };
+const _DOT  = { fill: 'currentColor', stroke: 'none' };
+
+// name → [stroke-width, [[tag, attrs], ...]]
+const _AGC_ICONS = {
+  'lock': [1.75, [
+    ['rect', { x: 4.75, y: 10.5, width: 14.5, height: 10.25, rx: 3.25, ..._FILL }],
+    ['path', { d: 'M8 10.5V8a4 4 0 0 1 8 0v2.5' }],
+    ['circle', { cx: 12, cy: 15.6, r: 1.15, ..._DOT }],
+  ]],
+  'lock-open': [1.75, [
+    ['rect', { x: 4.75, y: 10.5, width: 14.5, height: 10.25, rx: 3.25, ..._FILL }],
+    ['path', { d: 'M8 10.5V7.75a4 4 0 0 1 7.6-1.75' }],
+    ['circle', { cx: 12, cy: 15.6, r: 1.15, ..._DOT }],
+  ]],
+  'key': [1.75, [
+    ['circle', { cx: 7.5, cy: 12, r: 4.5, ..._FILL }],
+    ['circle', { cx: 7.5, cy: 12, r: 1.1, ..._DOT }],
+    ['path', { d: 'M12 12h8.75M17.25 12v3.25M20.75 12v2.25' }],
+  ]],
+  'info': [1.75, [
+    ['circle', { cx: 12, cy: 12, r: 9, ..._FILL }],
+    ['path', { d: 'M12 11v5.5' }],
+    ['circle', { cx: 12, cy: 7.75, r: 1.1, ..._DOT }],
+  ]],
+  'alert': [2.25, [
+    ['path', { d: 'M12 6.5v7.25' }],
+    ['circle', { cx: 12, cy: 17.75, r: 1.2, ..._DOT }],
+  ]],
+  'check': [2.5, [
+    ['path', { d: 'm6 12.75 4 4L18.25 8' }],
+  ]],
+  'copy': [1.9, [
+    ['rect', { x: 9, y: 9, width: 11, height: 11, rx: 3, ..._FILL }],
+    ['path', { d: 'M15 9V7.5A2.5 2.5 0 0 0 12.5 5h-5A2.5 2.5 0 0 0 5 7.5v5A2.5 2.5 0 0 0 7.5 15H9' }],
+  ]],
+  'doc': [1.75, [
+    ['path', { d: 'M7.5 3.75h6L19 9.25V17.5a2.75 2.75 0 0 1-2.75 2.75h-8.5A2.75 2.75 0 0 1 5 17.5v-11A2.75 2.75 0 0 1 7.75 3.75z', ..._FILL }],
+    ['path', { d: 'M13.5 4v4.25a1 1 0 0 0 1 1H19M8.75 13.25h6.5M8.75 16.5h4' }],
+  ]],
+  'download': [1.8, [
+    ['path', { d: 'M12 4.5v10M8.25 10.75 12 14.5l3.75-3.75M5 14.5v2.25A2.75 2.75 0 0 0 7.75 19.5h8.5A2.75 2.75 0 0 0 19 16.75V14.5' }],
+  ]],
+};
+
+function _agcIcon(name) {
+  const [sw, parts] = _AGC_ICONS[name];
+  const svg = document.createElementNS(_SVG_NS, 'svg');
+  svg.setAttribute('class', 'agc-ic');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', String(sw));
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [tag, attrs] of parts) {
+    const el = document.createElementNS(_SVG_NS, tag);
+    for (const k in attrs) el.setAttribute(k, String(attrs[k]));
+    svg.appendChild(el);
+  }
+  return svg;
+}
+
+function _agcEl(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+// Lit lock mark: the "this is live, decrypted" marker. Not selectable, so copied
+// message text never includes it.
+function _makeLockMark() {
+  const m = _agcEl('span', 'agc-lock');
+  m.setAttribute('role', 'img');
+  m.setAttribute('aria-label', 'Encrypted');
+  m.appendChild(_agcIcon('lock'));
+  return m;
+}
 
 function renderCodeBlock(lang, codeText) {
   const showHeader = lang && HLJS_LANGUAGES.has(lang.toLowerCase());
 
-  const outer = document.createElement('div');
-  outer.style.cssText = [
-    'display:block',
-    `background:${_codeBlockBg}`,
-    `border:1px solid ${_codeBlockBorder}`,
-    `border-left:3px solid ${_codeBlockLangFg}`,
-    'border-radius:8px',
-    'overflow:hidden',
-    'margin:4px 0',
-    'font-family:monospace',
-    'font-size:0.875em',
-    'position:relative',
-  ].join(';');
+  const outer  = _agcEl('div', 'agc-codeblock');
+  const header = _agcEl('div', showHeader ? 'agc-codehead has-lang' : 'agc-codehead');
 
-  const header = document.createElement('div');
-  header.style.cssText = [
-    `background:${showHeader ? _codeBlockHeader : _codeBlockBg}`,
-    showHeader ? `border-bottom:1px solid ${_codeBlockBorder}` : '',
-    'padding:4px 8px 4px 12px',
-    'display:flex',
-    'align-items:center',
-    'justify-content:space-between',
-    'user-select:none',
-    'min-height:28px',
-  ].join(';');
+  // Empty span keeps the copy chip right-aligned when there is no language label.
+  header.appendChild(showHeader ? _agcEl('span', 'agc-lang', lang) : document.createElement('span'));
 
-  const langLabel = document.createElement('span');
-  if (showHeader) {
-    langLabel.textContent = lang;
-    langLabel.style.cssText = [
-      `color:${_codeBlockLangFg}`,
-      'font-size:0.875em',
-      'letter-spacing:0.04em',
-      'font-weight:500',
-      'min-width:0',
-      'overflow:hidden',
-      'text-overflow:ellipsis',
-      'white-space:nowrap',
-      'margin-right:8px',
-    ].join(';');
-  }
-  header.appendChild(langLabel);
-
-  const copyBtn = document.createElement('button');
-  copyBtn.style.cssText = [
-    'background:none',
-    'border:none',
-    'padding:2px',
-    'margin:0',
-    'cursor:pointer',
-    'user-select:none',
-    'flex-shrink:0',
-    'font-size:1em',
-    'line-height:1',
-    'opacity:0.65',
-    'transition:opacity 120ms',
-    'display:inline-flex',
-    'align-items:center',
-    'justify-content:center',
-  ].join(';');
-  const _copyIcon = document.createElement('span');
-  _copyIcon.style.cssText = 'font-size:.9em;position:relative;top:-.2em;left:-.1em;display:inline-block;transition:opacity 120ms';
-  _copyIcon.textContent = '\uD83D\uDCC4';
-  const _copyIconFront = document.createElement('span');
-  _copyIconFront.style.cssText = 'position:absolute;top:.25em;left:.25em';
-  _copyIconFront.textContent = '\uD83D\uDCC4';
-  _copyIcon.appendChild(_copyIconFront);
-  copyBtn.appendChild(_copyIcon);
+  const copyBtn = _agcEl('button', 'agc-chip');
   copyBtn.type = 'button';
   copyBtn.setAttribute('aria-label', 'Copy code');
   copyBtn.title = 'Copy code';
-  // Mirror hover emphasis for keyboard focus too.
-  copyBtn.addEventListener('mouseover', () => { copyBtn.style.opacity = '1'; });
-  copyBtn.addEventListener('mouseout',  () => { copyBtn.style.opacity = '0.65'; });
-  copyBtn.addEventListener('focus',     () => { copyBtn.style.opacity = '1'; });
-  copyBtn.addEventListener('blur',      () => { copyBtn.style.opacity = '0.65'; });
+  const setCopied = (copied) => {
+    copyBtn.classList.toggle('copied', copied);
+    copyBtn.replaceChildren(_agcIcon(copied ? 'check' : 'copy'), _agcEl('span', '', copied ? 'Copied' : 'Copy'));
+  };
+  setCopied(false);
   let _copyResetTimer = null;
   copyBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(codeText).catch(() => {});
-    _copyIconFront.style.display = 'none';
-    _copyIcon.textContent = '\u2714\uFE0F';
-    _copyIcon.appendChild(_copyIconFront); // re-attach (textContent detaches child nodes)
+    setCopied(true);
     if (_copyResetTimer !== null) clearTimeout(_copyResetTimer);
     _copyResetTimer = setTimeout(() => {
-      _copyIcon.textContent = '\uD83D\uDCC4';
-      _copyIconFront.style.display = '';
-      _copyIcon.appendChild(_copyIconFront);
+      setCopied(false);
       _copyResetTimer = null;
     }, 1500);
   });
   header.appendChild(copyBtn);
   outer.appendChild(header);
 
-  const pre = document.createElement('pre');
-  pre.style.cssText = [
-    'margin:0',
-    'padding:10px 12px',
-    'overflow-x:auto',
-    'white-space:pre',
-    `color:${_codeBlockText}`,
-  ].join(';');
-
+  const pre  = _agcEl('pre', 'agc-codepre');
   const code = document.createElement('code');
   code.textContent = codeText;
   pre.appendChild(code);
@@ -1371,6 +1390,18 @@ function splitBlockSegments(text) {
       continue;
     }
 
+    // Single-line fence: ```text``` is a code block in Discord (whole content is code;
+    // no language is parsed). The first closing ``` ends it; any remainder (e.g. the
+    // extra ` of ```text````) renders as text on the next line.
+    const oneLine = /^```(?!`)(.*?\S.*?)```(.*)$/.exec(line.trim());
+    if (oneLine) {
+      flushText();
+      flushQuote();
+      segments.push({ type: 'code', lang: '', text: oneLine[1] });
+      if (oneLine[2].trim()) textLines.push(oneLine[2]);
+      continue;
+    }
+
     const fenceMatch = /^```([^\s`]*)$/.exec(line.trimEnd());
     if (fenceMatch) {
       flushText();
@@ -1407,24 +1438,10 @@ function splitBlockSegments(text) {
 // with resets (margin, padding, border) that can override inline styles and hide
 // the left-border stripe. A plain <div> has no such pre-existing styles.
 function renderBlockquote(lines, emojiSize = 22) {
-  const bq = document.createElement('div');
-  bq.style.cssText = [
-    'display:block',
-    'width:100%',
-    'max-width:100%',
-    'min-width:0',
-    'margin:4px 0',
-    'padding:2px 0 2px 10px',
-    `border-left:3px solid ${_codeBlockLangFg}`,  // matches code-block accent stripe
-    'opacity:0.9',
-    'box-sizing:border-box',
-    'overflow-wrap:anywhere',
-    'word-break:break-word',
-  ].join(';');
+  const bq = _agcEl('div', 'agc-quote');
 
   lines.forEach((line, i) => {
-    const lineSpan = document.createElement('span');
-    lineSpan.style.cssText = 'display:inline-flex;max-width:100%;align-items:center;flex-wrap:wrap;gap:0 2px;overflow-wrap:anywhere;word-break:break-word;';
+    const lineSpan = _agcEl('span', 'agc-quote-line');
     applyInlineMarkdown(lineSpan, line, emojiSize);
     bq.appendChild(lineSpan);
     if (i < lines.length - 1) bq.appendChild(document.createElement('br'));
@@ -1465,16 +1482,10 @@ function renderBlockContent(container, text, firstLineIsLock, emojiSize = 22) {
   }
 
   // Single lock badge centered to the whole body block (matches image/video badge style).
-  const outer = document.createElement('span');
-  outer.style.cssText = 'display:flex;align-items:flex-start;gap:0 6px;color:#889ce6;max-width:100%;min-width:0;';
+  const outer = _agcEl('span', 'agc-block');
+  outer.appendChild(_makeLockMark());
 
-  const lock = document.createElement('span');
-  lock.textContent   = '🔒';
-  lock.style.cssText = 'font-size:1em;line-height:1;user-select:none;flex-shrink:0;align-self:center;';
-  outer.appendChild(lock);
-
-  const body = document.createElement('span');
-  body.style.cssText = 'display:block;min-width:0;max-width:100%;flex:1 1 auto;';
+  const body = _agcEl('span', 'agc-block-body');
   for (const seg of segments) {
     if (seg.type === 'code') {
       body.appendChild(renderCodeBlock(seg.lang, seg.text));
@@ -1492,17 +1503,10 @@ function renderBlockContent(container, text, firstLineIsLock, emojiSize = 22) {
 }
 
 function renderMarkdownLine(text, lockPrefix, emojiSize = 22) {
-  const wrap = document.createElement('span');
-  wrap.style.cssText = 'color:#889ce6;display:inline-flex;align-items:center;gap:0 2px;';
-  if (lockPrefix) {
-    const lock = document.createElement('span');
-    lock.textContent = '🔒 ';
-    lock.style.cssText = 'font-size:1em;line-height:1;user-select:none;flex-shrink:0;';
-    wrap.appendChild(lock);
-  }
+  const wrap = _agcEl('span', 'agc-line');
+  if (lockPrefix) wrap.appendChild(_makeLockMark());
   // flex-wrap on inner span so tokens reflow without pulling the lock badge.
-  const content = document.createElement('span');
-  content.style.cssText = 'display:inline-flex;align-items:center;flex-wrap:wrap;gap:0 2px;';
+  const content = _agcEl('span', 'agc-line-body');
   applyInlineMarkdown(content, text, emojiSize);
   wrap.appendChild(content);
   return wrap;
@@ -1513,12 +1517,10 @@ function renderMarkdownLine(text, lockPrefix, emojiSize = 22) {
 function appendLinkOrText(container, url, text) {
   const isSafe = URL.parse(url)?.protocol === 'https:';
   if (isSafe) {
-    const a = document.createElement('a');
+    const a = _agcEl('a', 'agc-a', text);
     a.href   = url;
     a.target = '_blank';
     a.rel    = 'noopener noreferrer';
-    a.style.cssText = 'color:#5571de;text-decoration:underline;cursor:pointer;word-break:break-all;';
-    a.textContent = text;
     container.appendChild(a);
   } else {
     container.appendChild(document.createTextNode(text));
@@ -1578,44 +1580,22 @@ function isUrlLikeLabel(label) {
 // can be read (and changed) independently of the tokenizer driving it.
 
 function _renderInlineCode(container, inner) {
-  const code = document.createElement('code');
-  Object.assign(code.style, {
-    background: '#1a2236', color: '#889ce6',
-    border: '1px solid #2e3d4f',
-    borderRadius: '4px', padding: '1px 5px',
-    fontFamily: 'monospace', fontSize: '0.875em',
-  });
-  code.textContent = inner;
+  const code = _agcEl('code', 'agc-code-inline', inner);
   container.appendChild(code);
 }
 
 // Hides content while preserving layout dimensions for the cover overlay.
 // Avoids clipping by sizing the cover from the hidden content box.
 function _renderInlineSpoiler(container, inner) {
-  const sp = document.createElement('span');
-  Object.assign(sp.style, {
-    position: 'relative', display: 'inline-block',
-    borderRadius: '3px', verticalAlign: 'bottom',
-  });
+  const sp = _agcEl('span', 'agc-spoiler');
 
-  const innerEl = document.createElement('span');
-  Object.assign(innerEl.style, {
-    display: 'inline-flex', alignItems: 'center', flexWrap: 'wrap',
-    padding: '0 2px', borderRadius: '3px',
-    visibility: 'hidden',
-    // Until revealed, content underneath must not be interactive — otherwise
-    // the reveal click also lands on a link/emoji and fires it at the same time.
-    pointerEvents: 'none',
-  });
+  // Until revealed, the inner span is visibility:hidden + pointer-events:none, so
+  // the reveal click cannot also land on a link/emoji and fire it at the same time.
+  const innerEl = _agcEl('span', 'agc-spoiler-inner');
   applyInlineMarkdown(innerEl, inner);
   sp.appendChild(innerEl);
 
-  const cover = document.createElement('span');
-  Object.assign(cover.style, {
-    position: 'absolute', inset: '0',
-    background: '#889ce6', borderRadius: '3px',
-    cursor: 'pointer', userSelect: 'none',
-  });
+  const cover = _agcEl('span', 'agc-spoiler-cover');
   cover.title = 'Click to reveal';
   sp.appendChild(cover);
 
@@ -1628,8 +1608,10 @@ function _renderInlineSpoiler(container, inner) {
     e.preventDefault();
     e.stopPropagation();
     cover.remove();
-    innerEl.style.visibility = '';
-    innerEl.style.pointerEvents = '';
+    // Clearing the inline style would fall back to the stylesheet's
+    // visibility:hidden, so override it explicitly.
+    innerEl.style.visibility = 'visible';
+    innerEl.style.pointerEvents = 'auto';
   });
   container.appendChild(sp);
 }
@@ -1644,20 +1626,9 @@ function _renderInlineTimestamp(container, match, inner) {
   const formatted = formatDiscordTimestamp(unix, style);
   const fullDate  = formatDiscordTimestamp(unix, 'F');
 
-  const timeEl = document.createElement('time');
-  timeEl.textContent = formatted;
+  const timeEl = _agcEl('time', 'agc-time', formatted);
   timeEl.title       = fullDate; // hover = full date, regardless of display style
   timeEl.dateTime    = Temporal.Instant.fromEpochMilliseconds(unix * 1000).toString();
-  timeEl.style.cssText = [
-    'background:#1a2236',
-    'border:1px solid #2e3d4f',
-    'border-radius:4px',
-    'padding:0 4px',
-    'color:#889ce6',
-    'font-size:0.9em',
-    'cursor:default',
-    'white-space:nowrap',
-  ].join(';');
 
   if (style === 'R') {
     _scheduleRelUpdate(timeEl, unix);
@@ -1816,7 +1787,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
     } else {
       const el = document.createElement(earliest.tag);
       // Discord CSS resets inline tag styles; apply formatting explicitly.
-      if (earliest.tag === 'strong') el.style.color = '#889ce6';
+      if (earliest.tag === 'strong') el.className = 'agc-strong';
       if (earliest.tag === 'em')     el.style.fontStyle = 'italic';
       if (earliest.tag === 'u')      el.style.textDecoration = 'underline';
       if (earliest.tag === 's')      el.style.textDecoration = 'line-through';
@@ -2241,7 +2212,7 @@ function listenForInterceptorMessages() {
       const recipients    = buildRecipientList(entry);
 
       // Matched entry without usable keys must block; contact is configured.
-      if (recipients.length === 0) {
+      if (!entryHasRecipients(entry) || recipients.length === 0) {
         throw Object.assign(new Error('No recipients — is an encrypted contact selected?'), { code: 'BLOCKED' });
       }
 
@@ -2620,15 +2591,7 @@ function _buildImageAttachment(url, strippedName) {
   img.alt   = strippedName;
   img.title = strippedName;
   // width/height:auto preserves intrinsic aspect ratio within the max-width/max-height caps.
-  img.style.cssText = [
-    'display:block',
-    'width:100%',
-    'max-width:551px',
-    'max-height:344px',
-    'height:auto',
-    'border-radius:4px',
-    'cursor:zoom-in',
-  ].join(';');
+  img.className = 'agc-media agc-img';
   img.addEventListener('click', () => {
     const a = document.createElement('a');
     a.href   = url;
@@ -2639,12 +2602,8 @@ function _buildImageAttachment(url, strippedName) {
   // Stop propagation before Discord's delegated handler sees the event.
   // Do not preventDefault; this preserves the browser's native context menu.
   img.addEventListener('contextmenu', (e) => e.stopPropagation());
-  const imgWrap = document.createElement('div');
-  imgWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
-  const imgLock = document.createElement('span');
-  imgLock.textContent   = '🔒';
-  imgLock.style.cssText = 'font-size:1em;line-height:1;user-select:none;flex-shrink:0;';
-  imgWrap.appendChild(imgLock);
+  const imgWrap = _agcEl('div', 'agc-att-row');
+  imgWrap.appendChild(_makeLockMark());
   imgWrap.appendChild(img);
   return imgWrap;
 }
@@ -2656,14 +2615,7 @@ function _buildVideoAttachment(url) {
   video.autoplay = false;
   // Reserves media layout space via aspect-ratio before rendering.
   // Avoids fixed heights that override intrinsic proportions.
-  video.style.cssText = [
-    'display:block',
-    'width:100%',
-    'max-width:551px',
-    'max-height:350px',
-    'height:auto',
-    'border-radius:4px',
-  ].join(';');
+  video.className = 'agc-media agc-video';
   // Sets intrinsic aspect ratio before rendering to prevent layout shift.
   video.addEventListener('loadedmetadata', () => {
     const w = video.videoWidth;
@@ -2676,12 +2628,8 @@ function _buildVideoAttachment(url) {
   // Do not preventDefault; this preserves the browser's native context menu.
   video.addEventListener('contextmenu', (e) => e.stopPropagation());
 
-  const videoWrap = document.createElement('div');
-  videoWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
-  const videoLock = document.createElement('span');
-  videoLock.textContent   = '🔒';
-  videoLock.style.cssText = 'font-size:1em;line-height:1;user-select:none;flex-shrink:0;';
-  videoWrap.appendChild(videoLock);
+  const videoWrap = _agcEl('div', 'agc-att-row');
+  videoWrap.appendChild(_makeLockMark());
   videoWrap.appendChild(video);
   return videoWrap;
 }
@@ -2691,137 +2639,36 @@ function _buildAudioAttachment(url) {
   audio.src      = url;
   audio.controls = true;
   audio.autoplay = false;
-  audio.style.cssText = 'width:300px;display:block;';
+  audio.className = 'agc-audio';
   // Stop propagation before Discord's delegated handler sees the event.
   // Do not preventDefault; this preserves the browser's native context menu.
   audio.addEventListener('contextmenu', (e) => e.stopPropagation());
 
-  const audioWrap = document.createElement('div');
-  audioWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
-  const audioLock = document.createElement('span');
-  audioLock.textContent   = '🔒';
-  audioLock.style.cssText = 'font-size:1em;line-height:1;user-select:none;flex-shrink:0;';
-  audioWrap.appendChild(audioLock);
+  const audioWrap = _agcEl('div', 'agc-att-row');
+  audioWrap.appendChild(_makeLockMark());
   audioWrap.appendChild(audio);
   return audioWrap;
 }
 
-// Generic download card (MD3 style), createElement only.
+// Generic download card: a resting tonal tile with a tonal Save chip.
 function _buildDownloadCard(url, strippedName) {
-  // CSS variable refs with fallbacks matching popup.css tokens.
-  const MD3 = {
-    surfaceContainer:     'var(--md-surface-container,      #1c2532)',
-    outlineVariant:       'var(--md-outline-variant,        #2e3d4f)',
-    onSurface:            'var(--md-on-surface,             #e3e8f0)',
-    onSurfaceVariant:     'var(--md-on-surface-variant,     #a8b8cc)',
-    primary:              'var(--md-primary,                #64b5f6)',
-    shapeSm:              'var(--shape-sm,  12px)',
-    shapeFull:            'var(--shape-full, 100px)',
-    motionStd:            'var(--motion-standard, cubic-bezier(0.2,0,0,1))',
-  };
+  const card = _agcEl('div', 'agc-card');
 
-  const card = document.createElement('div');
-  card.style.cssText = [
-    'color-scheme:dark',
-    'display:inline-flex',
-    'align-items:center',
-    'gap:12px',
-    'padding:10px 12px 10px 10px',
-    'border-radius:' + MD3.shapeSm,
-    'background:' + MD3.surfaceContainer,
-    'border:1px solid ' + MD3.outlineVariant,
-    'max-width:320px',
-    'min-width:180px',
-    'box-sizing:border-box',
-    'overflow:hidden',
-  ].join(';');
+  const iconWrap = _agcEl('div', 'agc-ico');
+  iconWrap.appendChild(_agcIcon('doc'));
 
-  // Tonal icon container (MD3 primary tonal style)
-  const iconWrap = document.createElement('div');
-  iconWrap.style.cssText = [
-    'display:flex',
-    'align-items:center',
-    'justify-content:center',
-    'flex-shrink:0',
-    'width:36px',
-    'height:36px',
-    'border-radius:' + MD3.shapeSm,
-    'background:color-mix(in srgb, ' + MD3.primary + ' 16%, transparent)',
-  ].join(';');
-  const lockIcon = document.createElement('span');
-  lockIcon.textContent   = '\u{1F512}'; // 🔒
-  lockIcon.style.cssText = 'font-size:16px;line-height:1;user-select:none;';
-  iconWrap.appendChild(lockIcon);
+  const textCol = _agcEl('div', 'agc-meta');
+  const nameSpan = _agcEl('span', 'agc-name', strippedName);
+  nameSpan.title = strippedName;
+  textCol.append(nameSpan, _agcEl('span', 'agc-sub', 'Encrypted file'));
 
-  // Text column: filename + "Encrypted file" label
-  const textCol = document.createElement('div');
-  textCol.style.cssText = [
-    'display:flex',
-    'flex-direction:column',
-    'gap:1px',
-    'flex:1',
-    'overflow:hidden',
-  ].join(';');
+  const dlBtn = _agcEl('a', 'agc-chip is-accent');
+  dlBtn.href     = url;
+  dlBtn.download = strippedName;
+  dlBtn.rel      = 'noopener noreferrer';
+  dlBtn.append(_agcIcon('download'), _agcEl('span', '', 'Save'));
 
-  const nameSpan = document.createElement('span');
-  nameSpan.textContent   = strippedName;
-  nameSpan.title         = strippedName;
-  nameSpan.style.cssText = [
-    'color:' + MD3.onSurface,
-    'font-size:13px',
-    'font-weight:500',
-    'overflow:hidden',
-    'text-overflow:ellipsis',
-    'white-space:nowrap',
-    'letter-spacing:0.1px',
-  ].join(';');
-
-  const subSpan = document.createElement('span');
-  subSpan.textContent   = 'Encrypted file';
-  subSpan.style.cssText = 'color:' + MD3.onSurfaceVariant + ';font-size:11px;';
-
-  textCol.appendChild(nameSpan);
-  textCol.appendChild(subSpan);
-
-  // Save button — MD3 tonal filled style
-  const dlBtn = document.createElement('a');
-  dlBtn.href      = url;
-  dlBtn.download  = strippedName;
-  dlBtn.rel       = 'noopener noreferrer';
-  dlBtn.textContent = 'Save';
-  dlBtn.style.cssText = [
-    'display:inline-flex',
-    'align-items:center',
-    'justify-content:center',
-    'flex-shrink:0',
-    'padding:0 14px',
-    'height:32px',
-    'border-radius:' + MD3.shapeFull,
-    'background:color-mix(in srgb, ' + MD3.primary + ' 16%, transparent)',
-    'color:' + MD3.primary,
-    'font-size:13px',
-    'font-weight:500',
-    'letter-spacing:0.1px',
-    'text-decoration:none',
-    'white-space:nowrap',
-    'transition:background 160ms ' + MD3.motionStd,
-  ].join(';');
-  dlBtn.addEventListener('mouseover', () => {
-    dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 24%, transparent)';
-  });
-  dlBtn.addEventListener('mouseout', () => {
-    dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 16%, transparent)';
-  });
-  dlBtn.addEventListener('focus', () => {
-    dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 24%, transparent)';
-  });
-  dlBtn.addEventListener('blur', () => {
-    dlBtn.style.background = 'color-mix(in srgb, ' + MD3.primary + ' 16%, transparent)';
-  });
-
-  card.appendChild(iconWrap);
-  card.appendChild(textCol);
-  card.appendChild(dlBtn);
+  card.append(iconWrap, textCol, dlBtn);
   return card;
 }
 
@@ -2848,16 +2695,13 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
  
   const wrapper = document.createElement('div');
   wrapper.dataset.ageAttachment = cardKey;
-  wrapper.style.cssText = 'margin:4px 0;display:block;';
-  
+  wrapper.className = 'agc agc-att';
+
   if (type === 'image') {
-    wrapper.style.position = '';
     wrapper.appendChild(_buildImageAttachment(url, strippedName));
   } else if (type === 'video') {
-    wrapper.style.position = '';
     wrapper.appendChild(_buildVideoAttachment(url));
   } else if (type === 'audio') {
-    wrapper.style.position = '';
     wrapper.appendChild(_buildAudioAttachment(url));
   } else {
     wrapper.appendChild(_buildDownloadCard(url, strippedName));
@@ -2881,7 +2725,7 @@ function isForwardedAttachment(liElement) {
 
 // ─── Large-file confirmation prompt ──────────────────────────────────────────
 
-// Replaces the existing [data-age-msg] spinner with a compact MD3 card.
+// Replaces the existing [data-age-msg] spinner with a compact tonal card.
 // Resolves true when the user clicks "Decrypt anyway", or false if
 // _generation changes (RELOCK / disable) while the prompt is visible.
 function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength, capturedGen) {
@@ -2891,88 +2735,35 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
 
   // Repurpose the spinner wrapper as the prompt card — preserves DOM position.
   const wrapper = spinnerWrapper;
-  wrapper.style.cssText = [
-    'display:inline-flex',
-    'flex-direction:column',
-    'gap:0',
-    'background:#161b24',
-    'border:1px solid #2e3d4f',
-    'border-radius:14px',
-    'overflow:hidden',
-    'max-width:320px',
-    'width:100%',
-    'box-sizing:border-box',
-    'margin:3px 0',
-    'font-family:Roboto,system-ui,sans-serif',
-  ].join(';');
+  wrapper.className = 'agc agc-prompt';
   // Clear the spinner badge inside.
   wrapper.replaceChildren();
 
-  // ── Header (darker) — icon + name + size + button ─────────────────────────
-  const header = document.createElement('div');
-  header.style.cssText = 'display:flex;align-items:center;gap:8px;background:#161b24;padding:10px 12px;';
+  // ── Header: icon tile + name/size + lit primary action ────────────────────
+  const header = _agcEl('div', 'agc-prompt-head');
 
-  const iconWrap = document.createElement('div');
-  iconWrap.style.cssText = [
-    'width:28px;height:28px',
-    'border-radius:6px',
-    'background:#1c2532',
-    'display:flex;align-items:center;justify-content:center',
-    'flex-shrink:0',
-    'font-size:14px;line-height:1',
-  ].join(';');
-  iconWrap.textContent = '🔒';
+  const iconWrap = _agcEl('div', 'agc-ico');
+  iconWrap.appendChild(_agcIcon('lock'));
 
-  const nameMeta = document.createElement('div');
-  nameMeta.style.cssText = 'display:flex;flex-direction:column;gap:0;min-width:0;flex:1;';
+  const nameMeta = _agcEl('div', 'agc-meta');
+  const nameEl = _agcEl('span', 'agc-name', displayName);
+  nameEl.title = displayName;
+  nameMeta.append(nameEl, _agcEl('span', 'agc-sub', `Encrypted · ${sizeMb} MB`));
 
-  const nameEl = document.createElement('span');
-  nameEl.style.cssText = 'font-size:12.5px;font-weight:500;color:#e3e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;';
-  nameEl.textContent = displayName;
-
-  const sizeEl = document.createElement('span');
-  sizeEl.style.cssText = 'font-size:11px;color:#a8b8cc;line-height:1.3;';
-  sizeEl.textContent = `Encrypted · ${sizeMb} MB`;
-
-  nameMeta.append(nameEl, sizeEl);
-
-  const btn = document.createElement('button');
-  btn.style.cssText = [
-    'display:inline-flex;align-items:center;justify-content:center',
-    'border:none;border-radius:100px',
-    'background:#64b5f6;color:#003258',
-    'font-family:Roboto,system-ui,sans-serif',
-    'font-size:12px;font-weight:500;letter-spacing:0.1px',
-    'padding:0 14px;height:28px',
-    'cursor:pointer',
-    'transition:background 160ms',
-    'white-space:nowrap',
-    'flex-shrink:0',
-  ].join(';');
-  btn.textContent = 'Decrypt anyway';
-  btn.onmouseenter = () => { btn.style.background = '#90caf9'; };
-  btn.onmouseleave = () => { btn.style.background = '#64b5f6'; };
+  const btn = _agcEl('button', 'agc-btn', 'Decrypt anyway');
+  btn.type = 'button';
 
   header.append(iconWrap, nameMeta, btn);
 
-  // ── Warning body — indented to align with the name/size text above ─────────
-  // Left offset = icon width (28px) + header gap (8px) = 36px, matching the
-  // text column start in the header row.
-  const warn = document.createElement('div');
-  warn.style.cssText = [
-    'background:#1c2532',
-    'border-top:1px solid #2e3d4f',
-    'padding:8px 12px 9px',
-    'padding-left:' + (28 + 8 + 12) + 'px', // icon(28) + gap(8) + card-padding(12)
-  ].join(';');
+  // ── Memory note: inset tonal well, concentric with the card ───────────────
+  const warn = _agcEl('div', 'agc-note');
+  warn.append(
+    _agcIcon('info'),
+    _agcEl('span', '',
+      'Decrypting large files keeps the plaintext in memory until this tab is closed. '
+      + 'Files over 20 MiB may increase memory usage significantly.'),
+  );
 
-  const warnText = document.createElement('span');
-  warnText.style.cssText = 'font-size:11px;color:#a8b8cc;line-height:1.5;';
-  warnText.textContent =
-    'Decrypting large files keeps the plaintext in memory until this tab is closed. '
-    + 'Files over 20 MiB may increase memory usage significantly.';
-
-  warn.append(warnText);
   wrapper.append(header, warn);
 
   // Return a Promise that resolves true on click, false on generation change.
@@ -2981,7 +2772,7 @@ function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength
       // Clear the prompt content — renderDecryptedMessage(null) will re-insert
       // the spinner into this same wrapper node immediately after we return.
       wrapper.replaceChildren();
-      wrapper.style.cssText = 'margin:2px 0;overflow-wrap:anywhere;min-width:0;word-break:break-word;';
+      wrapper.className = 'agc agc-msg';
       resolve(true);
     }, { once: true });
     
@@ -3420,33 +3211,43 @@ function _splitLeadingEmoji(text) {
   return { emoji: text.slice(0, len), rest: text.slice(len) };
 }
 
-// Builds an inline-flex wrapper with emoji in a user-select:none span and
-// the remaining text in a plain selectable span.
+// Status icon per leading emoji: [icon, danger?]. The emoji still drives detection
+// (_STATUS_EMOJI_PREFIXES) so call sites and message text are unchanged; only the
+// glyph shown is swapped for the Obsidian icon set. Danger tint is reserved for
+// errors; locked/disabled states stay unlit.
+const _STATUS_ICON = {
+  '🔑': ['key',       false],
+  '🔒': ['lock',      false],
+  '🔓': ['lock-open', false],
+  '🔐': ['lock',      false],
+  '🚫': ['alert',     true],
+  '❗': ['alert',     true],
+  '🔏': ['info',      false],
+};
+
+// Builds a status chip: icon (decorative, non-selectable) + selectable text.
 function _makeStatusBadge(emoji, rest) {
-  const outer = document.createElement('span');
-  outer.style.cssText = 'color:#99aab5;font-size:1rem;display:inline-flex;align-items:center;gap:0 2px;';
+  const [icon, danger] = _STATUS_ICON[emoji] ?? ['info', false];
+  const outer = _agcEl('span', danger ? 'agc-status is-danger' : 'agc-status');
+  outer.appendChild(_agcIcon(icon));
+  if (rest) outer.appendChild(_agcEl('span', 'agc-status-text', rest.trimStart()));
+  return outer;
+}
 
-  const emojiSpan = document.createElement('span');
-  emojiSpan.textContent   = emoji;
-  emojiSpan.style.cssText = 'font-size:1em;line-height:1;user-select:none;flex-shrink:0;';
-  outer.appendChild(emojiSpan);
-
-  if (rest) {
-    const textSpan = document.createElement('span');
-    textSpan.textContent = rest;
-    outer.appendChild(textSpan);
-  }
-
+function _makeSpinnerBadge(text) {
+  const outer = _agcEl('span', 'agc-status');
+  outer.setAttribute('role', 'status');
+  outer.append(_agcEl('span', 'agc-spinner'), _agcEl('span', 'agc-status-text', text));
   return outer;
 }
 
 // Cached template for the "Decrypting..." spinner badge.
-// cloneNode(true) is cheaper than rebuilding the three-element tree on every
+// cloneNode(true) is cheaper than rebuilding the element tree on every
 // in-flight attachment. Built lazily so document is guaranteed to be available.
 let _decryptingBadgeTemplate = null;
 function _makeDecryptingBadge() {
   if (!_decryptingBadgeTemplate)
-    _decryptingBadgeTemplate = _makeStatusBadge('🔒', 'Decrypting\u2026');
+    _decryptingBadgeTemplate = _makeSpinnerBadge('Decrypting\u2026');
   return _decryptingBadgeTemplate.cloneNode(true);
 }
 
@@ -3473,10 +3274,10 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
   const wrapper = document.createElement('div');
   wrapper.dataset.ageMsg = '1';
   if (slotKey) wrapper.dataset.ageMsgSlot = slotKey;
-  // overflow-wrap:anywhere breaks long unbreakable tokens (URLs, base64, etc.)
-  // at any character; min-width:0 lets flex children shrink below content size.
-  wrapper.style.cssText  = 'margin:2px 0;overflow-wrap:anywhere;min-width:0;word-break:break-word;';
- 
+  // .agc-msg sets overflow-wrap:anywhere (breaks long unbreakable tokens such as
+  // URLs and base64) and min-width:0 (lets flex children shrink below content size).
+  wrapper.className = 'agc agc-msg';
+
   if (plaintext === null) {
     // cloneNode(true) is cheaper than rebuilding the three-node tree each time.
     wrapper.appendChild(_makeDecryptingBadge());
