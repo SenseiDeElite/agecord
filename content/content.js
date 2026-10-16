@@ -1697,6 +1697,13 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
     { re: /\*(.+?)\*/s,      tag: 'em'      },
     { re: /__(.+?)__/s,      tag: 'u'       },
     { re: /~~(.+?)~~/s,      tag: 's'       },
+    // Inline triple-backtick fence (```text```) mid-line, e.g. inside ||spoilers||.
+    // Must precede the single-backtick rule, which would otherwise swallow the
+    // middle `text` and strand the outer `` as literal text. splitBlockSegments()
+    // only handles fences that start a line.
+    { re: /```(?!`)([^\n]*?\S[^\n]*?)```(?!`)/, tag: 'fence' },
+    // Double-backtick inline code (``a``), Discord-style.
+    { re: /``(?!`)([^`]+?)``(?!`)/, tag: 'code' },
     { re: /`([^`]+)`/,       tag: 'code'    },
     { re: /\|\|(.+?)\|\|/s,  tag: 'spoiler' },
     { re: TIMESTAMP_RE, tag: 'timestamp' },
@@ -1722,6 +1729,8 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
  
     if (earliest.tag === 'code') {
       _renderInlineCode(container, earliest.inner);
+    } else if (earliest.tag === 'fence') {
+      container.appendChild(renderCodeBlock('', earliest.inner));
     } else if (earliest.tag === 'spoiler') {
       _renderInlineSpoiler(container, earliest.inner);
     } else if (earliest.tag === 'timestamp') {
