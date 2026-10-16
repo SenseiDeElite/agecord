@@ -333,7 +333,7 @@
   function updateMasterSub() {
     const sub = $('master-sub');
     if ($('global-toggle').checked) {
-      const n = Object.values(_contacts).filter(c => c.enabled).length;
+      const n = Object.values(_contacts).filter(c => c.enabled && (c.type === 'contact' || !c.type || c.memberIds?.length > 0)).length;
       sub.textContent = `Armed for ${n} recipient${n === 1 ? '' : 's'}`;
     } else {
       sub.textContent = 'Paused. Messages send as plain text.';
@@ -352,9 +352,10 @@
   }
 
   let _toastTimer = null;
-  function showToast(text) {
+  function showToast(text, isError = false) {
     const toast = $('toast');
     $('toast-text').textContent = text;
+    toast.querySelector('use').setAttribute('href', isError ? '#i-x-circle' : '#i-check-circle');
     if (!toast.matches(':popover-open')) toast.showPopover();
     clearTimeout(_toastTimer);
     _toastTimer = setTimeout(() => { if (toast.matches(':popover-open')) toast.hidePopover(); }, 1900);
@@ -1569,10 +1570,11 @@
       // Lit lock = encryption on for this entry. The glyph differs too, so the state
       // is never colour alone.
       const mark = document.createElement('span');
-      mark.className = c.enabled ? 'lockmark is-on' : 'lockmark';
+      const on = c.enabled && (type === 'contact' || c.memberIds?.length > 0);
+      mark.className = on ? 'lockmark is-on' : 'lockmark';
       mark.setAttribute('role', 'img');
-      mark.setAttribute('aria-label', c.enabled ? 'Encryption on' : 'Encryption off');
-      mark.append(icon(c.enabled ? 'i-lock' : 'i-lock-open'));
+      mark.setAttribute('aria-label', on ? 'Encryption on' : 'Encryption off');
+      mark.append(icon(on ? 'i-lock' : 'i-lock-open'));
 
       row.append(makeAvatar({ ...c, type }), main, mark);
       row.addEventListener('click', () => {
@@ -1797,6 +1799,8 @@
       for (const entry of Object.values(_contacts)) {
         if (Array.isArray(entry.memberIds)) {
           entry.memberIds = entry.memberIds.filter(id => id !== deletedId);
+          // No recipients left: force encryption off until the user adds a contact.
+          if (entry.memberIds.length === 0) entry.enabled = false;
         }
       }
     } else if (_selectedGroupId) {
@@ -2072,12 +2076,18 @@
     document.getElementById('sheet-group-name').textContent    = g.name;
     document.getElementById('sheet-group-sub').textContent     = entrySub(g);
     document.getElementById('sheet-group-channel').textContent = g.channelId;
-    document.getElementById('sheet-group-toggle').checked      = g.enabled;
+    document.getElementById('sheet-group-toggle').checked      = g.enabled && (g.memberIds?.length > 0);
     openDialog('sheet-group');
   }
 
   document.getElementById('sheet-group-toggle').addEventListener('change', async e => {
     if (!_selectedGroupId) return;
+    if (e.target.checked && !(_contacts[_selectedGroupId].memberIds?.length > 0)) {
+      e.target.checked = false;
+      _contacts[_selectedGroupId].enabled = false;
+      showToast('Add a member first', true);
+      return;
+    }
     _contacts[_selectedGroupId].enabled = e.target.checked;
     await saveContacts(_contacts);
     await bgContactsUpdated();
@@ -2182,12 +2192,18 @@
     document.getElementById('sheet-server-name').textContent       = s.name;
     document.getElementById('sheet-server-sub').textContent        = entrySub(s);
     document.getElementById('sheet-server-id-display').textContent = s.serverId;
-    document.getElementById('sheet-server-toggle').checked         = s.enabled;
+    document.getElementById('sheet-server-toggle').checked         = s.enabled && (s.memberIds?.length > 0);
     openDialog('sheet-server');
   }
 
   document.getElementById('sheet-server-toggle').addEventListener('change', async e => {
     if (!_selectedServerId) return;
+    if (e.target.checked && !(_contacts[_selectedServerId].memberIds?.length > 0)) {
+      e.target.checked = false;
+      _contacts[_selectedServerId].enabled = false;
+      showToast('Add a member first', true);
+      return;
+    }
     _contacts[_selectedServerId].enabled = e.target.checked;
     await saveContacts(_contacts);
     await bgContactsUpdated();
