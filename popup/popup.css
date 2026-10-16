@@ -203,7 +203,7 @@
     &:not(:popover-open) { display: none; }
     .ic { font-size: 22px; color: var(--accent); }
   }
-  #i-check-circle .tick { stroke: var(--on-lit); }
+  #i-check-circle .tick, #i-x-circle .tick { stroke: var(--on-lit); }
 
   .dock {
     position: absolute; inset: auto 0 0; height: 112px; z-index: 4; pointer-events: none;
