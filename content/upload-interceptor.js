@@ -64,6 +64,20 @@ function isDraftTarget(el) {
 }
 // DRAFT-GUARD-END
 
+// ─── Foreign UI ─────────────────────────────────────────────
+
+// Third-party UI that reuses Discord's file-input component (e.g. Vencord's
+// Themes tab) is not a message composer: its files must reach that UI
+// untouched. Positive marker only.
+// Extra guard: a host that contains a Slate composer or a <form> never qualifies.
+const FOREIGN_UI_SEL = '.vc-settings-tab';
+function isForeignUiTarget(el) {
+  const host = el?.closest?.(FOREIGN_UI_SEL);
+  if (!host) return false;
+  if (host.closest('form') || host.querySelector('[data-slate-editor="true"]')) return false;
+  return true;
+}
+
 // ─── Attachment-pending guard ─────────────────────────────────────────────────
 
 // Blocks all attachment entry-points until the upload tray clears or the
@@ -646,7 +660,7 @@ function watchTrayAndClearPending() {
 window.addEventListener('dragover', (e) => {
   if (_locked || !_activeEntry) return;
   if (!(e.dataTransfer?.types ?? []).includes('Files')) return;
-  if (isDraftTarget(e.target)) return; // native handling
+  if (isDraftTarget(e.target) || isForeignUiTarget(e.target)) return; // native handling
   e.preventDefault();
   e.dataTransfer.dropEffect = 'copy';
 }, true);
@@ -659,8 +673,8 @@ window.addEventListener('drop', async (e) => {
   const files = [...(e.dataTransfer?.files ?? [])];
   if (files.length === 0) return;
 
-  // Draft panes: classify BEFORE stopping the event so Discord handles it natively.
-  if (isDraftTarget(e.target)) return;
+  // Draft panes / foreign UI: classify BEFORE stopping the event so it is handled natively.
+  if (isDraftTarget(e.target) || isForeignUiTarget(e.target)) return;
 
   // Resolve channelId/guildId synchronously — activeElement (and location.href's
   // relevance to it) is unreliable after any await.
@@ -688,7 +702,7 @@ window.addEventListener('drop', async (e) => {
 document.addEventListener('change', async (e) => {
   const input = e.target;
   if (input?.type !== 'file') return;
-  if (isDraftTarget(input)) return; // draft: native handling, before touching input.files
+  if (isDraftTarget(input) || isForeignUiTarget(input)) return; // native handling, before touching input.files
 
   // Delete any leftover override before reading so we get the real selection.
   try { delete input.files; } catch { /* non-configurable — already native */ }
@@ -726,7 +740,7 @@ document.addEventListener('paste', async (e) => {
 
   const needsInterception = files.length > 0 || text.length > NATIVE_PASTE_FILE_THRESHOLD;
   if (!needsInterception) return;
-  if (isDraftTarget(e.target)) return; // draft: native handling
+  if (isDraftTarget(e.target) || isForeignUiTarget(e.target)) return; // native handling
 
   const { channelId, guildId } = getInterceptorLocation();
 
