@@ -29,6 +29,8 @@
     --agc-glow:   light-dark(oklch(from var(--agc-lit) l c h / .50), oklch(from var(--agc-lit) l c h / .58));
     --agc-lit-hi: oklch(from var(--agc-lit) calc(l + .07) calc(c * .85) h);
 
+    --agc-msg-ink: light-dark(oklch(from var(--agc-brand) .40 .13 h), oklch(from var(--agc-brand) .87 .07 h));
+
     --agc-danger:      light-dark(oklch(.52 .21 25), oklch(.72 .19 22));
     --agc-danger-lit:  oklch(.71 .19 22);
 
@@ -55,6 +57,7 @@
     color: var(--agc-ink);
   }
   .agc-msg {
+    color: var(--agc-msg-ink);
     margin: 2px 0;
     overflow-wrap: anywhere; word-break: break-word; min-width: 0;
   }
