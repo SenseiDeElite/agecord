@@ -1,7 +1,5 @@
 ## Troubleshooting
 
-> 🦊 This extension runs faster on Firefox.
-
 Make sure the following permissions are enabled in Firefox, or the extension won't work:
 - `Access your data for https://discord.com`
 - `Access your data for https://cdn.discordapp.com`
