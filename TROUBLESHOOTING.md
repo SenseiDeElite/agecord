@@ -8,12 +8,10 @@ Make sure the following permissions are enabled in Firefox, or the extension won
 
 | Requirement | Chromium | Firefox |
 |---|---|---|
-| Minimum browser version | v148+ | v152.0+ |
-| WebAssembly (v0.4.0+) | `DefaultJavaScriptJitSetting` policy | `javascript.options.wasm` preference (`about:config`) |
-| JPEG XL support (v0.7.1+) | `#enable-jxl-image-format` flag (`chrome://flags/`) | `image.jxl.enabled` preference (`about:config`) |
-
-- **WebAssembly:** required since v0.4.0. If disabled via browser hardening, the extension won't run — check the settings above.
-- **JPEG XL:** required since v0.7.1. If disabled, JXL images will render broken.
+| Minimum browser version | v155 | v159.0 |
+| JPEG XL (v0.7.1) | v155 | v158.0 |
+| Browser namespace (v0.7.4) | v148 | v109.0 |
+| Scroll-driven animations (v0.9.0) | v115 | v159.0 |
 
 Compatibility can change at any time. Make sure your browser is up-to-date.
 
