@@ -746,14 +746,46 @@
 
   // ─── Dialog + confirm-alert helpers ──────────────────────────────────────────
 
-  // Route native cancel events through the dialog's cancel button for shared cleanup.
   const openDialog = id => {
     const d = document.getElementById(id);
+    if (d._closing) {            // reopened mid-exit: abort the pending close
+      d._closing = null;
+      d.removeAttribute('data-closing');
+    }
     if (!d.open) d.showModal();
   };
-  const closeDialog = id => document.getElementById(id).close();
-  document.querySelectorAll('dialog[data-cancel]').forEach(d => {
-    d.addEventListener('cancel', () => document.getElementById(d.dataset.cancel).click());
+  function closeDialogEl(d) {
+    if (!d.open) return Promise.resolve();
+    if (d._closing) return d._closing;
+    d.setAttribute('data-closing', '');
+    const exits = d.getAnimations()
+      .filter(a => a instanceof CSSAnimation && a.animationName.endsWith('-out'));
+    const done = Promise.allSettled(exits.map(a => a.finished)).then(() => {
+      if (d._closing !== done) return;     // reopened meanwhile
+      d._closing = null;
+      d.removeAttribute('data-closing');
+      d.close();
+    });
+    d._closing = done;
+    return done;
+  }
+  // Resolves once the dialog has fully left. Callers that re-render the UI behind
+  // a dialog, or switch screens, must await it so those changes don't play
+  // underneath (or get captured into a view transition with) a closing dialog.
+  const closeDialog = id => closeDialogEl(document.getElementById(id));
+  // Runs fn after the dialog has fully left, unless it was reopened meanwhile.
+  const afterDialogClosed = (id, fn) => closeDialog(id).then(() => {
+    if (!document.getElementById(id).open) fn();
+  });
+  // Esc and light-dismiss (closedby="any") fire `cancel` and then close the dialog
+  // natively. Take over: run the dialog's own cancel button for shared cleanup,
+  // then close through the animated path.
+  document.querySelectorAll('dialog').forEach(d => {
+    d.addEventListener('cancel', e => {
+      e.preventDefault();
+      if (d.dataset.cancel) document.getElementById(d.dataset.cancel).click();
+      closeDialogEl(d);
+    });
   });
 
   // Requires typing CONFIRM before destructive actions.
@@ -768,9 +800,10 @@
     const inputEl   = document.getElementById(input);
 
     [].concat(openBtn).forEach(id => {
-      document.getElementById(id).addEventListener('click', () => modalEl.showModal());
+      document.getElementById(id).addEventListener('click', () => openDialog(modal));
     });
-    cancelEl.addEventListener('click', () => modalEl.close());
+    cancelEl.addEventListener('click', () => closeDialog(modal));
+    // 'close' now fires only after the exit animation has finished.
     modalEl.addEventListener('close', () => {
       inputEl.value      = '';
       confirmEl.disabled = true;
@@ -779,7 +812,7 @@
       confirmEl.disabled = (e.target.value !== confirmWord);
     });
     confirmEl.addEventListener('click', async () => {
-      modalEl.close();
+      await closeDialog(modal);
       await onConfirm();
     });
   }
@@ -1760,13 +1793,19 @@
     renderFingerprint(fpEl, await keyFingerprint(c.ageRecipient));
   }
 
+  // Selection state is cleared immediately; the returned promise resolves when the
+  // sheet has finished sliding away. Callers that re-render the list or switch
+  // screens must await it so those changes don't play underneath the closing sheet.
   function closeSheet() {
-    closeDialog('sheet-contact');
-    closeDialog('sheet-group');
-    closeDialog('sheet-server');
+    const done = Promise.all([
+      closeDialog('sheet-contact'),
+      closeDialog('sheet-group'),
+      closeDialog('sheet-server'),
+    ]);
     _selectedId       = null;
     _selectedGroupId  = null;
     _selectedServerId = null;
+    return done;
   }
 
   document.getElementById('btn-close-sheet').addEventListener('click', closeSheet);
@@ -1812,12 +1851,12 @@
     }
     await saveContacts(_contacts);
     await bgContactsUpdated();
-    closeSheet();
+    await closeSheet();
     renderContacts();
     showToast('Deleted');
   });
 
-  document.getElementById('btn-edit-contact').addEventListener('click', () => {
+  document.getElementById('btn-edit-contact').addEventListener('click', async () => {
     if (!_selectedId) return;
     const c = _contacts[_selectedId];
     document.getElementById('edit-channel-id').value = c.channelId;
@@ -1826,7 +1865,7 @@
     clearErr(document.getElementById('edit-contact-error'));
     clearFieldErrors(EDIT_CONTACT_FIELDS);
     _editingId = _selectedId;
-    closeSheet();
+    await closeSheet();
     show('edit-contact');
   });
 
@@ -1937,7 +1976,7 @@
   }
 
   function closeMemberPicker() {
-    closeDialog('sheet-member-picker');
+    return closeDialog('sheet-member-picker');
   }
 
   document.getElementById('member-picker-search').addEventListener('input', e => {
@@ -1945,11 +1984,14 @@
   });
   // Cancel discards the picker's changes; Done applies them.
   document.getElementById('btn-member-picker-cancel').addEventListener('click', closeMemberPicker);
-  document.getElementById('btn-member-picker-done').addEventListener('click', () => {
-    closeMemberPicker();
-    if (!_pickerContext) return;
-    const uuids = [..._pickerContext.selectedUUIDs];
-    applyMemberSelection(_pickerContext.mode, uuids);
+  document.getElementById('btn-member-picker-done').addEventListener('click', async () => {
+    const ctx = _pickerContext;
+    // Apply the selection once the picker is gone, so the chips behind it don't
+    // change while it is still sliding down.
+    await closeMemberPicker();
+    if (!ctx) return;
+    const uuids = [...ctx.selectedUUIDs];
+    applyMemberSelection(ctx.mode, uuids);
   });
 
   // ─── Member chip rendering (used by group/server forms) ───────────────────────
@@ -2094,7 +2136,7 @@
     renderContacts();
   });
 
-  document.getElementById('btn-edit-group').addEventListener('click', () => {
+  document.getElementById('btn-edit-group').addEventListener('click', async () => {
     if (!_selectedGroupId) return;
     const g = _contacts[_selectedGroupId];
     _editingGroupId   = _selectedGroupId;
@@ -2108,7 +2150,7 @@
       document.getElementById('edit-group-member-count'),
       _groupEditMembers, MAX_GROUP_MEMBERS
     );
-    closeSheet();
+    await closeSheet();
     show('edit-group');
   });
 
@@ -2210,7 +2252,7 @@
     renderContacts();
   });
 
-  document.getElementById('btn-edit-server').addEventListener('click', () => {
+  document.getElementById('btn-edit-server').addEventListener('click', async () => {
     if (!_selectedServerId) return;
     const s = _contacts[_selectedServerId];
     _editingServerId   = _selectedServerId;
@@ -2224,7 +2266,7 @@
       document.getElementById('edit-server-member-count'),
       _serverEditMembers, Infinity
     );
-    closeSheet();
+    await closeSheet();
     show('edit-server');
   });
 
@@ -2520,7 +2562,7 @@
     makeDraftManager('export_draft', EXPORT_DRAFT_FIELDS);
   EXPORT_DRAFT_FIELDS.forEach(id => document.getElementById(id).addEventListener('input', saveExportDraft));
 
-  function resetExportModal() {
+  function wipeExportModal() {
     document.getElementById('export-passphrase-input').value  = '';
     document.getElementById('export-new-passphrase').value    = '';
     document.getElementById('export-new-passphrase2').value   = '';
@@ -2530,11 +2572,15 @@
     setStatus('export-status', '');
     document.getElementById('btn-export-confirm').disabled    = false;
     document.getElementById('btn-export-confirm').textContent = 'Encrypt & show';
-    closeDialog('modal-export-key');
+  }
+  // Closing wipes the form only after the exit animation, so fields don't empty
+  // (and the button label flip) while the sheet is still sliding away.
+  function resetExportModal() {
+    afterDialogClosed('modal-export-key', wipeExportModal);
   }
 
   document.getElementById('btn-export-key').addEventListener('click', async () => {
-    resetExportModal();
+    wipeExportModal();
     await restoreExportDraft();
     openDialog('modal-export-key');
   });
@@ -2612,8 +2658,10 @@
   });
 
   function closeExportDisplay() {
-    document.getElementById('export-key-blob').value = '';
-    closeDialog('modal-export-display');
+    // Clear the key text once the sheet has left rather than blanking it mid-slide.
+    afterDialogClosed('modal-export-display', () => {
+      document.getElementById('export-key-blob').value = '';
+    });
   }
   document.getElementById('btn-export-copy').addEventListener('click', async () => {
     const blob = document.getElementById('export-key-blob').value;
@@ -2669,7 +2717,7 @@
 
   // ─── Change passphrase ────────────────────────────────────────────────────────
 
-  function resetChangePassModal() {
+  function wipeChangePassModal() {
     document.getElementById('change-pass-current').value  = '';
     document.getElementById('change-pass-new').value      = '';
     document.getElementById('change-pass-new2').value     = '';
@@ -2680,11 +2728,13 @@
     const btn = document.getElementById('btn-change-pass-confirm');
     btn.disabled    = false;
     btn.textContent = 'Change passphrase';
-    closeDialog('modal-change-passphrase');
+  }
+  function resetChangePassModal() {
+    afterDialogClosed('modal-change-passphrase', wipeChangePassModal);
   }
 
   document.getElementById('btn-change-passphrase').addEventListener('click', () => {
-    resetChangePassModal();
+    wipeChangePassModal();
     openDialog('modal-change-passphrase');
   });
 
