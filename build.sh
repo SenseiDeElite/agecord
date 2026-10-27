@@ -118,7 +118,7 @@ common_excludes() {
 chromium_only_excludes() {
   printf '%s\n' \
     "$(basename -- "$0")" \
-    icons/icon-512.svg \
+    assets/agecord-512.svg \
     manifest-firefox.json \
     README.md \
     DEVELOPMENT.md \
@@ -138,7 +138,7 @@ firefox_only_excludes() {
     DEVELOPMENT.md \
     README.md \
     updates.xml \
-    icons/icon-128.png \
+    assets/agecord-512.png \
     policies.json \
     TROUBLESHOOTING.md \
     NOTICES.md \
@@ -150,7 +150,7 @@ firefox_only_excludes() {
 # Reviewers need the wasm source plus the steps to reproduce the build.
 source_only_excludes() {
   printf '%s\n' \
-    icons/icon-128.png \
+    assets/agecord-512.png \
     manifest-chromium.json \
     policies.json \
     updates.xml
