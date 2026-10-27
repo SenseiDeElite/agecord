@@ -15,7 +15,7 @@
     }
   },
   "icons": {
-    "512": "icons/agecord-512.svg"
+    "512": "assets/agecord-512.svg"
   },
   "permissions": [
     "storage"
