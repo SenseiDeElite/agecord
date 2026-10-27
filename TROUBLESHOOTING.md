@@ -12,6 +12,7 @@ Make sure the following permissions are enabled in Firefox, or the extension won
 | JPEG XL (v0.7.1) | v155 | v158.0 |
 | Browser namespace (v0.7.4) | v148 | v109.0 |
 | Scroll-driven animations (v0.9.0) | v115 | v159.0 |
+| Animated SVG icon (v0.9.1) | N/A | v62.0 |
 
 Compatibility can change at any time. Make sure your browser is up-to-date.
 
