@@ -647,20 +647,22 @@
       background: var(--scrim);
       backdrop-filter: blur(6px);
       opacity: 1;
-      transition: opacity .4s var(--ease-effects), overlay .4s allow-discrete, display .4s allow-discrete;
+      transition: opacity .4s var(--ease-effects);
       @starting-style { opacity: 0; }
     }
-    &:not([open])::backdrop { opacity: 0; transition-duration: .25s; }
+    &[data-closing]::backdrop { opacity: 0; transition-duration: .25s; }
   }
 
   dialog.sheet {
     position: fixed; inset: auto 8px 8px; margin: 0; width: auto; max-height: calc(100dvh - 16px);
     border-radius: var(--r-sheet);
     translate: 0 0; opacity: 1;
-    transition: translate .65s var(--spring-soft), opacity .25s var(--ease-effects), overlay .65s allow-discrete, display .65s allow-discrete;
+    transition: translate .65s var(--spring-soft), opacity .25s var(--ease-effects);
     &[open] { display: flex; flex-direction: column; @starting-style { translate: 0 calc(100% + 24px); opacity: 0; } }
-    &:not([open]) { translate: 0 calc(100% + 24px); opacity: 0; transition-duration: .32s; transition-timing-function: cubic-bezier(.5, 0, .75, 0); }
+    &[data-closing] { pointer-events: none; animation: sheet-out .32s cubic-bezier(.5, 0, .75, 0) both, fade-out .25s var(--ease-effects) both; }
   }
+  @keyframes sheet-out { to { translate: 0 calc(100% + 24px); } }
+  @keyframes fade-out  { to { opacity: 0; } }
   dialog.sheet-tall { height: 436px; }
   .grabber { outline: none; flex: none; width: 38px; height: 5px; margin: 9px auto 0; border-radius: 3px; background: var(--ink-3); opacity: .5; }
   .sheet-top { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 8px 14px 4px; }
@@ -685,10 +687,11 @@
     position: fixed; inset: 0; margin: auto; width: 304px; height: fit-content; max-height: calc(100dvh - 32px);
     padding: 8px; border-radius: var(--r-alert); text-align: center;
     scale: 1; opacity: 1;
-    transition: scale .55s var(--spring-pop), opacity .25s var(--ease-effects), overlay .55s allow-discrete, display .55s allow-discrete;
+    transition: scale .55s var(--spring-pop), opacity .25s var(--ease-effects);
     &[open] { display: flex; flex-direction: column; @starting-style { scale: .82; opacity: 0; } }
-    &:not([open]) { scale: .94; opacity: 0; transition-duration: .2s; }
+    &[data-closing] { pointer-events: none; animation: alert-out .2s var(--ease-effects) both; }
   }
+  @keyframes alert-out { to { scale: .94; opacity: 0; } }
   .alert-body { outline: none; padding: 20px 14px 14px; overflow-y: auto; scrollbar-width: none; display: flex; flex-direction: column; align-items: center; }
   .alert-body .seal { margin-bottom: 14px; }
   .alert-body h2 { font: 800 21px/26px var(--font); letter-spacing: -.028em; text-wrap: balance; }
@@ -711,8 +714,8 @@
   @keyframes vt-in-fwd   { from { translate: 30% 0;  opacity: 0; } }
   @keyframes vt-in-back  { from { translate: -22% 0; opacity: 0; } }
 
-  .nav-mini { animation: mini-in linear both; animation-timeline: --main; animation-range: 36px 60px; }
-  .main-scroll .title-xl { animation: title-out linear both; animation-timeline: --main; animation-range: 0 36px; }
+  .nav-mini { animation: mini-in linear both; animation-timeline: --main; animation-range: 20px 32px; }
+  .main-scroll .title-xl { animation: title-out linear both; animation-timeline: --main; animation-range: 4px 18px; }
   @keyframes mini-in   { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0; } }
   @keyframes title-out { to   { opacity: 0; translate: 0 -8px; } }
 
