@@ -8,10 +8,8 @@
     </linearGradient>
     <path id="seal" d="M50.00 1.50 L56.33 1.91 L61.19 8.22 L66.55 10.04 L74.25 8.00 L79.52 11.52 L80.58 19.42 L84.31 23.67 L92.00 25.75 L94.81 31.44 L91.78 38.81 L92.88 44.35 L98.50 50.00 L98.09 56.33 L91.78 61.19 L89.96 66.55 L92.00 74.25 L88.48 79.52 L80.58 80.58 L76.33 84.31 L74.25 92.00 L68.56 94.81 L61.19 91.78 L55.65 92.88 L50.00 98.50 L43.67 98.09 L38.81 91.78 L33.45 89.96 L25.75 92.00 L20.48 88.48 L19.42 80.58 L15.69 76.33 L8.00 74.25 L5.19 68.56 L8.22 61.19 L7.12 55.65 L1.50 50.00 L1.91 43.67 L8.22 38.81 L10.04 33.45 L8.00 25.75 L11.52 20.48 L19.42 19.42 L23.67 15.69 L25.75 8.00 L31.44 5.19 L38.81 8.22 L44.35 7.12Z"/>
   </defs>
-  <!-- seal body: lit colour, full-bleed so it fills the toolbar slot -->
   <use href="#seal" fill="#a491ff"/>
   <use href="#seal" fill="url(#sheen)"/>
-  <!-- lock glyph: same geometry as #i-lock, enlarged (~58% of height) and heavier stroke for 16px legibility -->
   <g transform="translate(50 50.6) scale(2.95) translate(-12 -12.4)" fill="none" stroke="#1a172c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
     <rect x="4.75" y="10.5" width="14.5" height="10.25" rx="3.25" fill="#1a172c" fill-opacity=".28"/>
     <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>
