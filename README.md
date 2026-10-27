@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="/icons/icon-512.svg" alt="Agecord logo" width="120" />
+  <img src="/assets/agecord-512.svg" alt="Agecord logo" width="120" />
 </p>
 
 <h1 align="center">Agecord</h1>
