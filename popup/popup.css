@@ -3,6 +3,8 @@
  * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
  */
 
+/* Obsidian theme */
+
 @layer tokens, base, chrome, content, controls, overlays, motion;
 
 @property --charge { syntax: "<number>"; inherits: true; initial-value: 0; }
