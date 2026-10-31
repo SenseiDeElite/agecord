@@ -68,6 +68,7 @@
     --spring-pop:   linear(0, 0.021, 0.078, 0.16, 0.259, 0.367, 0.478, 0.587, 0.691, 0.785, 0.868, 0.939, 0.997, 1.044, 1.079, 1.103, 1.118, 1.125, 1.126, 1.121, 1.113, 1.101, 1.088, 1.074, 1.06, 1.047, 1.034, 1.023, 1.013, 1.004, 0.998, 0.992, 0.989, 0.986, 1);
     --spring-soft:  linear(0, 0.012, 0.046, 0.094, 0.155, 0.222, 0.294, 0.368, 0.441, 0.512, 0.58, 0.643, 0.702, 0.755, 0.803, 0.846, 0.883, 0.916, 0.943, 0.966, 0.985, 1.001, 1.013, 1.022, 1.029, 1.034, 1.037, 1.038, 1.038, 1.038, 1.036, 1.034, 1.032, 1.029, 1);
     --ease-effects: cubic-bezier(.2, 0, 0, 1);
+    --ease-nav:     cubic-bezier(.3, .02, .12, 1); 
 
     --shape-circle: path("M50.00 2.00 L56.27 2.41 L62.42 3.64 L68.37 5.65 L74.00 8.43 L79.22 11.92 L83.94 16.06 L88.08 20.78 L91.57 26.00 L94.35 31.63 L96.36 37.58 L97.59 43.73 L98.00 50.00 L97.59 56.27 L96.36 62.42 L94.35 68.37 L91.57 74.00 L88.08 79.22 L83.94 83.94 L79.22 88.08 L74.00 91.57 L68.37 94.35 L62.42 96.36 L56.27 97.59 L50.00 98.00 L43.73 97.59 L37.58 96.36 L31.63 94.35 L26.00 91.57 L20.78 88.08 L16.06 83.94 L11.92 79.22 L8.43 74.00 L5.65 68.37 L3.64 62.42 L2.41 56.27 L2.00 50.00 L2.41 43.73 L3.64 37.58 L5.65 31.63 L8.43 26.00 L11.92 20.78 L16.06 16.06 L20.78 11.92 L26.00 8.43 L31.63 5.65 L37.58 3.64 L43.73 2.41Z");
     --shape-seal:   path("M50.00 1.50 L56.33 1.91 L61.19 8.22 L66.55 10.04 L74.25 8.00 L79.52 11.52 L80.58 19.42 L84.31 23.67 L92.00 25.75 L94.81 31.44 L91.78 38.81 L92.88 44.35 L98.50 50.00 L98.09 56.33 L91.78 61.19 L89.96 66.55 L92.00 74.25 L88.48 79.52 L80.58 80.58 L76.33 84.31 L74.25 92.00 L68.56 94.81 L61.19 91.78 L55.65 92.88 L50.00 98.50 L43.67 98.09 L38.81 91.78 L33.45 89.96 L25.75 92.00 L20.48 88.48 L19.42 80.58 L15.69 76.33 L8.00 74.25 L5.19 68.56 L8.22 61.19 L7.12 55.65 L1.50 50.00 L1.91 43.67 L8.22 38.81 L10.04 33.45 L8.00 25.75 L11.52 20.48 L19.42 19.42 L23.67 15.69 L25.75 8.00 L31.44 5.19 L38.81 8.22 L44.35 7.12Z");
@@ -273,6 +274,7 @@
     p  { margin-top: 8px; max-width: 272px; font-size: 15px; line-height: 21px; color: var(--ink-2); text-wrap: pretty; }
   }
   .navbar + .hero { padding-top: 0; }
+  .about-logo { display: block; flex: none; width: 72px; height: 72px; }
   .sect {
     display: flex; align-items: center; justify-content: space-between;
     padding: 24px 28px 9px; min-height: 48px;
@@ -351,8 +353,8 @@
     background: light-dark(oklch(.93 .05 var(--ah)), oklch(.31 .07 var(--ah)));
     box-shadow: inset 0 0 0 1px light-dark(oklch(.6 .12 var(--ah) / .28), oklch(.75 .12 var(--ah) / .26)), inset 0 1px 0 light-dark(oklch(1 0 0 / .8), oklch(1 0 0 / .12));
     .ic { font-size: 22px; }
-    &.is-group  { --ah: 200; border-radius: 15px; corner-shape: var(--corner); }
-    &.is-server { --ah: 75; border-radius: 30%; corner-shape: bevel; }
+    &.is-group  { --ah: 215; border-radius: 15px; corner-shape: var(--corner); }
+    &.is-server { --ah: 305; border-radius: 32%; corner-shape: round; }
   }
   .avatar-xl { width: 64px; height: 64px; font-size: 26px; .ic { font-size: 30px; } &.is-group { border-radius: 22px; } }
   .avatar-sm { width: 34px; height: 34px; font-size: 14px; .ic { font-size: 18px; } &.is-group { border-radius: 12px; } }
@@ -668,7 +670,7 @@
     position: fixed; inset: auto 8px 8px; margin: 0; width: auto; max-height: calc(100dvh - 16px);
     border-radius: var(--r-sheet);
     translate: 0 0; opacity: 1;
-    transition: translate .65s var(--spring-soft), opacity .25s var(--ease-effects);
+    transition: translate .65s var(--ease-nav), opacity .25s var(--ease-effects);
     &[open] { display: flex; flex-direction: column; @starting-style { translate: 0 calc(100% + 24px); opacity: 0; } }
     &[data-closing] { pointer-events: none; animation: sheet-out .32s cubic-bezier(.5, 0, .75, 0) both; }
   }
@@ -716,7 +718,7 @@
 @layer motion {
   ::view-transition-group(root) { animation-duration: .6s; }
   ::view-transition-old(root) { animation: vt-out .28s var(--ease-effects) both; }
-  ::view-transition-new(root) { animation: vt-in-fwd .6s var(--spring-soft) both; }
+  ::view-transition-new(root) { animation: vt-in-fwd .6s var(--ease-nav) both; }
   html[data-dir="back"]::view-transition-old(root) { animation-name: vt-out-back; }
   html[data-dir="back"]::view-transition-new(root) { animation-name: vt-in-back; }
   @keyframes vt-out      { to   { translate: -16% 0; opacity: 0; } }
