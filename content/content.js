@@ -2690,20 +2690,28 @@ function _buildDownloadCard(url, strippedName) {
   return card;
 }
 
-// Covers decrypted media until the user clicks. The content is rendered (so layout and
-// size are final) but stays visibility:hidden and inert until revealed, so it can't be
-// seen, focused or played through the cover.
+// Keep decrypted media rendered at its final size, but blurred, inert, and unfocusable until clicked.
+// Wrap only the media so the .agc-att-row lock mark remains visible and unobscured.
 function _wrapAttachmentSpoiler(content, cardKey) {
   const sp = _agcEl('div', 'agc-att-spoiler');
   const innerEl = _agcEl('div', 'agc-att-spoiler-inner');
-  innerEl.appendChild(content);
+  const revealed = _revealedAttachments.has(cardKey);
+
+  // Rows are [lock, media]; spoil the media only.
+  const isRow = content.classList?.contains('agc-att-row');
+  const media = isRow ? content.querySelector(':scope > :not(.agc-lock)') : null;
+  const target = media ?? content;
+  if (media) media.replaceWith(sp);
+  innerEl.appendChild(target);
   sp.appendChild(innerEl);
 
-  if (_revealedAttachments.has(cardKey)) {
+  if (revealed) {
     sp.classList.add('is-revealed');
-    return sp;
+    return media ? content : sp;
   }
 
+  innerEl.inert = true;           // not focusable/clickable/playable through the blur
+  innerEl.setAttribute('aria-hidden', 'true');
   const cover = _agcEl('button', 'agc-att-spoiler-cover');
   cover.type = 'button';
   cover.setAttribute('aria-label', 'Spoiler — click to reveal');
@@ -2714,10 +2722,12 @@ function _wrapAttachmentSpoiler(content, cardKey) {
     e.stopPropagation();
     _revealedAttachments.add(cardKey);
     sp.classList.add('is-revealed');
+    innerEl.inert = false;
+    innerEl.removeAttribute('aria-hidden');
     cover.remove();
   });
   sp.appendChild(cover);
-  return sp;
+  return media ? content : sp;
 }
 
 function renderDecryptedAttachment(liElement, fileCard, url, originalName, type, cdnUrl) {
