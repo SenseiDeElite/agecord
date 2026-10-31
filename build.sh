@@ -118,7 +118,6 @@ common_excludes() {
 chromium_only_excludes() {
   printf '%s\n' \
     "$(basename -- "$0")" \
-    assets/agecord-512.svg \
     manifest-firefox.json \
     README.md \
     DEVELOPMENT.md \
