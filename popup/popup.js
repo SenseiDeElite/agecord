@@ -1127,8 +1127,6 @@
   const strengthStatus = document.getElementById('strength-status');
   let _strengthTimer = null;
 
-  const setupSeal = document.getElementById('setup-seal');
-
   function updateStrength() {
     const p = setupPassEl.value;
     let score = 0;
@@ -1144,8 +1142,6 @@
     strengthBar.classList.toggle('is-weak', level === 1);
     strengthLbl.classList.toggle('is-weak', level === 1);
     strengthLbl.textContent = ['', 'Weak', 'Fair', 'Good', 'Strong'][level];
-    setupSeal.style.setProperty('--charge', charge);
-    setupSeal.classList.toggle('is-lit', level === 4);
     clearTimeout(_strengthTimer);
     _strengthTimer = setTimeout(() => {
       strengthStatus.textContent = strengthLbl.textContent
