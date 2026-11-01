@@ -1190,9 +1190,7 @@
       return;
     }
 
-    document.getElementById('btn-generate').hidden  = true;
-    document.getElementById('btn-show-import').hidden = true;
-    document.getElementById('setup-spinner').hidden = false;
+    document.getElementById('setup-actions').classList.add('is-busy');
     setStatus('setup-status', 'Generating keypair... do not close this window.');
 
     try {
@@ -1243,9 +1241,7 @@
     } catch (e) {
       showErr(document.getElementById('setup-error'), 'Key generation failed: ' + e.message);
     } finally {
-      document.getElementById('btn-generate').hidden  = false;
-      document.getElementById('btn-show-import').hidden = false;
-      document.getElementById('setup-spinner').hidden = true;
+      document.getElementById('setup-actions').classList.remove('is-busy');
       setStatus('setup-status', '');
     }
   });
