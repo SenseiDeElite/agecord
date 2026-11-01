@@ -160,12 +160,14 @@
         <span id="strength-status" class="sr-only" role="status"></span>
         <div id="setup-error" class="form-error" role="alert"></div>
 
-        <button id="btn-generate" type="submit" class="btn btn-block">Generate keypair</button>
-        <div id="setup-status" class="sr-only" role="status"></div>
-        <div id="setup-spinner" class="spinner-wrap" hidden>
-          <div class="spinner" aria-hidden="true"></div><span>Generating keypair... do not close this window.</span>
+        <div id="setup-actions" class="setup-actions">
+          <button id="btn-generate" type="submit" class="btn btn-block">Generate keypair</button>
+          <button id="btn-show-import" type="button" class="btn btn-tonal btn-block">Import existing keypair</button>
+          <div id="setup-spinner" class="spinner-wrap" aria-hidden="true">
+            <div class="spinner" aria-hidden="true"></div><span>Generating keypair... do not close this window.</span>
+          </div>
         </div>
-        <button id="btn-show-import" type="button" class="btn btn-tonal btn-block">Import existing keypair</button>
+        <div id="setup-status" class="sr-only" role="status"></div>
       </form>
     </main>
 
