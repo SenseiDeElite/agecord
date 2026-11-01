@@ -626,6 +626,10 @@
 
   .spinner-wrap { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 18px 28px 0; font: 450 13px/18px var(--font); color: var(--ink-2); }
   .sheet-body .spinner-wrap { padding-inline: 18px; }
+  .setup-actions { position: relative; }
+  .setup-actions > .spinner-wrap { position: absolute; inset: 0; padding: 16px 28px 0; display: none; }
+  .setup-actions.is-busy > .spinner-wrap { display: flex; }
+  .setup-actions.is-busy > .btn { visibility: hidden; pointer-events: none; }
   .spinner {
     width: 24px; height: 24px; flex: none; border-radius: 50%;
     background: conic-gradient(from 0turn, transparent 8%, var(--accent));
