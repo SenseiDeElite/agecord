@@ -80,7 +80,7 @@ let _cachedDecrypter = null;
 let _lockEpoch = 0;
 
 // Verifies ML-DSA-87 signature and age-decrypts.
-// Returns { sigValid: false } on failure, { sigValid: true, plainBytes } on success.
+// Returns { sigValid: false, reason: 'unknown-sender'|'bad-signature' } on failure, { sigValid: true, plainBytes } on success.
 // Throws NOT_UNLOCKED if no identity is cached.
 async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
                                   prefixBuffer, sigByteLen, pubkeyHintLen, opName }) {
@@ -110,7 +110,7 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
 
   // One hint per message → scan runs at most once per attachment.
   const matchedKeyB64 = candidateKeysB64.find(k => k === senderKeyB64);
-  if (!matchedKeyB64) return { sigValid: false };
+  if (!matchedKeyB64) return { sigValid: false, reason: 'unknown-sender' };
 
   // ── Build sigInput: prefixBytes || hintBytes || ageBytes ───────────────────
   const prefixBytes = prefixBuffer ? new Uint8Array(prefixBuffer) : new Uint8Array(0);
@@ -132,7 +132,7 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
     console.error(`[age] ${opName}: ml_dsa87_verify threw:`, e?.message ?? e);
   }
 
-  if (!sigValid) return { sigValid: false };
+  if (!sigValid) return { sigValid: false, reason: 'bad-signature' };
 
   // ── age-decrypt ─────────────────────────────────────────────────────────────
   
@@ -227,7 +227,7 @@ self.onmessage = async ({ data }) => {
       const result = await verifyAndDecrypt({ fileBuffer, candidateKeysB64,
                                               prefixBuffer, sigByteLen, pubkeyHintLen, opName: op });
       if (!result.sigValid) {
-        self.postMessage({ op: 'VERIFY_DECRYPT_RESULT', id, sigValid: false });
+        self.postMessage({ op: 'VERIFY_DECRYPT_RESULT', id, sigValid: false, reason: result.reason });
         return;
       }
       // Return raw bytes — no decompress, no UTF-8 decode for binary media.
@@ -244,7 +244,7 @@ self.onmessage = async ({ data }) => {
       const result = await verifyAndDecrypt({ fileBuffer, candidateKeysB64,
                                               prefixBuffer, sigByteLen, pubkeyHintLen, opName: op });
       if (!result.sigValid) {
-        self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: false });
+        self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: false, reason: result.reason });
         return;
       }
       const plaintext = await decompressToText(result.plainBytes);
