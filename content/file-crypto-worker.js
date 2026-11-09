@@ -80,7 +80,9 @@ let _cachedDecrypter = null;
 let _lockEpoch = 0;
 
 // Verifies ML-DSA-87 signature and age-decrypts.
-// Returns { sigValid: false, reason: 'unknown-sender'|'bad-signature' } on failure, { sigValid: true, plainBytes } on success.
+// Returns { sigValid: false, reason: 'unknown-sender'|'bad-signature' } on signature failure,
+// { sigValid: true, reason: 'not-recipient' } when validly signed but not addressed to us,
+// { sigValid: true, plainBytes } on success.
 // Throws NOT_UNLOCKED if no identity is cached.
 async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
                                   prefixBuffer, sigByteLen, pubkeyHintLen, opName }) {
@@ -138,7 +140,16 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
   
   // ageBytes is a live view into fileBuffer, which is fully owned inside the
   // Worker (transferred in, not neutered here). No copy needed.
-  const plainBytes = await _cachedDecrypter.decrypt(ageBytes, 'uint8array');
+
+  // Signature is verified, so a no matching recipient failure means this message targets other recipients.
+  // age exposes this as a plain Error; match its text only, falling back if wording changes.
+  let plainBytes;
+  try {
+    plainBytes = await _cachedDecrypter.decrypt(ageBytes, 'uint8array');
+  } catch (e) {
+    if (/no identity matched/i.test(e?.message ?? '')) return { sigValid: true, reason: 'not-recipient' };
+    throw e;
+  }
 
   // Reject plaintext if RELOCK occurred during the in-flight decrypt.
   if (_lockEpoch !== myEpoch) {
@@ -230,6 +241,10 @@ self.onmessage = async ({ data }) => {
         self.postMessage({ op: 'VERIFY_DECRYPT_RESULT', id, sigValid: false, reason: result.reason });
         return;
       }
+      if (result.reason === 'not-recipient') {
+        self.postMessage({ op: 'VERIFY_DECRYPT_RESULT', id, sigValid: true, reason: 'not-recipient' });
+        return;
+      }
       // Return raw bytes — no decompress, no UTF-8 decode for binary media.
       self.postMessage(
         { op: 'VERIFY_DECRYPT_RESULT', id, sigValid: true, buffer: result.plainBytes.buffer },
@@ -245,6 +260,10 @@ self.onmessage = async ({ data }) => {
                                               prefixBuffer, sigByteLen, pubkeyHintLen, opName: op });
       if (!result.sigValid) {
         self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: false, reason: result.reason });
+        return;
+      }
+      if (result.reason === 'not-recipient') {
+        self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: true, reason: 'not-recipient' });
         return;
       }
       const plaintext = await decompressToText(result.plainBytes);
