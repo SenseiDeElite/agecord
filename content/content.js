@@ -3026,7 +3026,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
       if (_generation !== capturedGeneration) return;
 
       if (!workerResult.sigValid) {
-        renderDecryptedMessage(liElement, _status('Signature invalid — possible tampering.', 'alert', true), attachId, mosaicItem ?? fileCard);
+        renderDecryptedMessage(liElement, _sigFailureStatus(workerResult), attachId, mosaicItem ?? fileCard);
         return;
       }
 
@@ -3212,7 +3212,7 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     if (!workerResult.sigValid) {
       liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
         .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
-      renderDecryptedMessage(liElement, _status('Signature invalid — possible tampering.', 'alert', true), undefined, _attMosaicItem ?? fileCard);
+      renderDecryptedMessage(liElement, _sigFailureStatus(workerResult), undefined, _attMosaicItem ?? fileCard);
       return;
     }
 
@@ -3259,6 +3259,14 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
 // reserved for errors; locked/disabled/info states stay unlit.
 function _status(text, icon, danger = false) {
   return { status: text, icon, danger };
+}
+
+// Maps a failed VERIFY_DECRYPT* result to a status. An unlisted sender key is
+// not tampering, so it gets a neutral notice instead of the danger alert.
+function _sigFailureStatus(workerResult) {
+  if (workerResult?.reason === 'unknown-sender')
+    return _status('Unknown sender — not a member of this entry.', 'key');
+  return _status('Signature invalid — possible tampering.', 'alert', true);
 }
 
 // Builds a status chip: icon (decorative, non-selectable) + selectable text.
