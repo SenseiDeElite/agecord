@@ -3030,6 +3030,11 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
         return;
       }
 
+      if (workerResult.reason === 'not-recipient') {
+        renderDecryptedMessage(liElement, _notRecipientStatus(), attachId, mosaicItem ?? fileCard);
+        return;
+      }
+
       const { plaintext } = workerResult;
 
       _processedIds.add(attachId);
@@ -3216,6 +3221,13 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
       return;
     }
 
+    if (workerResult.reason === 'not-recipient') {
+      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
+        .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+      renderDecryptedMessage(liElement, _notRecipientStatus(), undefined, _attMosaicItem ?? fileCard);
+      return;
+    }
+
     const type     = classifyFile(originalName);
     const ext      = stripAgeSuffix(originalName).split('.').pop().toLowerCase();
     const mimeType = { image: 'image/' + ext, video: 'video/' + ext, audio: 'audio/' + ext }[type]
@@ -3267,6 +3279,12 @@ function _sigFailureStatus(workerResult) {
   if (workerResult?.reason === 'unknown-sender')
     return _status('Unknown sender — not a member of this entry.', 'key');
   return _status('Signature invalid — possible tampering.', 'alert', true);
+}
+
+// Validly signed by a known member but encrypted to other recipients. Not an
+// error and not tampering, so a neutral notice.
+function _notRecipientStatus() {
+  return _status("This message wasn't encrypted for you.", 'key');
 }
 
 // Builds a status chip: icon (decorative, non-selectable) + selectable text.
