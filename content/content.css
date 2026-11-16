@@ -62,7 +62,8 @@
     overflow-wrap: anywhere; word-break: break-word; min-width: 0;
   }
   .agc-att { margin: 4px 0; display: block; }
-  .agc-att-row { display: flex; align-items: center; gap: 6px; }
+  .agc-att-row { display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; }
+  .agc-att-row > :not(.agc-lock) { min-width: 0; }
 
   .agc-ic { width: 1em; height: 1em; flex: none; }
 
@@ -75,8 +76,8 @@
     box-shadow: 0 0 14px -4px var(--agc-glow);
     user-select: none;
   }
-  .agc-line   { display: inline-flex; align-items: center; gap: 0 6px; }
-  .agc-line-body { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0 2px; }
+  .agc-line   { display: inline-flex; align-items: center; gap: 0 6px; max-width: 100%; min-width: 0; }
+  .agc-line-body { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0 2px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
   .agc-block  { display: flex; align-items: flex-start; gap: 0 8px; max-width: 100%; min-width: 0; }
   .agc-block > .agc-lock { align-self: center; }
   .agc-block-body { display: block; min-width: 0; max-width: 100%; flex: 1 1 auto; }
@@ -125,6 +126,7 @@
 
   .agc-codeblock {
     display: block; position: relative; margin: 4px 0; overflow: hidden;
+    max-width: 100%; min-width: 0; box-sizing: border-box;
     border-radius: var(--agc-r-card); corner-shape: var(--agc-corner);
     background: var(--agc-tile); color: var(--agc-ink);
     box-shadow: inset 0 0 0 1px var(--agc-hair);
@@ -180,19 +182,20 @@
   }
 
   .agc-status {
-    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-    padding: 3px 12px 3px 8px; border-radius: 999px;
+    display: inline-flex; align-items: flex-start; gap: 6px;
+    max-width: 100%; min-width: 0; box-sizing: border-box;
+    padding: 4px 12px 4px 8px; border-radius: 13px; corner-shape: var(--agc-corner);
     font: 600 13px/18px var(--agc-font); letter-spacing: -.005em;
     color: var(--agc-ink-2); background: var(--agc-tile-2);
     box-shadow: inset 0 0 0 1px var(--agc-hair);
-    .agc-ic { font-size: 16px; color: var(--agc-ink-3); }
+    .agc-ic { font-size: 16px; color: var(--agc-ink-3); margin-top: 1px; }
     &.is-danger { color: var(--agc-danger); background: oklch(from var(--agc-danger-lit) l c h / .14); box-shadow: none; }
     &.is-danger .agc-ic { color: var(--agc-danger); }
   }
-  .agc-status-text { min-width: 0; user-select: text; }
-  .agc-status:has(> .agc-spinner) { padding-left: 8px; }
+  .agc-status-text { min-width: 0; user-select: text; overflow-wrap: anywhere; word-break: break-word; }
+  .agc-status:has(> .agc-spinner) { padding-left: 8px; align-items: center; }
   .agc-spinner {
-    width: 16px; height: 16px; flex: none; border-radius: 50%;
+    width: 16px; height: 16px; flex: none; border-radius: 50%; margin-top: 1px;
     background: conic-gradient(from 0turn, transparent 8%, var(--agc-accent));
     mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
     animation: agc-spin .9s linear infinite;
@@ -200,7 +203,7 @@
 
   .agc-card {
     display: inline-flex; align-items: center; gap: 12px;
-    box-sizing: border-box; min-width: 180px; max-width: 320px; min-height: 62px; overflow: hidden;
+    box-sizing: border-box; min-width: min(180px, 100%); max-width: min(320px, 100%); min-height: 62px; overflow: hidden;
     padding: 10px 12px 10px 10px;
     border-radius: var(--agc-r-card); corner-shape: var(--agc-corner);
     background: var(--agc-tile); color: var(--agc-ink);
@@ -217,39 +220,45 @@
     font: 620 14px/20px var(--agc-font); color: var(--agc-ink);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .agc-sub { font: 450 12px/16px var(--agc-font); color: var(--agc-ink-2); }
+  .agc-sub {
+    font: 450 12px/16px var(--agc-font); color: var(--agc-ink-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
 
   .agc-prompt {
     display: inline-flex; flex-direction: column; gap: 8px;
-    box-sizing: border-box; width: 100%; max-width: 320px; margin: 3px 0; padding: 10px;
+    box-sizing: border-box; width: 100%; max-width: min(320px, 100%); min-width: 0; margin: 3px 0; padding: 10px;
     border-radius: var(--agc-r-card); corner-shape: var(--agc-corner);
     background: var(--agc-tile); color: var(--agc-ink);
     box-shadow: inset 0 0 0 1px var(--agc-hair);
     font-family: var(--agc-font); letter-spacing: -.011em;
   }
-  .agc-prompt-head { display: flex; align-items: center; gap: 12px; }
+  .agc-prompt-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+  .agc-prompt-head > .agc-meta { flex: 1 1 100px; }
   .agc-note {
     display: flex; align-items: flex-start; gap: 8px;
     padding: 9px 12px; border-radius: 12px; corner-shape: var(--agc-corner);
     background: var(--agc-tile-2);
     font: 450 12px/17px var(--agc-font); color: var(--agc-ink-2);
+    min-width: 0; overflow-wrap: anywhere;
+    > span { min-width: 0; }
     .agc-ic { font-size: 16px; margin-top: 0; color: var(--agc-ink-3); }
   }
 
   .agc-media {
     display: block; width: 100%; height: auto;
   }
-  .agc-img   { max-width: 551px; max-height: 344px; cursor: zoom-in; }
-  .agc-video { max-width: 551px; max-height: 350px; }
-  .agc-audio { width: 300px; }
+  .agc-img   { max-width: min(551px, 100%); max-height: 344px; cursor: zoom-in; }
+  .agc-video { max-width: min(551px, 100%); max-height: 350px; }
+  .agc-audio { width: 300px; max-width: 100%; min-width: 0; flex: 0 1 300px; }
 
   .agc-att-spoiler {
     position: relative; display: block; width: fit-content;
     max-width: 100%; min-width: min(240px, 100%); min-height: 72px;
-    overflow: hidden;           
+    overflow: hidden;
     border-radius: 16px; corner-shape: var(--agc-corner);
   }
-  .agc-att-spoiler.is-revealed { overflow: visible; } 
+  .agc-att-spoiler.is-revealed { overflow: visible; }
 
   .agc-att-spoiler.is-revealed > .agc-att-spoiler-inner { transition: none; }
   .agc-att-spoiler-inner {
@@ -257,7 +266,7 @@
   }
   .agc-att-spoiler:not(.is-revealed) > .agc-att-spoiler-inner {
     filter: blur(44px) saturate(.8);
-    scale: 1.2;                
+    scale: 1.2;
     pointer-events: none; user-select: none;
   }
 
