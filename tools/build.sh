@@ -203,6 +203,7 @@ BANNER
     --target=chrome155,firefox159 \
     --charset=utf8 \
     --tree-shaking=true \
+    --log-override:empty-import-meta=silent \
     --banner:js="$banner" \
     --outfile="$stage/content/content.js"
 
