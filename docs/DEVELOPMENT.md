@@ -4,19 +4,7 @@
 
 **Build environment:** [Arch Linux x86-64](https://archlinux.org/)
 
-[npm v12.2.2](https://github.com/npm/cli/releases/tag/v12.2.2)
-
-[esbuild v0.28.2](https://github.com/evanw/esbuild/releases/tag/v0.28.2)
-
-[wasm-pack v0.15.1](https://github.com/wasm-bindgen/wasm-pack/releases/tag/v0.15.1)
-
-[rust 1.100.0](https://github.com/rust-lang/rust/releases/tag/1.100.0) (including rust-wasm target)
-
-[wasm-bindgen 0.2.130](https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.130)
-
-[binaryen 130](https://github.com/WebAssembly/binaryen/releases/tag/version_130)
-
-[LLVM 23.1.5](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.5).
+**Toolchain**: [npm v12.2.2](https://github.com/npm/cli/releases/tag/v12.2.2), [esbuild v0.28.2](https://github.com/evanw/esbuild/releases/tag/v0.28.2), [wasm-pack v0.15.1](https://github.com/wasm-bindgen/wasm-pack/releases/tag/v0.15.1), [rust 1.100.0](https://github.com/rust-lang/rust/releases/tag/1.100.0) (including rust-wasm target), [wasm-bindgen 0.2.130](https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.130), [binaryen 130](https://github.com/WebAssembly/binaryen/releases/tag/version_130) and [LLVM 23.1.5](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.5).
 
 To reproduce the [libraries](https://github.com/SenseiDeElite/agecord/tree/main/src/lib), follow the steps below.
 
@@ -54,7 +42,7 @@ esbuild entry.js \
 *"Cryptographic algorithms written in pure Rust"*
 
 - Our project provides [rustcrypto-wasm](https://github.com/SenseiDeElite/agecord/tree/main/rustcrypto-wasm), a WebAssembly wrapper around RustCrypto implementations of [Argon2id](https://github.com/RustCrypto/password-hashes/tree/master/argon2), [XChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [SHAKE256](https://github.com/RustCrypto/XOFs/tree/master/shake), and [ML-DSA-87](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), built by compiling native Rust code to WebAssembly.
-- Upon obtaining dependencies, run:
+- For compiling, run:
 
 ```sh
 wasm-pack build --target web --release
@@ -101,6 +89,6 @@ Packaging is handled by [`build.sh`](https://github.com/SenseiDeElite/agecord/bl
 
 #### Content script bundle (IIFE)
 
-`src/content/content.js` is the ES-module *source entry*: it imports `rustcrypto-wasm.min.js`, `emoji_map.js` and `highlight_map.js`. The shipped `content/content.js` is not that file. `build.sh` bundles it into a single classic script, listed directly in each manifest's `content_scripts`.
+`src/content/content.js` is the ES-module source entry: it imports `rustcrypto-wasm.min.js`, `emoji_map.js` and `highlight_map.js`. The shipped `content/content.js` is not that file. `build.sh` bundles it into a single classic script, listed directly in each manifest's `content_scripts`.
 
-- Everything the bundle inlines (`content-loader.js`, `emoji_map.js`, `highlight_map.js`) is dropped from the package.
+- Everything the bundle inlines (`emoji_map.js`, `highlight_map.js` etc) is dropped from the package.
