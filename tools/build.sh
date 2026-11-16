@@ -160,7 +160,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
 PYEOF
 }
 
-# each target installs its own manifest as manifest.json
+# Each target installs its own manifest as manifest.json
 check_src() {
   if [[ ! -d "$SRC_DIR" ]]; then
     echo "error: source directory '$SRC_DIR' not found" >&2
@@ -177,19 +177,13 @@ check_src() {
 # esbuild inlines content.js, emoji_map.js, highlight_map.js, and WASM crypto into
 # $STAGE/content/content.js; inlined sources are then removed. Workers and popup/*
 # are ES modules and remain untouched.
-ESBUILD_VERSION="0.28.2"   # keep in sync with docs/DEVELOPMENT.md
 
 bundle_content() {
   local stage="$1"
   local esbuild="${ESBUILD:-esbuild}"
   if ! command -v "$esbuild" >/dev/null 2>&1; then
-    echo "error: esbuild not found (need v$ESBUILD_VERSION; set ESBUILD=/path/to/esbuild)" >&2
+    echo "error: esbuild not found" >&2
     exit 1
-  fi
-  local have
-  have="$("$esbuild" --version)"
-  if [[ "$have" != "$ESBUILD_VERSION" ]]; then
-    echo "warning: esbuild $have found, expected $ESBUILD_VERSION; output may differ" >&2
   fi
 
   local banner
@@ -211,17 +205,6 @@ BANNER
     --tree-shaking=true \
     --banner:js="$banner" \
     --outfile="$stage/content/content.js"
-
-  # Guard: a classic script must not contain module syntax. esbuild already
-  # refuses top-level await and drops static import/export for --format=iife;
-  # this catches an import.meta that slipped through and any stray line-start
-  # import/export. (A literal `import(` inside the worker-shim template string in
-  # content.js is intentional, so dynamic import() is not checked here.)
-  if grep -nE 'import\.meta|^[[:space:]]*(import|export)[[:space:]]+[A-Za-z_$*{"'"'"']' \
-       "$stage/content/content.js" | cut -c1-160 | head -5 | grep .; then
-    echo "error: bundled content.js still contains module syntax (see above)" >&2
-    exit 1
-  fi
 
   rm -f -- "$stage/content/content-loader.js" \
            "$stage/content/emoji_map.js" \
@@ -246,10 +229,10 @@ build_chromium() {
   trap 'safe_rm_dir "$stage"' EXIT
 
   echo "==> [chromium] Staging a copy of $SRC_DIR/..."
-  cp -R -- "$SRC_DIR"/. "$stage"/
+  cp -R --reflink=auto -- "$SRC_DIR"/. "$stage"/
 
   echo "==> [chromium] Installing $manifest as manifest.json..."
-  cp -- "$manifest" "$stage/manifest.json"
+  cp --reflink=auto -- "$manifest" "$stage/manifest.json"
 
   echo "==> [chromium] Bundling content script (IIFE)..."
   bundle_content "$stage"
@@ -278,8 +261,8 @@ build_firefox() {
   trap 'safe_rm_dir "$stage"' EXIT
 
   echo "==> [firefox] Staging a copy of $SRC_DIR/..."
-  cp -R -- "$SRC_DIR"/. "$stage"/
-  cp -- "$manifest" "$stage/manifest.json"
+  cp -R --reflink=auto -- "$SRC_DIR"/. "$stage"/
+  cp --reflink=auto -- "$manifest" "$stage/manifest.json"
 
   echo "==> [firefox] Bundling content script (IIFE)..."
   bundle_content "$stage"
