@@ -19,30 +19,57 @@ SRC_DIR="src"
 MANIFEST_DIR="manifests"
 DIST_DIR="dist"
 
-# Source package ALLOWLIST. Only files matching one of these patterns can enter
-# the source .zip; anything else (dist/, build output such as
-# rustcrypto-wasm/target and rustcrypto-wasm/pkg, keys, screenshots, editor or
-# OS litter, files added in the future) is left out by default.
-# `*` matches across `/`. Every pattern must match at least one file, so a
-# renamed or deleted file fails the build instead of silently shrinking the package.
-SOURCE_ALLOW=(
+# FILE ALLOWLIST. Every packaged file is listed explicitly; no pattern/extension selection.
+# Unlisted files under src/ or missing listed files both fail the build, preventing silent package changes.
+
+# Paths in SRC_* are relative to src/.
+# SRC_SHARED -> .crx, .xpi, source .zip (content/content.js is bundled in extensions, original in source).
+# SRC_CHROMIUM_ONLY -> .crx only (Chromium cannot use the SVG icon).
+# SRC_SOURCE_ONLY -> source .zip only (inlined into content.js by esbuild).
+SRC_SHARED=(
+  'assets/agecord-512.svg'
+  'background/background.js'
+  'content/cdn-bridge.html'
+  'content/cdn-bridge.js'
+  'content/content.css'
+  'content/content.js'
+  'content/file-crypto-worker.js'
+  'content/upload-interceptor.js'
+  'lib/age.min.js'
+  'lib/rustcrypto-wasm.min.js'
+  'popup/crypto-worker.js'
+  'popup/import-helper.html'
+  'popup/import-helper.js'
+  'popup/licenses.html'
+  'popup/popup.css'
+  'popup/popup.html'
+  'popup/popup.js'
+)
+SRC_CHROMIUM_ONLY=(
+  'assets/agecord-512.png'
+)
+SRC_SOURCE_ONLY=(
+  'content/emoji_map.js'
+  'content/highlight_map.js'
+)
+
+# Files in the source .zip that are not under src/ (paths relative to the repo root).
+SOURCE_EXTRA=(
   'LICENSE'
   'NOTICES.md'
   'README.md'
-  'docs/*.md'
+  'docs/DEVELOPMENT.md'
+  'docs/TROUBLESHOOTING.md'
+  'docs/USAGE.md'
   'manifests/firefox.json'
   'tools/build.sh'
-  'src/*.js'
-  'src/*.css'
-  'src/*.html'
-  'src/*.svg'
-  'rustcrypto-wasm/Cargo.toml'
+  'rustcrypto-wasm/.cargo/config.toml'
   'rustcrypto-wasm/Cargo.lock'
+  'rustcrypto-wasm/Cargo.toml'
   'rustcrypto-wasm/LICENSE'
   'rustcrypto-wasm/about.toml'
   'rustcrypto-wasm/entry.js'
-  'rustcrypto-wasm/.cargo/config.toml'
-  'rustcrypto-wasm/src/*.rs'
+  'rustcrypto-wasm/src/lib.rs'
 )
 
 # Files stored with the executable bit in the source package.
@@ -87,11 +114,9 @@ safe_rm_file() {
   fi
 }
 
-# Staging directories are created as "$TMPDIR/agecord-build.XXXXXXXXXX"
-# (TMPDIR defaults to /tmp). Removal is only allowed for a real directory that
-# is a direct child of that same temp root and carries that prefix.
-# No -rf: rejects unsafe paths and symlinks, then uses
-# `find -depth -delete` on a path already confirmed to be a real dir.
+# Staging dirs are "$TMPDIR/agecord-build.XXXXXXXXXX" (TMPDIR defaults to /tmp).
+# Cleanup requires a real directory directly under that temp root with that prefix.
+# No -rf: validate path and reject symlinks, then run `find -depth -delete` on the confirmed dir.
 STAGE_PREFIX="agecord-build"
 
 safe_rm_dir() {
@@ -154,140 +179,154 @@ print(version)
 PYEOF
 }
 
-# Copies src/ into DEST using an ALLOWLIST of file types, or only validates it
-# when DEST is "-".
-#   stage_src DEST|- TARGET
-# Only .js .html .css .svg .png files are accepted. Any other file under src/
-# (a key, a stray build artifact, OS litter, a new file type nobody vetted) is
-# an error rather than being copied. Symlinks are rejected. For TARGET=firefox
-# the PNG icon is skipped because only the Chromium manifest uses it.
+# Validates src/ against the allowlist, then copies TARGET files to DEST unless DEST is "-".
+#   stage_src DEST|- TARGET    TARGET: chromium | firefox | source
+# Every src/ file must be listed and exist; unlisted files or symlinks fail.
+# chromium stages SHARED + CHROMIUM_ONLY; firefox stages SHARED; source stages nothing.
 stage_src() {
-  local dest="$1" target="$2"
-  python3 - "$SRC_DIR" "$dest" "$target" <<'PYEOF'
+  local dest="$1" target="$2" f
+  local -a args=()
+  for f in "${SRC_SHARED[@]}";         do args+=("shared:$f");   done
+  for f in "${SRC_CHROMIUM_ONLY[@]}";  do args+=("chromium:$f"); done
+  for f in "${SRC_SOURCE_ONLY[@]}";    do args+=("source:$f");   done
+  python3 - "$SRC_DIR" "$dest" "$target" "${args[@]}" <<'PYEOF'
 import os
 import shutil
 import sys
 
-src, dest, target = sys.argv[1:]
-ALLOWED_EXT = {".js", ".html", ".css", ".svg", ".png"}
-SKIP = {"firefox": {"assets/agecord-512.png"}}.get(target, set())
+src, dest, target, *entries = sys.argv[1:]
+
+groups = {"shared": [], "chromium": [], "source": []}
+for entry in entries:
+    group, rel = entry.split(":", 1)
+    groups[group].append(rel)
+listed = [rel for rels in groups.values() for rel in rels]
+if len(set(listed)) != len(listed):
+    sys.exit("error: a file is listed more than once in the allowlist arrays")
 
 bad = []
-files = []
+for rel in listed:
+    if os.path.isabs(rel) or ".." in rel.split("/"):
+        sys.exit(f"error: unsafe allowlist path {rel!r}")
+
+on_disk = set()
 for dirpath, dirnames, filenames in os.walk(src):  # followlinks=False
-    dirnames.sort()
     for d in dirnames:
         if os.path.islink(os.path.join(dirpath, d)):
             bad.append(f"{os.path.join(dirpath, d)} (symlink)")
-    for name in sorted(filenames):
+    for name in filenames:
         path = os.path.join(dirpath, name)
         rel = os.path.relpath(path, src).replace(os.sep, "/")
         if os.path.islink(path) or not os.path.isfile(path):
             bad.append(f"{path} (not a regular file)")
-        elif os.path.splitext(name)[1] not in ALLOWED_EXT:
-            bad.append(f"{path} (file type not in allowlist)")
-        elif rel not in SKIP:
-            files.append((path, rel))
+        else:
+            on_disk.add(rel)
+            if rel not in listed:
+                bad.append(f"{path} (not in the file allowlist)")
+for rel in sorted(set(listed) - on_disk):
+    bad.append(f"{os.path.join(src, rel)} (listed in build.sh but missing)")
 
 if bad:
-    print("error: refusing to package; unexpected entries under src/:", file=sys.stderr)
-    for b in bad:
+    print("error: src/ does not match the file allowlist in build.sh:", file=sys.stderr)
+    for b in sorted(bad):
         print(f"  {b}", file=sys.stderr)
-    print("Remove them, or extend ALLOWED_EXT in build.sh's stage_src after review.", file=sys.stderr)
+    print("Remove the file, or add/remove its line in build.sh after review.", file=sys.stderr)
     sys.exit(1)
 
 if dest != "-":
-    for path, rel in files:
+    want = {"chromium": groups["shared"] + groups["chromium"],
+            "firefox":  groups["shared"]}.get(target, [])
+    for rel in want:
         out = os.path.join(dest, rel)
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        shutil.copyfile(path, out)
+        shutil.copyfile(os.path.join(src, rel), out)
 PYEOF
 }
 
-# Writes a reproducible zip from an ALLOWLIST.
-#   zip_files OUT ROOT --allow=PATTERN [--allow=PATTERN ...] [--exec=ARCNAME ...]
-# * Only files under ROOT whose relative path matches an --allow pattern are
-#   added (fnmatch, case-sensitive, `*` crosses `/`). Every pattern must match
-#   at least one file.
-# * Reproducible: entries sorted by name, timestamps fixed at 1980-01-01,
-#   fixed permissions (0644, or 0755 for --exec names), fixed create_system,
-#   no extra fields, deflate level 9. Nothing depends on mtimes, umask,
-#   directory order or the checkout path.
-# * Fail closed on key material: refuses the whole build if any selected file
-#   has a .pem name, or contains PEM armor ("-----BEGIN <label>-----") whatever
-#   its name or extension. Nothing is written in that case.
-# Keep the writer and the PEM guard in sync with tools/crx3/crx3.py.
+# Prints the exact file list of an extension package, one path per line.
+ext_files() {
+  printf '%s\n' manifest.json "${SRC_SHARED[@]}"
+  if [[ "$1" == chromium ]]; then printf '%s\n' "${SRC_CHROMIUM_ONLY[@]}"; fi
+}
+
+# Fails unless DIR contains exactly the given files (no extras, none missing, no symlinks).
+#   check_tree DIR FILE...
+check_tree() {
+  python3 - "$@" <<'PYEOF'
+import os
+import sys
+
+root, *expected = sys.argv[1:]
+expected = set(expected)
+found = set()
+bad = []
+for dirpath, dirnames, filenames in os.walk(root):
+    for name in filenames:
+        path = os.path.join(dirpath, name)
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if os.path.islink(path) or not os.path.isfile(path):
+            bad.append(f"{rel} (not a regular file)")
+        else:
+            found.add(rel)
+bad += [f"{r} (unexpected)" for r in sorted(found - expected)]
+bad += [f"{r} (missing)" for r in sorted(expected - found)]
+if bad:
+    print("error: staged package does not match the file allowlist:", file=sys.stderr)
+    for b in bad:
+        print(f"  {b}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+# Writes a reproducible zip containing exactly the named files.
+#   zip_files OUT ROOT --file=RELPATH [--file=RELPATH ...] [--exec=RELPATH ...]
+# Each --file is a literal path under ROOT; missing/non-regular files fail, and nothing else is read.
+# Entries are sorted, timestamped 1980-01-01, given fixed permissions/create_system/no extra fields,
+# and deflated at level 9, independent of mtimes, umask, directory order, or checkout path.
+# Refuses the entire build if any filename ends in .pem (case-insensitive).
+# Keep in sync with tools/crx3/crx3.py.
 zip_files() {
   local out="$1" root="$2"
   shift 2
   safe_rm_file "$out"
   python3 - "$out" "$root" "$@" <<'PYEOF'
-import fnmatch
 import os
-import re
 import stat
 import sys
 import zipfile
 
 out, root, *rest = sys.argv[1:]
 
-allow, exec_names = [], set()
+files, exec_names = [], set()
 for arg in rest:
-    if arg.startswith("--allow="):
-        allow.append(arg[len("--allow="):])
+    if arg.startswith("--file="):
+        files.append(arg[len("--file="):])
     elif arg.startswith("--exec="):
         exec_names.add(arg[len("--exec="):])
     else:
         sys.exit(f"error: unknown argument {arg!r}")
-if not allow:
-    sys.exit("error: no --allow patterns given; refusing to zip everything")
+if not files:
+    sys.exit("error: no --file entries given; refusing to build an empty or open-ended archive")
+if len(set(files)) != len(files):
+    sys.exit("error: a file is listed more than once")
 
 FIXED_DATE = (1980, 1, 1, 0, 0, 0)  # earliest date the zip format can store
-PEM_ARMOR = re.compile(rb"-----BEGIN [A-Z0-9][A-Z0-9 ]*-----")
-
-def pem_problem(rel, data):
-    if rel.lower().endswith(".pem"):
-        return "has a .pem name"
-    m = PEM_ARMOR.search(data)
-    if m:
-        return f"contains PEM armor ({m.group(0).decode()})"
-    return None
-
-candidates = []
-for dirpath, dirnames, filenames in os.walk(root):  # followlinks=False
-    for name in filenames:
-        path = os.path.join(dirpath, name)
-        candidates.append((os.path.relpath(path, root).replace(os.sep, "/"), path))
-
-used = set()
-selected = []
-for rel, path in candidates:
-    hits = [p for p in allow if fnmatch.fnmatchcase(rel, p)]
-    if not hits:
-        continue
-    used.update(hits)
-    if os.path.islink(path) or not os.path.isfile(path):
-        sys.exit(f"error: '{rel}' is not a regular file; refusing to package it")
-    selected.append((rel, path))
-
-unused = [p for p in allow if p not in used]
-if unused:
-    sys.exit("error: allowlist pattern(s) matched no file: " + ", ".join(unused))
-
-selected.sort(key=lambda t: t[0])
 
 payload = []
-for rel, path in selected:
+for rel in sorted(files):
+    if os.path.isabs(rel) or ".." in rel.split("/"):
+        sys.exit(f"error: unsafe path {rel!r}")
+    path = os.path.join(root, rel)
+    if os.path.islink(path) or not os.path.isfile(path):
+        sys.exit(f"error: listed file '{rel}' is missing or not a regular file")
+    if rel.lower().endswith(".pem"):
+        sys.exit(f"error: '{rel}' has a .pem extension; refusing to package it")
     with open(path, "rb") as f:
-        data = f.read()
-    problem = pem_problem(rel, data)
-    if problem:
-        sys.exit(f"error: '{rel}' {problem}; refusing to package key material")
-    payload.append((rel, data))
+        payload.append((rel, f.read()))
 
-missing_exec = exec_names - {rel for rel, _ in payload}
+missing_exec = exec_names - set(files)
 if missing_exec:
-    sys.exit("error: --exec name(s) not in archive: " + ", ".join(sorted(missing_exec)))
+    sys.exit("error: --exec name(s) not in the file list: " + ", ".join(sorted(missing_exec)))
 
 tmp = out + ".partial"
 try:
@@ -317,11 +356,11 @@ check_src() {
   fi
 }
 
-# Bundles the content script as a classic IIFE in the staged tree.
+# Bundles the content script as a classic IIFE in STAGE.
 #   bundle_content STAGE
-# esbuild inlines content.js, emoji_map.js, highlight_map.js, and WASM crypto into
-# $STAGE/content/content.js; inlined sources are then removed. Workers and popup/*
-# are ES modules and remain untouched.
+# esbuild reads content.js, emoji_map.js, highlight_map.js, and WASM crypto from src/
+# and writes $STAGE/content/content.js. Inlined maps are never staged; workers and popup/*
+# remain untouched ES modules.
 
 bundle_content() {
   local stage="$1"
@@ -351,9 +390,6 @@ BANNER
     --log-override:empty-import-meta=silent \
     --banner:js="$banner" \
     --outfile="$stage/content/content.js"
-
-  rm -f -- "$stage/content/emoji_map.js" \
-           "$stage/content/highlight_map.js"
 }
 
 build_chromium() {
@@ -370,7 +406,7 @@ build_chromium() {
 
   make_stage
 
-  echo "==> [chromium] Staging $SRC_DIR/ (allowlisted file types)..."
+  echo "==> [chromium] Staging allowlisted files from $SRC_DIR/..."
   stage_src "$STAGE" chromium
 
   echo "==> [chromium] Installing $manifest as manifest.json..."
@@ -378,6 +414,10 @@ build_chromium() {
 
   echo "==> [chromium] Bundling content script (IIFE)..."
   bundle_content "$STAGE"
+
+  local -a files
+  mapfile -t files < <(ext_files chromium)
+  check_tree "$STAGE" "${files[@]}"
 
   echo "==> [chromium] Packing extension as CRX3..."
   if [[ ! -f "$pem_file" ]]; then
@@ -400,24 +440,28 @@ build_firefox() {
 
   make_stage
 
-  echo "==> [firefox] Staging $SRC_DIR/ (allowlisted file types)..."
-  # The PNG icon is only used by the Chromium manifest, so it is not staged.
+  echo "==> [firefox] Staging allowlisted files from $SRC_DIR/..."
   stage_src "$STAGE" firefox
   cp -- "$manifest" "$STAGE/manifest.json"
 
   echo "==> [firefox] Bundling content script (IIFE)..."
   bundle_content "$STAGE"
 
+  local -a files args=()
+  mapfile -t files < <(ext_files firefox)
+  check_tree "$STAGE" "${files[@]}"
+
   echo "==> [firefox] Zipping staged tree..."
-  zip_files "$out_xpi" "$STAGE" --allow='*'
+  local f
+  for f in "${files[@]}"; do args+=("--file=$f"); done
+  zip_files "$out_xpi" "$STAGE" "${args[@]}"
 
   echo "==> [firefox] Done: $out_xpi"
 }
 
-# The source package keeps the repository layout and carries everything a reviewer
-# needs to reproduce the build: src/, rustcrypto-wasm/ with its build steps in
-# docs/, and this script. It is built from the SOURCE_ALLOW list above, so
-# nothing outside that list can end up in it. Chromium-only files are not listed.
+# Source package preserves the repository layout and includes everything needed to reproduce the build:
+# src/, rustcrypto-wasm/ with build steps in docs/, and this script.
+# Contains exactly SRC_SHARED + SRC_SOURCE_ONLY + SOURCE_EXTRA, and nothing else.
 build_source() {
   local manifest="$MANIFEST_DIR/firefox.json"
   check_src
@@ -428,12 +472,14 @@ build_source() {
   local out_zip="$DIST_DIR/agecord-${version}.zip"
 
   # The source package must be able to rebuild what the extension packages ship,
-  # so src/ gets the same file-type check as the extension builds.
+  # so src/ is checked against the same allowlist.
   stage_src - source
 
-  local args=() p
-  for p in "${SOURCE_ALLOW[@]}"; do args+=("--allow=$p"); done
-  for p in "${SOURCE_EXEC[@]}";  do args+=("--exec=$p");  done
+  local -a args=()
+  local f
+  for f in "${SRC_SHARED[@]}" "${SRC_SOURCE_ONLY[@]}"; do args+=("--file=$SRC_DIR/$f"); done
+  for f in "${SOURCE_EXTRA[@]}"; do args+=("--file=$f"); done
+  for f in "${SOURCE_EXEC[@]}";  do args+=("--exec=$f"); done
 
   echo "==> [source] Zipping allowlisted source files..."
   zip_files "$out_zip" . "${args[@]}"
