@@ -47,18 +47,33 @@ function compress(str) {
   return collectBytes(compressed);
 }
 
-// Single pipeThrough chain: source -> DecompressionStream -> TextDecoderStream.
-async function decompressToText(bytes) {
+// Source -> DecompressionStream -> byte-counting limiter -> TextDecoderStream.
+// The limiter errors once decompressed output exceeds maxBytes, preventing large strings;
+// the cap may be exceeded by at most one decompressor chunk.
+async function decompressToTextCapped(bytes, maxBytes) {
+  let total = 0;
+  const limiter = new TransformStream({
+    transform(chunk, ctl) {
+      total += chunk.byteLength;
+      if (total > maxBytes) { ctl.error(new Error('TEXT_TOO_LARGE')); return; }
+      ctl.enqueue(chunk);
+    },
+  });
   const source = new ReadableStream({
     start(controller) { controller.enqueue(bytes); controller.close(); },
   });
-  const textStream = source
+  const stream = source
     .pipeThrough(new DecompressionStream('deflate-raw'))
+    .pipeThrough(limiter)
     .pipeThrough(new TextDecoderStream());
   let text = '';
-  for await (const chunk of textStream) text += chunk;
+  for await (const chunk of stream) text += chunk;
   return text;
 }
+
+// 4,000 UTF-16 units x 3 bytes (BMP worst case in UTF-8).
+// KEEP IN SYNC (content.js MAX_INLINE_MESSAGE_CHARS * 3)
+const TEXT_MAX_PLAINTEXT_BYTES = 4000 * 3;
 
 // Decoded ML-DSA-87 public keys (2592 B each) keyed by base64 string.
 // Avoids repeated base64 decode across attachments in the same channel.
@@ -79,13 +94,13 @@ let _cachedDecrypter = null;
 // Bumped on RELOCK so in-flight verifyAndDecrypt() calls can detect stale work.
 let _lockEpoch = 0;
 
-// Verifies ML-DSA-87 signature and age-decrypts.
-// Returns { sigValid: false, reason: 'unknown-sender'|'bad-signature' } on signature failure,
-// { sigValid: true, reason: 'not-recipient' } when validly signed but not addressed to us,
-// { sigValid: true, plainBytes } on success.
-// Throws NOT_UNLOCKED if no identity is cached.
+// Verifies ML-DSA-87, then age-decrypts.
+// Signature failures return sigValid=false with unknown-sender or bad-signature.
+// Valid but unaddressed messages return not-recipient; success returns plainBytes.
+// Throws NOT_UNLOCKED without a cached identity.
+// fileOffset marks the signature start in fileBuffer (1 = after version), avoiding a slice(1) copy.
 async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
-                                  prefixBuffer, sigByteLen, pubkeyHintLen, opName }) {
+                                  prefixBuffer, sigByteLen, pubkeyHintLen, fileOffset = 0, opName }) {
   if (!fileBuffer || !(fileBuffer instanceof ArrayBuffer))
     throw new Error(`${opName}: fileBuffer must be a transferred ArrayBuffer`);
   if (!Array.isArray(candidateKeysB64) || candidateKeysB64.length === 0)
@@ -94,32 +109,39 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
     throw new Error(`${opName}: sigByteLen must be a positive number`);
   if (typeof pubkeyHintLen !== 'number' || pubkeyHintLen < 1)
     throw new Error(`${opName}: pubkeyHintLen must be a positive number`);
-  if (fileBuffer.byteLength < sigByteLen + pubkeyHintLen + 1)
+  if (!Number.isInteger(fileOffset) || fileOffset < 0 || fileOffset > 16)
+    throw new Error(`${opName}: fileOffset invalid`);
+  if (fileBuffer.byteLength < fileOffset + sigByteLen + pubkeyHintLen + 1)
     throw new Error(`${opName}: fileBuffer too short`);
   if (!_cachedDecrypter)
     throw new Error('NOT_UNLOCKED');
   const myEpoch = _lockEpoch;
 
   const fileBytes = new Uint8Array(fileBuffer);
-  const sigBytes  = fileBytes.subarray(0, sigByteLen);
-  const hintBytes = fileBytes.subarray(sigByteLen, sigByteLen + pubkeyHintLen);
-  const ageBytes  = fileBytes.subarray(sigByteLen + pubkeyHintLen);
+  const hintStart = fileOffset + sigByteLen;
+  const hintBytes = fileBytes.subarray(hintStart, hintStart + pubkeyHintLen);
+  const ageBytes  = fileBytes.subarray(hintStart + pubkeyHintLen);
 
   // Remove trailing delimiter before key matching.
   // Missing delimiter indicates an invalid hint length.
   const hintStr      = _textDecoder.decode(hintBytes);
+  // The trailing delimiter must actually be ':' — slice(0, -1) alone would accept any last character.
+  if (!hintStr.endsWith(':')) return { sigValid: false, reason: 'unknown-sender' };
   const senderKeyB64 = hintStr.slice(0, -1);
 
   // One hint per message → scan runs at most once per attachment.
   const matchedKeyB64 = candidateKeysB64.find(k => k === senderKeyB64);
   if (!matchedKeyB64) return { sigValid: false, reason: 'unknown-sender' };
 
-  // ── Build sigInput: prefixBytes || hintBytes || ageBytes ───────────────────
+  // Build prefix || hint || age in place.
+  // Move the 4,627-byte signature aside first, then write the <=42-byte prefix into
+  // its former region before hint; age bytes remain untouched and no large copy occurs.
   const prefixBytes = prefixBuffer ? new Uint8Array(prefixBuffer) : new Uint8Array(0);
-  const sigInput    = new Uint8Array(prefixBytes.length + hintBytes.length + ageBytes.length);
-  sigInput.set(prefixBytes, 0);
-  sigInput.set(hintBytes,   prefixBytes.length);
-  sigInput.set(ageBytes,    prefixBytes.length + hintBytes.length);
+  if (prefixBytes.length > sigByteLen) throw new Error(`${opName}: prefix too long`);
+  const sigBytes    = fileBytes.slice(fileOffset, fileOffset + sigByteLen);
+  const prefixStart = hintStart - prefixBytes.length;
+  fileBytes.set(prefixBytes, prefixStart);
+  const sigInput    = fileBytes.subarray(prefixStart);
 
   // ── Verify with the single matched key ─────────────────────────────────────
   
@@ -187,88 +209,66 @@ self.onmessage = async ({ data }) => {
       return;
     }
 
-    if (op === 'ENCRYPT') {
-      const { buffer, recipients } = data;
-
-      if (!buffer || !(buffer instanceof ArrayBuffer))
-        throw new Error('ENCRYPT: buffer must be a transferred ArrayBuffer');
+    if (op === 'ENCRYPT' || op === 'COMPRESS_ENCRYPT') {
+      const { recipients } = data;
       if (!Array.isArray(recipients) || recipients.length === 0)
-        throw new Error('ENCRYPT: no recipients provided');
+        throw new Error(`${op}: no recipients provided`);
+      // Bytes to leave free IN FRONT of the ciphertext (content.js signs in place and writes the signed-file header
+      // there, so the main thread never copies the ciphertext). 0 = ciphertext at offset 0.
+      const headerLen = data.headerLen ?? 0;
+      if (!Number.isInteger(headerLen) || headerLen < 0 || headerLen > 65536)
+        throw new Error(`${op}: bad headerLen`);
 
-      const enc = new Encrypter();
-      for (const recipient of recipients) enc.addRecipient(recipient);
-      
-      const plainBytes = new Uint8Array(buffer);
-      const encBytes   = await enc.encrypt(plainBytes);
-
-      // Transfer result back — encBytes.buffer is a fresh ArrayBuffer.
-      self.postMessage(
-        { op: 'ENCRYPT_RESULT', id, buffer: encBytes.buffer },
-        [encBytes.buffer]
-      );
+      // ENCRYPT takes a transferred buffer; COMPRESS_ENCRYPT (outgoing text, so
+      // CompressionStream never runs on the main thread - Firefox Xray Vision)
+      // takes a string. Either way the plaintext bytes are zeroed after use.
+      let plainBytes;
+      if (op === 'ENCRYPT') {
+        if (!(data.buffer instanceof ArrayBuffer))
+          throw new Error('ENCRYPT: buffer must be a transferred ArrayBuffer');
+        plainBytes = new Uint8Array(data.buffer);
+      } else {
+        if (typeof data.text !== 'string')
+          throw new Error('COMPRESS_ENCRYPT: text must be a string');
+        plainBytes = await compress(data.text);
+      }
+      let encBytes;
+      try {
+        const enc = new Encrypter();
+        for (const recipient of recipients) enc.addRecipient(recipient);
+        encBytes = await enc.encrypt(plainBytes);
+      } finally {
+        plainBytes.fill(0);
+      }
+      // encBytes.buffer is a fresh ArrayBuffer; transfer it back (with headerLen free bytes in front, if asked).
+      let outBytes = encBytes;
+      if (headerLen > 0) { outBytes = new Uint8Array(headerLen + encBytes.length); outBytes.set(encBytes, headerLen); }
+      self.postMessage({ op: `${op}_RESULT`, id, buffer: outBytes.buffer }, [outBytes.buffer]);
       return;
     }
 
-    // Used by the outgoing text-message path so CompressionStream never runs on
-    // the main thread (Firefox Xray Vision tripped on it there).
-    if (op === 'COMPRESS_ENCRYPT') {
-      const { text, recipients } = data;
-
-      if (typeof text !== 'string')
-        throw new Error('COMPRESS_ENCRYPT: text must be a string');
-      if (!Array.isArray(recipients) || recipients.length === 0)
-        throw new Error('COMPRESS_ENCRYPT: no recipients provided');
-
-      const compressedBytes = await compress(text);
-
-      const enc = new Encrypter();
-      for (const recipient of recipients) enc.addRecipient(recipient);
-      const encBytes = await enc.encrypt(compressedBytes);
-
-      self.postMessage(
-        { op: 'COMPRESS_ENCRYPT_RESULT', id, buffer: encBytes.buffer },
-        [encBytes.buffer]
-      );
-      return;
-    }
-
-    // VERIFY_DECRYPT: verify + decrypt signed media; return raw bytes.
-    if (op === 'VERIFY_DECRYPT') {
-      const { fileBuffer, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen } = data;
+    // VERIFY_DECRYPT: signed media, raw bytes back (no decompress / UTF-8 decode).
+    // VERIFY_DECRYPT_DECOMPRESS: signed text, decompressed + UTF-8 decoded.
+    if (op === 'VERIFY_DECRYPT' || op === 'VERIFY_DECRYPT_DECOMPRESS') {
+      const { fileBuffer, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen, fileOffset } = data;
       const result = await verifyAndDecrypt({ fileBuffer, candidateKeysB64,
-                                              prefixBuffer, sigByteLen, pubkeyHintLen, opName: op });
-      if (!result.sigValid) {
-        self.postMessage({ op: 'VERIFY_DECRYPT_RESULT', id, sigValid: false, reason: result.reason });
+                                              prefixBuffer, sigByteLen, pubkeyHintLen, fileOffset, opName: op });
+      const resultOp = `${op}_RESULT`;
+      if (!result.sigValid || result.reason === 'not-recipient') {
+        self.postMessage({ op: resultOp, id, sigValid: result.sigValid, reason: result.reason });
         return;
       }
-      if (result.reason === 'not-recipient') {
-        self.postMessage({ op: 'VERIFY_DECRYPT_RESULT', id, sigValid: true, reason: 'not-recipient' });
+      if (op === 'VERIFY_DECRYPT') {
+        self.postMessage({ op: resultOp, id, sigValid: true, buffer: result.plainBytes.buffer }, [result.plainBytes.buffer]);
         return;
       }
-      // Return raw bytes — no decompress, no UTF-8 decode for binary media.
-      self.postMessage(
-        { op: 'VERIFY_DECRYPT_RESULT', id, sigValid: true, buffer: result.plainBytes.buffer },
-        [result.plainBytes.buffer]
-      );
-      return;
-    }
-
-    // VERIFY_DECRYPT_DECOMPRESS: verify + decrypt signed text; decompress + UTF-8 decode.
-    if (op === 'VERIFY_DECRYPT_DECOMPRESS') {
-      const { fileBuffer, candidateKeysB64, prefixBuffer, sigByteLen, pubkeyHintLen } = data;
-      const result = await verifyAndDecrypt({ fileBuffer, candidateKeysB64,
-                                              prefixBuffer, sigByteLen, pubkeyHintLen, opName: op });
-      if (!result.sigValid) {
-        self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: false, reason: result.reason });
-        return;
+      let plaintext;
+      try {
+        plaintext = await decompressToTextCapped(result.plainBytes, TEXT_MAX_PLAINTEXT_BYTES);
+      } finally {
+        result.plainBytes.fill(0);
       }
-      if (result.reason === 'not-recipient') {
-        self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: true, reason: 'not-recipient' });
-        return;
-      }
-      const plaintext = await decompressToText(result.plainBytes);
-      result.plainBytes.fill(0);
-      self.postMessage({ op: 'VERIFY_DECRYPT_DECOMPRESS_RESULT', id, sigValid: true, plaintext });
+      self.postMessage({ op: resultOp, id, sigValid: true, plaintext });
       return;
     }
 
