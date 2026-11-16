@@ -10,6 +10,7 @@
 
 import argparse
 import os
+import stat
 import struct
 import sys
 import zipfile
@@ -92,10 +93,47 @@ def encode_crx_file_header(public_key_der, signature, signed_header_data):
 # Key handling (mirrors keypair.js)
 # --------------------------------------------------------------------------
 
+def write_private_key_file(path, pem):
+    """Create `path` owner-only (0600) from the first byte written. O_EXCL
+    makes creation atomic and refuses to overwrite or follow a pre-planted
+    file or symlink; a failed write leaves no half-written key behind."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        raise SystemExit(f'"{path}" already exists (possibly a dangling symlink); '
+                         "refusing to write a private key through it")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(pem)
+    except BaseException:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+
+
+def tighten_existing_key(path):
+    """Keys made by older versions were created with the default umask
+    (typically 0644). Make an existing key owner-only too."""
+    if os.name != "posix":
+        return
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    if mode & 0o077:
+        try:
+            os.chmod(path, 0o600)
+            print(f'Tightened permissions on "{path}": {mode:04o} -> 0600', file=sys.stderr)
+        except OSError as exc:
+            print(f'warning: "{path}" is accessible to other users ({mode:04o}) '
+                  f"and could not be restricted: {exc}", file=sys.stderr)
+
+
 def load_or_create_private_key(key_path):
     """Load an RSA private key from `key_path` if it exists, otherwise
-    generate a new one and save it there. Returns (private_key, created)."""
+    generate a new one and save it there (mode 0600). Returns (private_key, created)."""
     if key_path and os.path.exists(key_path):
+        tighten_existing_key(key_path)
         with open(key_path, "rb") as f:
             data = f.read()
         try:
@@ -112,8 +150,7 @@ def load_or_create_private_key(key_path):
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         )
-        with open(key_path, "wb") as f:
-            f.write(pem)
+        write_private_key_file(key_path, pem)
 
     return private_key, True
 
@@ -145,6 +182,17 @@ def encode_app_id(crx_id):
 # the zip.addFile loop in writeCRX3File.js)
 # --------------------------------------------------------------------------
 
+# Reproducible archives: fixed timestamp (earliest the zip format can store),
+# fixed permissions, entries sorted by name. The bytes depend only on the file
+# names and contents, never on mtimes, umask, directory order or checkout path.
+FIXED_DATE = (1980, 1, 1, 0, 0, 0)
+
+
+def is_pem_name(rel):
+    """Files with a .pem extension are never packaged."""
+    return rel.lower().endswith(".pem")
+
+
 def collect_files(src):
     """Given a path to an extension directory, return (root_dir, sorted
     list of absolute file paths) covering everything that should go into
@@ -156,8 +204,11 @@ def collect_files(src):
     files = []
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
-            files.append(os.path.join(dirpath, name))
-    files.sort()
+            path = os.path.join(dirpath, name)
+            if os.path.islink(path) or not os.path.isfile(path):
+                raise SystemExit(f'"{path}" is not a regular file; refusing to package it')
+            files.append(path)
+    files.sort(key=lambda p: os.path.relpath(p, root).replace(os.sep, "/"))
 
     manifest_path = os.path.join(root, "manifest.json")
     if manifest_path not in files:
@@ -168,17 +219,29 @@ def collect_files(src):
 
 def build_zip_bytes(root, files):
     """Zip up `files` (absolute paths under `root`) with deterministic,
-    root-relative arcnames. Returns the raw zip bytes."""
+    root-relative arcnames. Returns the raw zip bytes. Refuses (before
+    producing anything) if any file has a .pem extension."""
     import io
+
+    entries = []
+    for path in files:
+        # zip entries should use "/" regardless of host OS
+        arcname = os.path.relpath(path, root).replace(os.sep, "/")
+        with open(path, "rb") as f:
+            data = f.read()
+        if is_pem_name(arcname):
+            raise SystemExit(f'"{arcname}" has a .pem extension; refusing to package it')
+        entries.append((arcname, data))
+    entries.sort(key=lambda e: e[0])
 
     buf = io.BytesIO()
 
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        for path in files:
-            arcname = os.path.relpath(path, root)
-            # zip entries should use "/" regardless of host OS
-            arcname = arcname.replace(os.sep, "/")
-            zf.write(path, arcname)
+    with zipfile.ZipFile(buf, "w") as zf:
+        for arcname, data in entries:
+            zi = zipfile.ZipInfo(arcname, FIXED_DATE)
+            zi.create_system = 3  # Unix, regardless of the host OS
+            zi.external_attr = (stat.S_IFREG | 0o644) << 16
+            zf.writestr(zi, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
     return buf.getvalue()
 
@@ -235,6 +298,12 @@ def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
 
     root, files = collect_files(args.src)
+
+    if args.key_path:
+        key_real = os.path.realpath(args.key_path)
+        if key_real == root or key_real.startswith(root + os.sep):
+            raise SystemExit(f'private key "{args.key_path}" is inside the directory being packaged')
+
     zip_bytes = build_zip_bytes(root, files)
 
     private_key, created = load_or_create_private_key(args.key_path)
