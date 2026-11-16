@@ -5,6 +5,9 @@
 
 'use strict';
 
+// Equal to the storage.session quota used for the hand-off; same limit as popup.js.
+const IMPORT_SIZE_LIMIT = 10 * 1024 * 1024;   // KEEP IN SYNC (popup.js)
+
 const statusEl = document.getElementById('status');
 const sealEl   = document.getElementById('seal');
 
@@ -20,6 +23,9 @@ document.getElementById('f').addEventListener('change', async (e) => {
   if (!file) return;
   setStatus('Reading file\u2026');
   try {
+    // Check the size BEFORE reading anything into memory.
+    if (file.size > IMPORT_SIZE_LIMIT)
+      throw new Error(`File too large — contacts exports must be under ${(IMPORT_SIZE_LIMIT / 1024 / 1024).toFixed(1)} MiB.`);
     const text = await file.text();
     // Minimal sanity check: must be parseable JSON with an object at root.
     // Full v2 validation happens in the popup's doImportContacts().
