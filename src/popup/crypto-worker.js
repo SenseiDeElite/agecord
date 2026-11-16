@@ -78,27 +78,35 @@ self.onmessage = async ({ data }) => {
       return;
     }
 
-    if (data.op === 'XCHACHA_ENCRYPT') {
+    // XCHACHA_ENCRYPT:          [0x01][16-byte Argon2id salt][nonce+ct+tag]  (identity blob)
+    // XCHACHA_ENCRYPT_CONTACTS: [0x01][nonce+ct+tag]  (same layout as background.js
+    //                           encryptContacts(); salt is stored separately).
+    if (data.op === 'XCHACHA_ENCRYPT' || data.op === 'XCHACHA_ENCRYPT_CONTACTS') {
+      const withSalt  = data.op === 'XCHACHA_ENCRYPT';
       const key       = new Uint8Array(data.keyBytes);
       const plaintext = new Uint8Array(data.plaintextBytes);
-      if (!data.saltBytes) throw new Error('XCHACHA_ENCRYPT requires saltBytes — caller must supply it.');
-      const saltRaw = new Uint8Array(data.saltBytes);
-      if (saltRaw.length !== SALT_LEN)
-        throw new Error(`Salt must be exactly ${SALT_LEN} bytes (got ${saltRaw.length}).`);
+      const saltRaw   = data.saltBytes ? new Uint8Array(data.saltBytes) : null;
 
       // encrypt() generates the nonce internally via OsRng; returns nonce(24)||ct+tag.
+      // Validation sits inside the try so key and plaintext are zeroed even when it throws.
       let noncePlusCt;
       try {
+        if (withSalt) {
+          if (!saltRaw) throw new Error('XCHACHA_ENCRYPT requires saltBytes — caller must supply it.');
+          if (saltRaw.length !== SALT_LEN)
+            throw new Error(`Salt must be exactly ${SALT_LEN} bytes (got ${saltRaw.length}).`);
+        }
         noncePlusCt = xchacha20poly1305_encrypt(key, plaintext);
       } finally {
         zeroAll(key, plaintext);
       }
 
       // Freshly allocated to exact size, so transferring its buffer is safe.
-      const envelope = new Uint8Array(1 + SALT_LEN + noncePlusCt.length);
+      const bodyOffset = ENVELOPE_HDR_LEN + (withSalt ? SALT_LEN : 0);
+      const envelope = new Uint8Array(bodyOffset + noncePlusCt.length);
       envelope[0] = ENVELOPE_VERSION;
-      envelope.set(saltRaw, 1);
-      envelope.set(noncePlusCt, 1 + SALT_LEN);
+      if (withSalt) envelope.set(saltRaw, ENVELOPE_HDR_LEN);
+      envelope.set(noncePlusCt, bodyOffset);
       zeroAll(noncePlusCt, saltRaw);
 
       self.postMessage({ ok: true, envelopeBytes: envelope.buffer }, [envelope.buffer]);
@@ -110,21 +118,18 @@ self.onmessage = async ({ data }) => {
     // XCHACHA_DECRYPT_CONTACTS: version + ciphertext; salt is separate.
     if (data.op === 'XCHACHA_DECRYPT' || data.op === 'XCHACHA_DECRYPT_CONTACTS') {
       const headerLen = data.op === 'XCHACHA_DECRYPT_CONTACTS' ? ENVELOPE_HDR_LEN : ENVELOPE_HDR_LEN + SALT_LEN;
-      const envelope = new Uint8Array(data.envelopeBytes);
-      // Guard against truncated input before indexing — otherwise envelope[0]
-      // is undefined and the check below throws an opaque TypeError instead
-      // of this clear, intended error.
-      if (envelope.length < headerLen)
-        throw new Error(`Envelope too short: expected at least ${headerLen} bytes, got ${envelope.length}.`);
-      if (envelope[0] !== ENVELOPE_VERSION)
-        throw new Error(`Unknown envelope version 0x${envelope[0].toString(16)}.`);
-
-      const key = new Uint8Array(data.keyBytes);
-      // decrypt() expects nonce(24)||ct+tag and slices the nonce internally.
-      const noncePlusCt = envelope.slice(headerLen);
+      const key       = new Uint8Array(data.keyBytes);
+      const envelope  = new Uint8Array(data.envelopeBytes);
       let plaintext, out;
       try {
-        plaintext = xchacha20poly1305_decrypt(key, noncePlusCt);
+        // Guard against truncated input before indexing — otherwise envelope[0]
+        // is undefined and the check below throws an opaque TypeError.
+        if (envelope.length < headerLen)
+          throw new Error(`Envelope too short: expected at least ${headerLen} bytes, got ${envelope.length}.`);
+        if (envelope[0] !== ENVELOPE_VERSION)
+          throw new Error(`Unknown envelope version 0x${envelope[0].toString(16)}.`);
+        // decrypt() expects nonce(24)||ct+tag and slices the nonce internally.
+        plaintext = xchacha20poly1305_decrypt(key, envelope.slice(headerLen));
         // Same tight-copy-before-transfer reasoning as ARGON2ID_DERIVE.
         out = plaintext.slice();
       } finally {
