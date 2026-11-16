@@ -1,6 +1,6 @@
 [package]
 name = "rustcrypto-wasm"
-version = "0.3.8"
+version = "0.4.0"
 authors = ["Sensei <https://github.com/SenseiDeElite>"]
 description = "WebAssembly RustCrypto"
 license = "MIT"
@@ -30,7 +30,7 @@ panic = "abort"
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = [
     "--enable-bulk-memory",
-    "--enable-simd", 
+    "--enable-simd",
     "--generate-global-effects",
     "-O4",
     "--monomorphize",
