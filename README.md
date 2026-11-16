@@ -52,13 +52,13 @@ Each contact's public key is displayed as a SHAKE256 (64-byte output) fingerprin
 
 ### ℹ️ Usage
 
-See [`USAGE.md`](https://github.com/SenseiDeElite/agecord/blob/main/USAGE.md).
+See [`USAGE.md`](https://github.com/SenseiDeElite/agecord/blob/main/docs/USAGE.md).
 
 ---
 
 ### 🔧 Troubleshooting
 
-See [`TROUBLESHOOTING.md`](https://github.com/SenseiDeElite/agecord/blob/main/TROUBLESHOOTING.md).
+See [`TROUBLESHOOTING.md`](https://github.com/SenseiDeElite/agecord/blob/main/docs/TROUBLESHOOTING.md).
 
 ---
 
