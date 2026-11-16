@@ -66,4 +66,4 @@ See [`TROUBLESHOOTING.md`](https://github.com/SenseiDeElite/agecord/blob/main/do
 
 See [`NOTICES.md`](https://github.com/SenseiDeElite/agecord/blob/main/NOTICES.md) for the third-party notices.
 
-Not affiliated with Discord Inc. Research project, use at your own risk.
+Not affiliated with Discord Inc. Research project; use at your own risk.
