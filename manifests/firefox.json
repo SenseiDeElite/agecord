@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agecord",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "End-to-end post-quantum age encryption for Discord.",
   "browser_specific_settings": {
     "gecko": {
@@ -18,7 +18,8 @@
     "512": "assets/agecord-512.svg"
   },
   "permissions": [
-    "storage"
+    "storage",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://discord.com/*",
@@ -26,7 +27,7 @@
   ],
   "background": {
     "scripts": [
-      "background.js"
+      "background/background.js"
     ],
     "type": "module"
   },
@@ -46,7 +47,7 @@
         "https://discord.com/*"
       ],
       "js": [
-        "content/content-loader.js"
+        "content/content.js"
       ],
       "css": [
         "content/content.css"
@@ -64,12 +65,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "content/content.js",
-        "content/emoji_map.js",
-        "content/highlight_map.js",
         "content/file-crypto-worker.js",
         "content/cdn-bridge.html",
-        "content/cdn-bridge.js",
         "lib/age.min.js",
         "lib/rustcrypto-wasm.min.js"
       ],
