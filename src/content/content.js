@@ -581,7 +581,7 @@ function buildSignedAgeFile(framedBuffer, entry, channelId) {
 
   // framedBuffer = [FILE_HEADER_LEN free bytes][age ciphertext], laid out by the worker (headerLen). The signed file is
   // assembled IN PLACE, so the ciphertext is never copied here.
-  if (!(framedBuffer instanceof ArrayBuffer) || framedBuffer.byteLength <= FILE_HEADER_LEN)
+  if (!isArrayBuffer(framedBuffer) || framedBuffer.byteLength <= FILE_HEADER_LEN)
     throw new Error('buildSignedAgeFile: expected [header space][ciphertext]');
 
   // Hint lets the verifier find the matching key via linear scan instead of
@@ -671,6 +671,12 @@ function buildCandidateKeysB64(entry) {
 
 const toB64   = bytes => bytes.toBase64();
 const fromB64 = b64   => Uint8Array.fromBase64(b64);
+
+// Realm-safe ArrayBuffer brand check. In Firefox, content scripts run in a separate JS realm from the buffers they
+// receive via postMessage (bridge iframe, Blob workers), so `x instanceof ArrayBuffer` is false for genuine ArrayBuffers.
+// The byteLength getter throws for anything that is not a real ArrayBuffer (structured-clone safe, not spoofable).
+const _abByteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get;
+function isArrayBuffer(v) { try { _abByteLength.call(v); return true; } catch { return false; } }
 
 // Unguessable request ids. Removes predictable counters.
 // The interceptor has its own copy: the two worlds cannot share code.
@@ -2140,7 +2146,7 @@ window.addEventListener('message', (e) => {
     if (echoedUrl !== entry.cdnUrl) return;
     _iframePending.delete(requestId);
     if (error) entry.reject(Object.assign(new Error(error), { code: typeof code === 'string' ? code : 'FETCH_FAILED' }));
-    else if (buffer !== undefined && !(buffer instanceof ArrayBuffer)) entry.reject(Object.assign(new Error('bad reply'), { code: 'FETCH_FAILED' }));
+    else if (buffer !== undefined && !isArrayBuffer(buffer)) entry.reject(Object.assign(new Error('bad reply'), { code: 'FETCH_FAILED' }));
     else       entry.resolve({ buffer, totalBytes: Number.isSafeInteger(totalBytes) ? totalBytes : null });
   }
 });
@@ -2459,7 +2465,7 @@ function listenForInterceptorMessages() {
       _pageRequestsInFlight++; counted = true;
       if (typeof fileName !== 'string' || fileName.length > 255 ||
           !(mimeType === undefined || (typeof mimeType === 'string' && mimeType.length <= 255)) ||
-          !(plainBuffer instanceof ArrayBuffer) ||
+          !isArrayBuffer(plainBuffer) ||
           !(fileChannelId === null || (typeof fileChannelId === 'string' && ID_RE.test(fileChannelId))) ||
           !(fileGuildId === null || (typeof fileGuildId === 'string' && GUILD_RE.test(fileGuildId)))) {
         throw _blocked('Invalid request.');
@@ -2505,7 +2511,7 @@ function listenForInterceptorMessages() {
       );
     } catch (err) {
       // Refused before the worker took ownership (a transferred buffer is detached, so this is then a no-op).
-      if (plainBuffer instanceof ArrayBuffer) new Uint8Array(plainBuffer).fill(0);
+      if (isArrayBuffer(plainBuffer)) new Uint8Array(plainBuffer).fill(0);
       // Gate passthrough (off/locked/no contact) and size/recipient refusals are expected, not bugs.
       const expected = err?.code === 'PASSTHROUGH' || /^(File too large|No recipients)/.test(err?.message ?? '');
       (expected ? console.info : console.error)('[age] AGE_ENCRYPT_FILE error requestId=%s:', requestId, err?.message ?? err);
