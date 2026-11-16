@@ -4,7 +4,7 @@
  */
 
 use wasm_bindgen::prelude::*;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 // ─── XChaCha20Poly1305 ────────────────────────────────────────────────────────
 
@@ -121,26 +121,31 @@ use ml_dsa::{
 #[wasm_bindgen]
 pub fn ml_dsa87_keygen() -> Vec<u8> {
     let sk = SigningKey::<MlDsa87>::generate();
-    let seed = sk.to_bytes();
+    let mut seed = sk.to_bytes();
     let vk = sk.verifying_key().to_bytes();
     drop(sk); // zero the expanded lattice private-key state now that both outputs are copied out
     let mut out = Vec::with_capacity(32 + vk.len());
     out.extend_from_slice(&seed);
     out.extend_from_slice(&vk);
+    seed.as_mut_slice().zeroize(); // the only other copy of the seed
     out
+}
+
+/// Expands a 32-byte seed into a signing key. The seed buffer is zeroed on return.
+fn signing_key_from_seed(seed: Vec<u8>, who: &str) -> Result<SigningKey<MlDsa87>, JsError> {
+    let seed = Zeroizing::new(seed);
+    let seed_arr: &[u8; 32] = seed
+        .as_slice()
+        .try_into()
+        .map_err(|_| JsError::new(&format!("{who}: seed must be exactly 32 bytes")))?;
+    Ok(SigningKey::<MlDsa87>::from_seed(seed_arr.into()))
 }
 
 /// Sign a message with ML-DSA-87.
 /// `seed`: 32 bytes. Returns the signature — 4627 bytes.
 #[wasm_bindgen]
 pub fn ml_dsa87_sign(seed: Vec<u8>, message: &[u8]) -> Result<Vec<u8>, JsError> {
-    let seed = Zeroizing::new(seed);
-    let seed_arr: &[u8; 32] = seed
-        .as_slice()
-        .try_into()
-        .map_err(|_| JsError::new("ml_dsa87_sign: seed must be exactly 32 bytes"))?;
-    let sk = SigningKey::<MlDsa87>::from_seed(seed_arr.into());
-    drop(seed); // seed_arr's borrow ends here (unused after); scrub the raw seed early
+    let sk = signing_key_from_seed(seed, "ml_dsa87_sign")?;
     let sig = sk.sign(message);
     drop(sk); // scrub expanded key state before allocating/returning the signature bytes
     Ok(sig.to_bytes().to_vec())
@@ -171,13 +176,7 @@ pub fn ml_dsa87_verify(verifying_key: &[u8], message: &[u8], signature: &[u8]) -
 /// `seed`: 32 bytes. Returns the verifying key — 2592 bytes.
 #[wasm_bindgen]
 pub fn ml_dsa87_verifying_key_from_seed(seed: Vec<u8>) -> Result<Vec<u8>, JsError> {
-    let seed = Zeroizing::new(seed);
-    let seed_arr: &[u8; 32] = seed
-        .as_slice()
-        .try_into()
-        .map_err(|_| JsError::new("ml_dsa87_verifying_key_from_seed: seed must be exactly 32 bytes"))?;
-    let sk = SigningKey::<MlDsa87>::from_seed(seed_arr.into());
-    drop(seed); // same reasoning as ml_dsa87_sign
+    let sk = signing_key_from_seed(seed, "ml_dsa87_verifying_key_from_seed")?;
     let vk = sk.verifying_key().to_bytes();
     drop(sk);
     Ok(vk.to_vec())
