@@ -358,7 +358,7 @@ check_src() {
 
 # Bundles the content script as a classic IIFE in STAGE.
 #   bundle_content STAGE
-# esbuild reads content.js, emoji_map.js, highlight_map.js, and WASM crypto from src/
+# esbuild reads content.js, emoji_map.js and highlight_map.js from src/
 # and writes $STAGE/content/content.js. Inlined maps are never staged; workers and popup/*
 # remain untouched ES modules.
 
@@ -387,7 +387,6 @@ BANNER
     --target=chrome155,firefox159 \
     --charset=utf8 \
     --tree-shaking=true \
-    --log-override:empty-import-meta=silent \
     --banner:js="$banner" \
     --outfile="$stage/content/content.js"
 }
