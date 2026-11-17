@@ -7,6 +7,7 @@
 
 // Current revision: Unicode® 18.0.0
 
+(() => {
 'use strict';
 
 const EMOJI_GROUPS = {
@@ -3850,5 +3851,5 @@ const EMOJI_MAP = Object.fromEntries(
   Object.entries(EMOJI_GROUPS).flatMap(([emoji, names]) => names.map((name) => [name, emoji]))
 );
 
-export { EMOJI_GROUPS };
-export default EMOJI_MAP;
+globalThis.__AGECORD_EMOJI_MAP__ = EMOJI_MAP;
+})();
