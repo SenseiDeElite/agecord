@@ -8,20 +8,19 @@
 // Transport: message.txt.age Discord attachments
 // Format: [sig version][ML-DSA-87 signature][pubkey hint][age ciphertext]
 // Crypto: age (MLKEM768X25519 + ChaCha20-Poly1305), ML-DSA-87, deflate-raw
-// Sig input: channel/server context + pubkey hint + age ciphertext.
+// Signature input: channel/server context + pubkey hint + age ciphertext.
 // Pubkey hint identifies the ML-DSA key before verification.
 
 // Decryption: attachment → CDN bridge → file-crypto-worker.js → render.
-// The age identity line is the only secret held in content.js. cachedIdentityLine
-// is a JS string and cannot be zeroed; it is resent to workers on respawn.
-// Decryption runs exclusively in workers.
+// Workers handle age crypto, compression, and ML-DSA-87 signing/verification;
+// content.js retains two secrets: cachedIdentityLine (immutable JS string) and
+// mldsaSeedBytes (zeroed on lock/session replacement). Both only resend UNLOCK
+// to workers; payload.mldsaSeedB64 is also immutable and cannot be zeroed.
 
 // Contacts (v2): keyed by UUID; resolved by channelId or serverId.
 
 'use strict';
 
-import { init as _rustcryptoInit, ml_dsa87_sign }
-  from '../lib/rustcrypto-wasm.min.js';
 import   EMOJI_MAP        from './emoji_map.js';
 import { HLJS_LANGUAGES } from './highlight_map.js';
 
@@ -41,6 +40,10 @@ const PUBKEY_HINT_LEN = 3457;
 //   0x01 — current: [ 0x01 ][ SIG_BYTES sig ][ PUBKEY_HINT_LEN hint ][ age ciphertext ]
 const SIG_VERSION     = 0x01;
 const SIG_VERSION_LEN = 1;
+
+// Layout parameters sent with every worker sign/verify message; the worker takes
+// the layout from the message rather than keeping its own copy of these constants.
+const SIG_LAYOUT = { sigByteLen: SIG_BYTES, pubkeyHintLen: PUBKEY_HINT_LEN };
 
 // Files larger than this show a confirmation prompt before decryption.
 const LARGE_FILE_THRESHOLD = 20 * 1024 * 1024; // 20 MiB
@@ -207,11 +210,11 @@ let _session = null;
 let _generation = 0;
 
 // Atomically replaces the session; callers must provide all fields.
-// Never spread the prior session: zeroization would erase the shared mldsaPrivBytes.
+// Never spread the prior session: zeroization would erase the shared mldsaSeedBytes.
 // CONTACTS_UPDATED mutates contacts, contactsLoaded, and selfRecipient in place
 // without incrementing _generation.
 function _setSession(fields) {
-  _session?.mldsaPrivBytes?.fill(0); // wipe any superseded key material
+  _session?.mldsaSeedBytes?.fill(0); // wipe any superseded key material
   _session = { ...fields };
   _generation++;
   return _session;
@@ -220,7 +223,7 @@ function _setSession(fields) {
 // Reverts to the locked state.
 // Clears the entire session object atomically.
 function _clearSession() {
-  _session?.mldsaPrivBytes?.fill(0);
+  _session?.mldsaSeedBytes?.fill(0);
   _session = null;
   _generation++;
 }
@@ -228,12 +231,12 @@ function _clearSession() {
 // The one place that defines "ready to attempt a decrypt." Requires both key
 // material AND the fetched identity line.
 function canDecrypt() {
-  return !!(_session?.mldsaPrivBytes && _session?.cachedIdentityLine && _globalOn);
+  return !!(_session?.mldsaSeedBytes && _session?.cachedIdentityLine && _globalOn);
 }
 
 // Match canDecrypt() exactly: 'disabled' only for globalOff; otherwise 'locked'.
 function _lockReason() {
-  return (_session?.mldsaPrivBytes && _session?.cachedIdentityLine) ? 'disabled' : 'locked';
+  return (_session?.mldsaSeedBytes && _session?.cachedIdentityLine) ? 'disabled' : 'locked';
 }
 
 // Convenience accessors — every read of contacts/selfRecipient goes through
@@ -547,19 +550,25 @@ function detachEnterHook() {
 
 // Recipient format: "age1pq1...;mldsa87:<standard-base64>"
 // Standard: RFC 4648 §4
-function extractMldsaPubBytes(recipientString) {
+// Returns the canonical base64 of the ML-DSA-87 public key, or null. Decodes and
+// re-encodes so malformed base64 is rejected (fromB64 throws) and canonicalised.
+function extractMldsaPubB64(recipientString) {
   const m = recipientString.match(/;mldsa87:([A-Za-z0-9+/]+=*)$/);
   if (!m) return null;
-  return fromB64(m[1]);
+  return toB64(fromB64(m[1]));
+}
+
+// An ArrayBuffer that owns exactly the bytes of the given view (safe to transfer/clone).
+function _prefixBuffer(u8) {
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 }
 
 // Shared by message.txt.age and media paths in processEncryptedAttachment,
-// and by buildSignedAgeFile below. Colon delimiter is safe — Discord
+// and by buildSigningContext below. Colon delimiter is safe — Discord
 // snowflakes are digits only.
 function buildSigPrefix(entry, channelId) {
   // A poisoned entry must not be able to inject ':' separators into the
   // signed context; the sign/verify path then fails closed.
-  const ID_RE = /^\d{1,20}$/;
   if (typeof channelId !== 'string' || !ID_RE.test(channelId))
     throw new Error('buildSigPrefix: invalid channelId');
   if (entry.type === 'server' && (typeof entry.serverId !== 'string' || !ID_RE.test(entry.serverId)))
@@ -569,50 +578,34 @@ function buildSigPrefix(entry, channelId) {
     : new TextEncoder().encode(`${channelId}:`);
 }
 
-// Signs and assembles the output payload:
-// [version][ML-DSA-87 signature][pubkey hint][age ciphertext].
-// Shared by text and file encryption paths.
-// Captures channelId before awaits. Requires selfRecipient.
-function buildSignedAgeFile(framedBuffer, entry, channelId) {
+// Builds the worker's signing context: prefix || hint || ciphertext, assembled and signed
+// in the worker (ENCRYPT / COMPRESS_ENCRYPT fuse encryption + signing).
+// Shared by text/file encryption. Call BEFORE await to snapshot sender key, channel, and entry.
+// Requires selfRecipient.
+function buildSigningContext(entry, channelId) {
   const selfRecipient = currentSelfRecipient();
   // Locked (or never fully unlocked) between the Enter gate and the
   // encrypt: handleEncryptClick maps NOT_UNLOCKED to "extension is locked".
-  if (!selfRecipient) throw new Error('NOT_UNLOCKED');
-
-  // framedBuffer = [FILE_HEADER_LEN free bytes][age ciphertext], laid out by the worker (headerLen). The signed file is
-  // assembled IN PLACE, so the ciphertext is never copied here.
-  if (!isArrayBuffer(framedBuffer) || framedBuffer.byteLength <= FILE_HEADER_LEN)
-    throw new Error('buildSignedAgeFile: expected [header space][ciphertext]');
+  // The worker can raise NOT_UNLOCKED as well (relock during an in-flight encrypt).
+  if (!selfRecipient || !_session?.mldsaSeedBytes) throw new Error('NOT_UNLOCKED');
 
   // Hint lets the verifier find the matching key via linear scan instead of
   // calling ml_dsa87_verify against every member's key.
-  const senderPubKeyB64 = toB64(extractMldsaPubBytes(selfRecipient));
-  const hintBytes = new TextEncoder().encode(senderPubKeyB64 + ':');
-  if (hintBytes.length !== PUBKEY_HINT_LEN)
-    throw new Error(`Unexpected sender hint length: ${hintBytes.length}`);   // the layout below, and every receiver, assume PUBKEY_HINT_LEN
-  const prefix = buildSigPrefix(entry, channelId);
+  const senderPubKeyB64 = extractMldsaPubB64(selfRecipient);
+  if (!senderPubKeyB64) throw new Error('Own recipient has no ML-DSA-87 public key');
+  if (senderPubKeyB64.length + 1 !== PUBKEY_HINT_LEN)   // the worker layout and every receiver assume PUBKEY_HINT_LEN
+    throw new Error(`Unexpected sender hint length: ${senderPubKeyB64.length + 1}`);
+  const prefix = buildSigPrefix(entry, channelId);      // validates ids (ID_RE) before anything reaches the worker
   if (prefix.length > SIG_BYTES)
     throw new Error('Signature prefix too long');
 
-  const fileBytes   = new Uint8Array(framedBuffer);
-  const hintStart   = SIG_VERSION_LEN + SIG_BYTES;
-  const prefixStart = hintStart - prefix.length;
-  // The signed message is prefix || hint || ciphertext: the prefix is staged in the (still unused) signature field,
-  // directly in front of the hint, so those bytes are contiguous in memory and can be signed without a copy.
-  fileBytes.set(hintBytes, hintStart);
-  fileBytes.set(prefix,    prefixStart);
-
-  // ml_dsa87_sign(seed, message) — deterministic from seed. Only reachable
-  // once isEncryptionActive()/canDecrypt() gated the caller, so _session and
-  // its key material are guaranteed present here.
-  const sigBytes = ml_dsa87_sign(_session.mldsaPrivBytes, fileBytes.subarray(prefixStart));
-  if (sigBytes.length !== SIG_BYTES)
-    throw new Error(`Unexpected ML-DSA-87 sig length: ${sigBytes.length}`);
-
-  fileBytes[0] = SIG_VERSION;
-  fileBytes.set(sigBytes, SIG_VERSION_LEN);   // overwrites the staged prefix
-
-  return fileBytes;
+  return {
+    prefixBuffer: _prefixBuffer(prefix),
+    senderPubKeyB64,
+    version:      SIG_VERSION,
+    fileOffset:   SIG_VERSION_LEN,
+    ...SIG_LAYOUT,
+  };
 }
 
 // Returns recipient strings for outbound encryption.
@@ -659,9 +652,7 @@ function buildCandidateKeysB64(entry) {
   if (selfRecipient) keys.push(selfRecipient);
   return keys
     .filter(Boolean)
-    // Delegates to extractMldsaPubBytes. Re-encode to base64 since extractMldsaPubBytes
-    // returns raw bytes and callers here need the base64 string.
-    .map(r => { const bytes = extractMldsaPubBytes(r); return bytes ? toB64(bytes) : null; })
+    .map(extractMldsaPubB64)
     .filter(Boolean);
 }
 
@@ -921,8 +912,10 @@ async function encryptTextAsMessage(plain, entry, channelId) {
     throw _blocked('Message empty or too long.');
   const recipients = buildRecipientList(entry);
   if (!entryHasRecipients(entry) || recipients.length === 0) throw new Error('No recipients — is an encrypted contact selected?');
-  const framed = await workerCompressEncrypt(plain, recipients);
-  return buildSignedAgeFile(framed, entry, channelId);
+  // Built BEFORE the await: one consistent snapshot of sender key, entry and channel.
+  const sign   = buildSigningContext(entry, channelId);
+  const signed = await workerCompressEncrypt(plain, recipients, sign);
+  return new Uint8Array(signed);   // a view of the transferred buffer, no copy
 }
 
 // Sends bytes via postMessage so upload-interceptor calls React's onChange directly,
@@ -2161,7 +2154,7 @@ let _textWorkerPending   = new Map();
 let _textWorkerNextId    = 0;
 
 // After decrypting N bytes, the media worker retains ~3N until terminated: the WASM heap
-// (ml_dsa87_verify copies the signed file), ciphertext, and decrypted chunks are retained.
+// (signature verification and signing copy the signed file), ciphertext, and decrypted chunks are retained.
 // For files triggering the large-file prompt, terminate after the queue drains and lazily
 // respawn (~30 ms, replaying session identity). Navigation also terminates the worker.
 const MEDIA_WORKER_RECYCLE_BYTES = LARGE_FILE_THRESHOLD;
@@ -2221,14 +2214,17 @@ function _postToWorker(worker, message, transfer) {
   else                   worker.__agePending.push({ message, transfer });
 }
 
-// Forwards UNLOCK so the worker can cache its Decrypter.
-// No-op when absent; newly spawned workers replay cached state.
-// The media worker is routinely absent after navigation or large-file recycling.
-// Throwing here previously aborted _wipeAttachmentState/RELOCK, leaving decrypted caches
-// and placeholders unlocked.
-function _sendUnlockToWorker(worker, identityLine) {
+// Forwards UNLOCK with the current session so the worker caches its Decrypter and ML-DSA seed.
+// No-op if the worker is absent or session incomplete; respawned workers replay via this path.
+// Throwing here previously aborted _wipeAttachmentState/RELOCK, leaving decrypted caches unlocked.
+// Send a private transferred seed copy: _postToWorker may queue until WORKER_READY, so sharing
+// the session seed could let _clearSession()/_setSession() zero it before the worker receives it.
+function _sendUnlockToWorker(worker) {
   if (!worker) return;
-  _postToWorker(worker, { op: 'UNLOCK', identityLine });
+  const identityLine = _session?.cachedIdentityLine;
+  if (!identityLine || !_session.mldsaSeedBytes) return;
+  const mldsaSeed = _session.mldsaSeedBytes.slice();   // exact 32-byte buffer, byteOffset 0
+  _postToWorker(worker, { op: 'UNLOCK', identityLine, mldsaSeed }, [mldsaSeed.buffer]);
 }
 
 function _sendRelockToWorker(worker) {
@@ -2246,8 +2242,19 @@ function _forEachWorker(send) {
   if (failure) throw failure;
 }
 
-function _unlockWorkers(identityLine) {
-  _forEachWorker(w => _sendUnlockToWorker(w, identityLine));
+function _unlockWorkers() {
+  _forEachWorker(w => _sendUnlockToWorker(w));
+}
+
+// Discards a worker. An UNLOCK still queued before WORKER_READY holds a seed copy: zero it.
+// (After the READY flush the queue is empty and the buffer is detached, so nothing is zeroed twice.)
+function _terminateWorker(worker) {
+  if (!worker) return;
+  if (worker.__agePending) {
+    for (const { message } of worker.__agePending) message?.mldsaSeed?.fill(0);
+    worker.__agePending.length = 0;
+  }
+  worker.terminate();
 }
 
 function _relockWorkers() {
@@ -2256,29 +2263,31 @@ function _relockWorkers() {
 
 function getTextWorker() {
   if (!_textWorker) {
-    _textWorker = _spawnWorker(_textWorkerPending);
-    _textWorker.onerror = (e) => {
+    const worker = _textWorker = _spawnWorker(_textWorkerPending);
+    worker.onerror = (e) => {
       console.error('[age] file-crypto-worker (text) crashed:', e.message);
       for (const { reject } of _textWorkerPending.values())
         reject(new Error(`file-crypto-worker (text) crashed: ${e.message}`));
       _textWorkerPending.clear();
+      _terminateWorker(worker);
       _textWorker = null;
     };
-    // Replay UNLOCK state via the readiness-safe worker send path.
-    if (_session?.cachedIdentityLine) _sendUnlockToWorker(_textWorker, _session.cachedIdentityLine);
+    // Replay UNLOCK state (identity + signing seed) via the readiness-safe worker send path.
+    _sendUnlockToWorker(worker);
   }
   return _textWorker;
 }
 
 function getMediaWorker() {
   if (!_mediaWorker) {
-    _mediaWorker = _spawnWorker(_mediaWorkerPending);
-    _mediaWorker.onerror = (e) => {
+    const worker = _mediaWorker = _spawnWorker(_mediaWorkerPending);
+    worker.onerror = (e) => {
       console.error('[age] file-crypto-worker (media) crashed:', e.message);
       // Snapshot, clear and null the worker BEFORE rejecting: each reject() runs settle(), which
       // dispatches the next queued op, and that op must start on a FRESH worker, not this dead one.
       const inflight = [..._mediaWorkerPending.values()];
       _mediaWorkerPending.clear();
+      _terminateWorker(worker);
       _mediaWorker = null;
       for (const { reject } of inflight)
         reject(new Error(`file-crypto-worker (media) crashed: ${e.message}`));
@@ -2286,7 +2295,7 @@ function getMediaWorker() {
     // Same replay as getTextWorker() — matters even more here, since this
     // worker is routinely terminated on channel nav and respawned lazily
     // while still unlocked (terminateFileCryptoWorker() does not RELOCK it).
-    if (_session?.cachedIdentityLine) _sendUnlockToWorker(_mediaWorker, _session.cachedIdentityLine);
+    _sendUnlockToWorker(worker);
   }
   return _mediaWorker;
 }
@@ -2321,7 +2330,7 @@ function _dispatchNextMediaOp() {
   msgArgs.id = id;
   try {
     worker = getMediaWorker();
-    if (msgArgs.op === 'VERIFY_DECRYPT') worker.__ageHighWater = Math.max(worker.__ageHighWater ?? 0, byteLength);
+    if (msgArgs.op === 'VERIFY_DECRYPT' || msgArgs.op === 'ENCRYPT') worker.__ageHighWater = Math.max(worker.__ageHighWater ?? 0, byteLength);
     _postToWorker(worker, msgArgs, transfers);
   } catch (e) {
     settle(reject, e);   // a synchronous throw (DataCloneError, Worker ctor) must not wedge the queue
@@ -2337,7 +2346,7 @@ function _maybeRecycleMediaWorker(worker) {
   if (_mediaQueue.length !== 0 || _mediaWorkerPending.size !== 0) return;
   if ((worker.__ageHighWater ?? 0) < MEDIA_WORKER_RECYCLE_BYTES) return;
   _mediaWorker = null;       // the next op spawns a fresh worker and replays the identity from the session
-  worker.terminate();
+  _terminateWorker(worker);
 }
 function _enqueueMediaOp(byteLength, msgArgs, transfers) {
   return new Promise((resolve, reject) => {
@@ -2354,7 +2363,7 @@ function terminateFileCryptoWorker() {
   for (const { reject } of _mediaQueue.splice(0))
     reject(new Error('Worker terminated — channel navigation'));
   if (_mediaWorker) {
-    _mediaWorker.terminate();
+    _terminateWorker(_mediaWorker);
     _mediaWorker = null;
     const inflight = [..._mediaWorkerPending.values()];
     _mediaWorkerPending.clear();
@@ -2364,25 +2373,33 @@ function terminateFileCryptoWorker() {
   _mediaWorkerBusy = false;
 }
 
-// Encrypts plainBuffer to age recipients via the media Worker.
-// Returns [FILE_HEADER_LEN free bytes][age ciphertext] (see buildSignedAgeFile).
+// Sanity-checks a finished signed file coming back from a worker:
+// [version][signature][hint][age ciphertext]. Returns the buffer.
+function _checkSignedBuffer(buf) {
+  if (!isArrayBuffer(buf) || buf.byteLength <= FILE_HEADER_LEN ||
+      new Uint8Array(buf)[0] !== SIG_VERSION)
+    throw new Error('Worker returned a malformed signed file');
+  return buf;
+}
+
+// Encrypts and signs plainBuffer in the media Worker (fused ENCRYPT op).
+// `sign` comes from buildSigningContext(). Resolves to the finished signed file
+// ArrayBuffer [version][signature][hint][age ciphertext], transferred, not copied.
 // plainBuffer is transferred and neutered; capture byteLength before postMessage.
-function workerEncryptFile(plainBuffer, recipients) {
+function workerEncryptFile(plainBuffer, recipients, sign) {
   const byteLength = plainBuffer.byteLength;
   return _enqueueMediaOp(
     byteLength,
-    { op: 'ENCRYPT', buffer: plainBuffer, recipients, headerLen: FILE_HEADER_LEN },
+    { op: 'ENCRYPT', buffer: plainBuffer, recipients, sign },
     [plainBuffer],
-  ).then(data => data.buffer);
+  ).then(data => _checkSignedBuffer(data.buffer));
 }
 
 // Verifies and decrypts media in the isolated media Worker.
 // Transfers input buffer; queued by size for priority dispatch.
 function workerVerifyDecrypt(fileBuffer, prefixBytes, candidateKeysB64, fileOffset = 0) {
   const byteLength   = fileBuffer.byteLength;
-  const prefixBuffer = prefixBytes.buffer.slice(
-    prefixBytes.byteOffset, prefixBytes.byteOffset + prefixBytes.byteLength
-  );
+  const prefixBuffer = _prefixBuffer(prefixBytes);
   return _enqueueMediaOp(
     byteLength,
     {
@@ -2390,25 +2407,32 @@ function workerVerifyDecrypt(fileBuffer, prefixBytes, candidateKeysB64, fileOffs
       fileBuffer,
       candidateKeysB64,
       prefixBuffer,
-      sigByteLen:     SIG_BYTES,
-      pubkeyHintLen:  PUBKEY_HINT_LEN,
+      ...SIG_LAYOUT,
       fileOffset,
     },
     [fileBuffer],
   );
 }
 
-// Compress + age-encrypt a plaintext string via the text Worker (COMPRESS_ENCRYPT op).
+// Compress + age-encrypt + sign a plaintext string via the text Worker (COMPRESS_ENCRYPT op).
 // Isolated from the media Worker so a large attachment encrypt never delays sending
-// a text message. Returns Promise<ArrayBuffer> = [FILE_HEADER_LEN free bytes][age ciphertext].
-function workerCompressEncrypt(text, recipients) {
+// a text message. `sign` comes from buildSigningContext(). Returns Promise<ArrayBuffer> =
+// the finished signed file [version][signature][hint][age ciphertext].
+function workerCompressEncrypt(text, recipients, sign) {
   return new Promise((resolve, reject) => {
     const id = _textWorkerNextId++;
     _textWorkerPending.set(id, {
-      resolve: (data) => resolve(data.buffer),
+      resolve: (data) => {
+        try { resolve(_checkSignedBuffer(data.buffer)); } catch (e) { reject(e); }
+      },
       reject,
     });
-    _postToWorker(getTextWorker(), { op: 'COMPRESS_ENCRYPT', id, text, recipients, headerLen: FILE_HEADER_LEN });
+    try {
+      _postToWorker(getTextWorker(), { op: 'COMPRESS_ENCRYPT', id, text, recipients, sign });
+    } catch (e) {
+      _textWorkerPending.delete(id);
+      reject(e);
+    }
   });
 }
 
@@ -2425,11 +2449,8 @@ function workerVerifyDecryptDecompress(fileBuffer, prefixBytes, candidateKeysB64
         id,
         fileBuffer,
         candidateKeysB64,
-        prefixBuffer: prefixBytes.buffer.slice(
-          prefixBytes.byteOffset, prefixBytes.byteOffset + prefixBytes.byteLength
-        ),
-        sigByteLen:    SIG_BYTES,
-        pubkeyHintLen: PUBKEY_HINT_LEN,
+        prefixBuffer: _prefixBuffer(prefixBytes),
+        ...SIG_LAYOUT,
         fileOffset,
       },
       [fileBuffer]
@@ -2497,17 +2518,19 @@ function listenForInterceptorMessages() {
         throw Object.assign(new Error('No recipients — is an encrypted contact selected?'), { code: 'BLOCKED' });
       }
 
-      const framed = await workerEncryptFile(plainBuffer, recipients);
-
       // Binds signatures to channel context to prevent cross-channel replay.
-      // Uses captured IDs to keep signing context consistent.
-      const fileBytes = buildSignedAgeFile(framed, entry, fileChannelId);
+      // Uses captured IDs to keep signing context consistent. Built BEFORE the transfer: if it
+      // throws (invalid id), plainBuffer is still attached and the catch below zero-fills it.
+      const sign = buildSigningContext(entry, fileChannelId);
+
+      // The worker encrypts AND signs; it returns the finished signed file.
+      const signed = await workerEncryptFile(plainBuffer, recipients, sign);
 
       // Transfer back to page context — zero-copy.
       window.postMessage(
-        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, buffer: fileBytes.buffer, encryptedName: anonymizeFileName(fileName, mimeType) },
+        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, buffer: signed, encryptedName: anonymizeFileName(fileName, mimeType) },
         PAGE_ORIGIN,
-        [fileBytes.buffer]
+        [signed]
       );
     } catch (err) {
       // Refused before the worker took ownership (a transferred buffer is detached, so this is then a no-op).
@@ -2659,14 +2682,14 @@ function applyUnlockPayload(payload) {
     console.error('[age] unlock payload rejected:', problem);
     return;
   }
-  const mldsaPrivBytes = fromB64(payload.mldsaSeedB64); // 32-byte ML-DSA-87 seed
+  const mldsaSeedBytes = fromB64(payload.mldsaSeedB64); // 32-byte ML-DSA-87 seed
 
   // Single atomic publish: the prior session (if any) stays valid right up
   // until this call, and the new one is complete the instant it lands —
   // there is never a window where _session is null or partially filled in.
   _globalOn = payload.globalOn !== false;
   _setSession({
-    mldsaPrivBytes,
+    mldsaSeedBytes,
     cachedIdentityLine: payload.identityLine,
     selfRecipient:      payload.ageRecipient || null,
     contacts:           payload.contacts,
@@ -2680,12 +2703,8 @@ function applyUnlockPayload(payload) {
 
     // Ensures VERIFY_DECRYPT[_DECOMPRESS] sees cached state. Must happen
     // before _syncDisplayToSession()'s scanExisting() call below.
-    if (_session.cachedIdentityLine) {
-      _unlockWorkers(_session.cachedIdentityLine);
-    } else {
-      // identityLine must accompany mldsaSeedB64; fail loudly if absent.
-      console.error('[age] applyUnlockPayload: unlock payload had no identityLine — decrypt will stay locked until the next unlock.');
-    }
+    // _unlockPayloadProblem() has already guaranteed a well-formed identityLine.
+    _unlockWorkers();
 
     if (_globalOn) {
       attachEnterHook();
@@ -2733,7 +2752,7 @@ function listenForMessages() {
       // Always re-relay when contacts change while unlocked so activeEntry in
       // upload-interceptor.js tracks the latest contacts.
       if (canDecrypt()) relayInterceptorState(true);
-      else if (_globalOn !== prevOn) relayInterceptorState(!!_session?.mldsaPrivBytes);
+      else if (_globalOn !== prevOn) relayInterceptorState(!!_session?.mldsaSeedBytes);
       if (!_globalOn && prevOn) {
         _generation++;
         _wipeAttachmentState({ workers: 'terminate' });
@@ -2821,7 +2840,7 @@ function startNavObserver() {
     _msgObserver2 = null;
     waitForMessageList();
     if (_session) attachEnterHook();
-    relayInterceptorState(!!_session?.mldsaPrivBytes);
+    relayInterceptorState(!!_session?.mldsaSeedBytes);
   }
 
   navigation.addEventListener('currententrychange', onNav);
@@ -3795,11 +3814,10 @@ function processLiFull(li) {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 async function init() {
-  await _rustcryptoInit();
   listenForMessages();
   // Report the state once, BEFORE the unlock pull, so a payload that lands first
   // is never overwritten by a stale "locked" relay.
-  relayInterceptorState(!!_session?.mldsaPrivBytes);
+  relayInterceptorState(!!_session?.mldsaSeedBytes);
   requestUnlock();
   listenForInterceptorMessages();
   startNavObserver();
