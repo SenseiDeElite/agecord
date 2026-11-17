@@ -3,18 +3,24 @@
  * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
  */
 
-// file-crypto-worker.js — Worker for file encryption/decryption
-//
+// file-crypto-worker.js — Worker for file/text crypto: age encrypt/decrypt,
+// compression, and ML-DSA-87 signing and verification.
+
 // Format:
-// [sigLen bytes sig][hintLen bytes hint][age ciphertext]
-//
-// Hint: UTF-8(base64(pubkey) + ":")
-// Used to locate verification key; signature covers prefix + hint + ciphertext.
+// [version 1 B][signature sigLen B][hint hintLen B][age ciphertext]
+
+// Hint: UTF-8(base64(pubkey) + ":"); identifies the verification key.
+// Signature covers prefix || hint || ciphertext; prefix is "<serverId>:<channelId>:"
+// or "<channelId>:" and is rebuilt by the verifier, not stored.
+
+// Encryption is fused: age-encrypt then sign in place, so unsigned ciphertext is never returned.
+// ML-DSA seed arrives on UNLOCK and is zeroed on RELOCK.
 
 'use strict';
 
 import { Encrypter, Decrypter }   from '../lib/age.min.js';
-import { init, ml_dsa87_verify } from '../lib/rustcrypto-wasm.min.js';
+import { init, ml_dsa87_sign, ml_dsa87_verify, ml_dsa87_verifying_key_from_seed }
+  from '../lib/rustcrypto-wasm.min.js';
 
 await init();
 
@@ -91,8 +97,40 @@ function decodePubKey(b64) {
 // Avoids resending on verify/decrypt paths.
 let _cachedDecrypter = null;
 
-// Bumped on RELOCK so in-flight verifyAndDecrypt() calls can detect stale work.
+// Bumped on RELOCK so in-flight verifyAndDecrypt() / encrypt calls can detect stale work.
+// Deliberately NOT bumped on UNLOCK (a harmless re-unlock must not fail in-flight decrypts).
 let _lockEpoch = 0;
+
+// ML-DSA-87 signing seed (32 bytes, secret). Set on UNLOCK, zeroed on RELOCK/replacement.
+let _signSeed = null;
+// Sender public key (base64) already proven to derive from _signSeed.
+// Cleared on UNLOCK and RELOCK so the consistency check re-runs for a new seed.
+let _signKeyVerifiedB64 = null;
+
+// Validates the signed-file layout parameters shared by verify and sign.
+// Returns where the hint starts and the total header length in front of the ciphertext.
+function sigLayout({ fileOffset, sigByteLen, pubkeyHintLen }, opName) {
+  if (typeof sigByteLen !== 'number' || sigByteLen < 1)
+    throw new Error(`${opName}: sigByteLen must be a positive number`);
+  if (typeof pubkeyHintLen !== 'number' || pubkeyHintLen < 1)
+    throw new Error(`${opName}: pubkeyHintLen must be a positive number`);
+  if (!Number.isInteger(fileOffset) || fileOffset < 0 || fileOffset > 16)
+    throw new Error(`${opName}: fileOffset invalid`);
+  return {
+    hintStart: fileOffset + sigByteLen,
+    headerLen: fileOffset + sigByteLen + pubkeyHintLen,
+  };
+}
+
+// Writes the prefix directly in front of the hint, inside the signature field
+// region (zero-copy), so prefix || hint || ciphertext is contiguous.
+// Returns the prefix start offset.
+function stagePrefix(fileBytes, hintStart, prefixBytes, sigByteLen, opName) {
+  if (prefixBytes.length > sigByteLen) throw new Error(`${opName}: prefix too long`);
+  const prefixStart = hintStart - prefixBytes.length;
+  fileBytes.set(prefixBytes, prefixStart);
+  return prefixStart;
+}
 
 // Verifies ML-DSA-87, then age-decrypts.
 // Signature failures return sigValid=false with unknown-sender or bad-signature.
@@ -105,20 +143,14 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
     throw new Error(`${opName}: fileBuffer must be a transferred ArrayBuffer`);
   if (!Array.isArray(candidateKeysB64) || candidateKeysB64.length === 0)
     throw new Error(`${opName}: candidateKeysB64 must be a non-empty array`);
-  if (typeof sigByteLen !== 'number' || sigByteLen < 1)
-    throw new Error(`${opName}: sigByteLen must be a positive number`);
-  if (typeof pubkeyHintLen !== 'number' || pubkeyHintLen < 1)
-    throw new Error(`${opName}: pubkeyHintLen must be a positive number`);
-  if (!Number.isInteger(fileOffset) || fileOffset < 0 || fileOffset > 16)
-    throw new Error(`${opName}: fileOffset invalid`);
-  if (fileBuffer.byteLength < fileOffset + sigByteLen + pubkeyHintLen + 1)
+  const { hintStart, headerLen: fileHeaderLen } = sigLayout({ fileOffset, sigByteLen, pubkeyHintLen }, opName);
+  if (fileBuffer.byteLength < fileHeaderLen + 1)
     throw new Error(`${opName}: fileBuffer too short`);
   if (!_cachedDecrypter)
     throw new Error('NOT_UNLOCKED');
   const myEpoch = _lockEpoch;
 
   const fileBytes = new Uint8Array(fileBuffer);
-  const hintStart = fileOffset + sigByteLen;
   const hintBytes = fileBytes.subarray(hintStart, hintStart + pubkeyHintLen);
   const ageBytes  = fileBytes.subarray(hintStart + pubkeyHintLen);
 
@@ -137,14 +169,12 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
   // Move the 4,627-byte signature aside first, then write the <=42-byte prefix into
   // its former region before hint; age bytes remain untouched and no large copy occurs.
   const prefixBytes = prefixBuffer ? new Uint8Array(prefixBuffer) : new Uint8Array(0);
-  if (prefixBytes.length > sigByteLen) throw new Error(`${opName}: prefix too long`);
   const sigBytes    = fileBytes.slice(fileOffset, fileOffset + sigByteLen);
-  const prefixStart = hintStart - prefixBytes.length;
-  fileBytes.set(prefixBytes, prefixStart);
+  const prefixStart = stagePrefix(fileBytes, hintStart, prefixBytes, sigByteLen, opName);
   const sigInput    = fileBytes.subarray(prefixStart);
 
   // ── Verify with the single matched key ─────────────────────────────────────
-  
+
   // arg order: ml_dsa87_verify(verifying_key, message, signature)
   let sigValid = false;
   try {
@@ -159,7 +189,7 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
   if (!sigValid) return { sigValid: false, reason: 'bad-signature' };
 
   // ── age-decrypt ─────────────────────────────────────────────────────────────
-  
+
   // ageBytes is a live view into fileBuffer, which is fully owned inside the
   // Worker (transferred in, not neutered here). No copy needed.
 
@@ -187,14 +217,27 @@ self.onmessage = async ({ data }) => {
 
   try {
     // UNLOCK/RELOCK are fire-and-forget (no `id`).
-    // Cache update is synchronous, so queued    VERIFY_DECRYPT[_DECOMPRESS]
-    // messages observe it before this handler yields.
+    // Cache updates are synchronous, so queued VERIFY_DECRYPT[_DECOMPRESS] messages see them
+    // before the handler yields. Validate first, then commit to avoid a half-unlocked state.
+    // Adopt the received seed as-is; content.js transfers a private 32-byte copy.
     if (op === 'UNLOCK') {
-      const { identityLine } = data;
-      if (!identityLine || typeof identityLine !== 'string')
-        throw new Error('UNLOCK: identityLine must be a string');
-      const dec = new Decrypter();
-      dec.addIdentity(identityLine);
+      const { identityLine, mldsaSeed } = data;
+      let dec;
+      try {
+        if (!identityLine || typeof identityLine !== 'string')
+          throw new Error('UNLOCK: identityLine must be a string');
+        if (!(mldsaSeed instanceof Uint8Array) || mldsaSeed.length !== 32 ||
+            mldsaSeed.byteOffset !== 0 || mldsaSeed.buffer.byteLength !== 32)
+          throw new Error('UNLOCK: mldsaSeed must be an exclusive 32-byte Uint8Array');
+        dec = new Decrypter();
+        dec.addIdentity(identityLine);
+      } catch (e) {
+        if (mldsaSeed instanceof Uint8Array) mldsaSeed.fill(0);
+        throw e;
+      }
+      _signSeed?.fill(0);
+      _signSeed = mldsaSeed;
+      _signKeyVerifiedB64 = null;
       _cachedDecrypter = dec;
       return;
     }
@@ -206,44 +249,98 @@ self.onmessage = async ({ data }) => {
       // long-lived worker doesn't accumulate every correspondent's pubkey
       // across lock/unlock cycles.
       _pubKeyCache.clear();
+      _signSeed?.fill(0);
+      _signSeed = null;
+      _signKeyVerifiedB64 = null;
       return;
     }
 
+    // Fused encrypt + sign. ENCRYPT takes a transferred buffer; COMPRESS_ENCRYPT
+    // (outgoing text, so CompressionStream never runs on the main thread - Firefox
+    // Xray Vision) takes a string. Returns the COMPLETE signed file
+    // [version][signature][hint][age ciphertext]; there is no unsigned output path.
     if (op === 'ENCRYPT' || op === 'COMPRESS_ENCRYPT') {
-      const { recipients } = data;
-      if (!Array.isArray(recipients) || recipients.length === 0)
-        throw new Error(`${op}: no recipients provided`);
-      // Bytes to leave free IN FRONT of the ciphertext (content.js signs in place and writes the signed-file header
-      // there, so the main thread never copies the ciphertext). 0 = ciphertext at offset 0.
-      const headerLen = data.headerLen ?? 0;
-      if (!Number.isInteger(headerLen) || headerLen < 0 || headerLen > 65536)
-        throw new Error(`${op}: bad headerLen`);
-
-      // ENCRYPT takes a transferred buffer; COMPRESS_ENCRYPT (outgoing text, so
-      // CompressionStream never runs on the main thread - Firefox Xray Vision)
-      // takes a string. Either way the plaintext bytes are zeroed after use.
-      let plainBytes;
-      if (op === 'ENCRYPT') {
-        if (!(data.buffer instanceof ArrayBuffer))
-          throw new Error('ENCRYPT: buffer must be a transferred ArrayBuffer');
-        plainBytes = new Uint8Array(data.buffer);
-      } else {
-        if (typeof data.text !== 'string')
-          throw new Error('COMPRESS_ENCRYPT: text must be a string');
-        plainBytes = await compress(data.text);
-      }
+      let plainBytes = null;
       let encBytes;
+      let sign, fileHeaderLen, hintStart, myEpoch;
       try {
+        // Obtain the plaintext holder first so the finally zeroes it on EVERY exit.
+        if (op === 'ENCRYPT') {
+          if (!(data.buffer instanceof ArrayBuffer))
+            throw new Error('ENCRYPT: buffer must be a transferred ArrayBuffer');
+          plainBytes = new Uint8Array(data.buffer);
+        } else {
+          if (typeof data.text !== 'string')
+            throw new Error('COMPRESS_ENCRYPT: text must be a string');
+          plainBytes = await compress(data.text);
+        }
+
+        const { recipients } = data;
+        if (!Array.isArray(recipients) || recipients.length === 0)
+          throw new Error(`${op}: no recipients provided`);
+
+        // `sign` is mandatory. Re-validate every field; never trust the sender.
+        sign = data.sign;
+        if (!sign || typeof sign !== 'object')
+          throw new Error(`${op}: sign context required`);
+        if (!(sign.prefixBuffer instanceof ArrayBuffer))
+          throw new Error(`${op}: sign.prefixBuffer must be an ArrayBuffer`);
+        if (!Number.isInteger(sign.sigByteLen) || !Number.isInteger(sign.pubkeyHintLen))
+          throw new Error(`${op}: sign layout lengths must be integers`);
+        if (typeof sign.senderPubKeyB64 !== 'string' ||
+            !/^[A-Za-z0-9+/]+=*$/.test(sign.senderPubKeyB64) ||
+            sign.senderPubKeyB64.length + 1 !== sign.pubkeyHintLen)
+          throw new Error(`${op}: bad senderPubKeyB64`);
+        if (sign.fileOffset !== 1)
+          throw new Error(`${op}: fileOffset must be 1`);
+        if (!Number.isInteger(sign.version) || sign.version < 0 || sign.version > 255)
+          throw new Error(`${op}: bad version`);
+        ({ hintStart, headerLen: fileHeaderLen } = sigLayout(sign, op));
+        if (sign.prefixBuffer.byteLength > sign.sigByteLen)
+          throw new Error(`${op}: prefix too long`);
+
+        // Fail fast; re-checked right before signing.
+        if (!_signSeed) throw new Error('NOT_UNLOCKED');
+
+        myEpoch = _lockEpoch;
         const enc = new Encrypter();
         for (const recipient of recipients) enc.addRecipient(recipient);
         encBytes = await enc.encrypt(plainBytes);
       } finally {
-        plainBytes.fill(0);
+        if (plainBytes) plainBytes.fill(0);
       }
-      // encBytes.buffer is a fresh ArrayBuffer; transfer it back (with headerLen free bytes in front, if asked).
-      let outBytes = encBytes;
-      if (headerLen > 0) { outBytes = new Uint8Array(headerLen + encBytes.length); outBytes.set(encBytes, headerLen); }
-      self.postMessage({ op: `${op}_RESULT`, id, buffer: outBytes.buffer }, [outBytes.buffer]);
+
+      // The one remaining full-size copy: [header][ciphertext] in a single buffer.
+      // Ciphertext is public data and is not zeroed.
+      const out = new Uint8Array(fileHeaderLen + encBytes.length);
+      out.set(encBytes, fileHeaderLen);
+      encBytes = null;
+
+      // NO await from here to the sign call: nothing can relock or replace the seed in between.
+      if (_lockEpoch !== myEpoch || !_signSeed) throw new Error('NOT_UNLOCKED');
+      if (_signKeyVerifiedB64 !== sign.senderPubKeyB64) {
+        const derived = ml_dsa87_verifying_key_from_seed(_signSeed);
+        if (derived.toBase64() !== sign.senderPubKeyB64)
+          throw new Error('SIGNING_KEY_MISMATCH');
+        _signKeyVerifiedB64 = sign.senderPubKeyB64;
+      }
+
+      // Assemble in place: hint straight into the buffer, prefix staged in the
+      // (still unused) signature field, then sign prefix || hint || ciphertext.
+      const hintStr = sign.senderPubKeyB64 + ':';
+      const { read, written } = new TextEncoder().encodeInto(
+        hintStr, out.subarray(hintStart, hintStart + sign.pubkeyHintLen));
+      if (read !== hintStr.length || written !== sign.pubkeyHintLen)
+        throw new Error(`${op}: hint encoding failed`);
+      const prefixStart = stagePrefix(out, hintStart, new Uint8Array(sign.prefixBuffer),
+                                      sign.sigByteLen, op);
+      const sig = ml_dsa87_sign(_signSeed, out.subarray(prefixStart));
+      if (sig.length !== sign.sigByteLen)
+        throw new Error(`${op}: unexpected signature length`);
+      out[0] = sign.version;
+      out.set(sig, sign.fileOffset); // overwrites the staged prefix
+
+      self.postMessage({ op: `${op}_RESULT`, id, buffer: out.buffer }, [out.buffer]);
       return;
     }
 
