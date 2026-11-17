@@ -7,7 +7,7 @@
 
 // highlight.js aliases used for fenced block language labels only.
 
-// Current revision: https://github.com/highlightjs/highlight.js/blob/7ab86ecad93438c8556590e04b511ee467440c68/SUPPORTED_LANGUAGES.md
+// Current revision: https://github.com/highlightjs/highlight.js/blob/235f195b53858b4f2a8927d19af730a25e2a8532/SUPPORTED_LANGUAGES.md
 
 'use strict';
 
@@ -38,7 +38,7 @@ export const HLJS_LANGUAGES = new Set([
   'jboss-cli','wildfly-cli','jolie',
   'iol','ol','json','jsonc','json5','jsonata','julia','jl','julia-repl','jldoctest',
   'kotlin','kt','kts','ktm','ktx','kql','kusto','l4','legal','lasso','ls','lassoscript','latex','tex','ldif','leaf',
-  'lean','less','liquid','liq','lisp','livecodeserver','livescript','llvm','lookml','lsl','lua',
+  'lean','less','liquid','liq','lisp','lispex','lspx','livecodeserver','livescript','llvm','lookml','lsl','lua',
   'pluto','luau','m','pq','macaulay2','magik','makefile','mk','mak','make','markdown',
   'md','mkdown','mkd','mathematica','mma','wl','matlab','maxima','mel',
   'mercury','moo','metapost','routeros','mikrotik','mint','mips','mipsasm','mirc','mrc','mirth','mizar',
@@ -49,7 +49,7 @@ export const HLJS_LANGUAGES = new Set([
   'parser3','perl','pl','pm','pf','pf.conf','phix','php','php-template','pine','pinescript','pkl','plaintext',
   'txt','text','pony','pgsql','postgres','postgresql','poweron','po',
   'powershell','ps','ps1','pwsh','prisma','processing','pde','prolog','properties','proto',
-  'protobuf','puppet','pp','purebasic','pb','pbi','python','py','gyp','ipython','profile','python-repl','pycon',
+  'protobuf','pug','jade','puppet','pp','purebasic','pb','pbi','python','py','gyp','ipython','profile','python-repl','pycon',
   'q','k','kdb','qsharp','qml','qt','r','raku','perl6','p6','pm6','rakumod','pod6',
   'rakudoc','rakuquoting','rakuregexe','rascript','cshtml','razor','razor-cshtml',
   'reasonml','re','redbol','rebol','red','red-system','rib','rsl','rescript',
@@ -57,10 +57,10 @@ export const HLJS_LANGUAGES = new Set([
   'rpm-specfile','rpm','spec','rpm-spec','specfile','ruby','rb','gemspec',
   'podspec','thor','irb','rust','rs','rvt','rvt-script','SAS','sas','scala',
   'scheme','scm','scilab','sci','scss','sfz','shexc','shell','console','shellsession','smali',
-  'smalltalk','st','sml','solidity','sol','spl','sqf','sql','stan','stanfuncs',
+  'smalltalk','st','sml','solidity','sol','soml','spl','sqf','sql','stan','stanfuncs',
   'stata','do','ado','step21','p21','step','stp','iecst','scl','stl','structured-text','stylus',
   'styl','subunit','supercollider','sc','svelte','swift','taggerscript','tcl','tk','terraform',
-  'tf','hcl','tap','thrift','toit','tp','tsql','ttcn','ttcnpp','ttcn3','twig',
+  'tf','hcl','tap','thrift','toit','topaz','tpz','tp','tsql','ttcn','ttcnpp','ttcn3','twig',
   'craftcms','typescript','ts','tsx','mts','cts','unicorn-rails-log','unison',
   'u','vala','vbnet','vb','vba','vbscript','vbs','vbscript-html','verilog','v','sv','svh','verse','veryl','vhdl','vim',
   'voltscript','vss','lotusscript','lss','wasm','wgsl','whyml','mlw','wren','xsharp','xs','prg','axapta',
