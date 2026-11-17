@@ -2,7 +2,7 @@
 name = "agecord"
 version = "0.4.1"
 authors = ["Sensei <https://github.com/SenseiDeElite>"]
-description = "WebAssembly RustCrypto"
+description = "WebAssembly Agecord protocol"
 license = "MIT"
 repository = "https://github.com/SenseiDeElite/agecord/tree/main/wasm"
 edition = "2024"
