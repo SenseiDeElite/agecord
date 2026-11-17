@@ -9,9 +9,10 @@
 
 // Current revision: https://github.com/highlightjs/highlight.js/blob/235f195b53858b4f2a8927d19af730a25e2a8532/SUPPORTED_LANGUAGES.md
 
+(() => {
 'use strict';
 
-export const HLJS_LANGUAGES = new Set([
+const HLJS_LANGUAGES = new Set([
   '1c','4d','sap-abap','abap','abc','abnf','accesslog','actionscript','as',
   'ada','aiken','ak','ln','alan','i','angelscript','asc','apache','apacheconf',
   'apex','applescript','osascript','arcade','arduino','ino','armasm','arm',
@@ -67,3 +68,6 @@ export const HLJS_LANGUAGES = new Set([
   'x++','x86asm','x86asmatt','xl','tao','xojo','xquery','xpath','xq','xqm','yml',
   'yaml','zenscript','zs','zephir','zep','zig',
 ]);
+
+globalThis.__AGECORD_HLJS_LANGUAGES__ = HLJS_LANGUAGES;
+})();
