@@ -1,0 +1,57 @@
+[package]
+name = "agecord"
+version = "0.4.1"
+authors = ["Sensei <https://github.com/SenseiDeElite>"]
+description = "WebAssembly RustCrypto"
+license = "MIT"
+repository = "https://github.com/SenseiDeElite/agecord/tree/main/rustcrypto-wasm"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen       = "0.2.130"
+getrandom          = { version = "0.4.3", features = ["wasm_js"] }
+zeroize            = "1.9.1"
+
+# Algorithm crates are optional: each is compiled in only when a feature that
+# needs it is enabled (see [features]).
+chacha20poly1305   = { version = "0.11.0", features = ["getrandom", "zeroize"], optional = true }
+shake              = { version = "0.1.0", features = ["zeroize"], optional = true }
+argon2             = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"], optional = true }
+ml-dsa             = { version = "0.1.2", default-features = false, features = ["alloc", "getrandom", "rand_core", "zeroize"], optional = true }
+
+# One feature per exported function: enabling a feature adds exactly one export
+# (the feature name with '-' replaced by '_'). tools/build-wasm.sh builds one
+# WASM module per extension component, each with only the functions it imports.
+# Nothing is enabled by default, and building with no feature is a compile error.
+[features]
+default = []
+
+xchacha20poly1305-encrypt        = ["dep:chacha20poly1305"]
+xchacha20poly1305-decrypt        = ["dep:chacha20poly1305"]
+shake256                         = ["dep:shake"]
+argon2id                         = ["dep:argon2"]
+ml-dsa87-keygen                  = ["dep:ml-dsa"]
+ml-dsa87-sign                    = ["dep:ml-dsa"]
+ml-dsa87-verify                  = ["dep:ml-dsa"]
+ml-dsa87-verifying-key-from-seed = ["dep:ml-dsa"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "--enable-bulk-memory",
+    "--enable-simd",
+    "--generate-global-effects",
+    "-O4",
+    "--monomorphize",
+    "--generate-global-effects",
+    "-O4",
+    "--converge"
+]
