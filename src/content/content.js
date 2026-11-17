@@ -19,10 +19,20 @@
 
 // Contacts (v2): keyed by UUID; resolved by channelId or serverId.
 
+// Everything below runs inside one function scope so that
+// its top-level declarations stay out of the isolated world's global scope.
+(() => {
 'use strict';
 
-import   EMOJI_MAP        from './emoji_map.js';
-import { HLJS_LANGUAGES } from './highlight_map.js';
+// Lookup tables provided by emoji_map.js and highlight_map.js, which the manifests
+// list before this file. Taken once and removed from the global object.
+const EMOJI_MAP       = globalThis.__AGECORD_EMOJI_MAP__;
+const HLJS_LANGUAGES  = globalThis.__AGECORD_HLJS_LANGUAGES__;
+delete globalThis.__AGECORD_EMOJI_MAP__;
+delete globalThis.__AGECORD_HLJS_LANGUAGES__;
+if (!EMOJI_MAP || !HLJS_LANGUAGES) {
+  throw new Error('[age] emoji_map.js / highlight_map.js must load before content.js');
+}
 
 // ML-DSA-87 signature size (bytes). Fixed by the standard.
 const SIG_BYTES = 4627;
@@ -3834,3 +3844,4 @@ if (document.body) {
 } else {
   document.addEventListener('DOMContentLoaded', () => init().catch(e => console.error('[age] init error:', e)));
 }
+})();
