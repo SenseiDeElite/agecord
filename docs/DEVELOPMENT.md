@@ -13,7 +13,7 @@ To reproduce the [libraries](https://github.com/SenseiDeElite/agecord/tree/main/
 *"A TypeScript implementation of the age file encryption format, available as an npm package or as a bundled .js file."*
 
 - Download [typage v0.3.1 source code](https://github.com/FiloSottile/typage/releases/tag/v0.3.1).
-- Upon unpacking it, create a `entry.js` inside the extracted folder:
+- Upon unpacking it, create a `entry.js` inside the extracted folder containing the following:
   
 ```js
 export { Encrypter, Decrypter, generateHybridIdentity, identityToRecipient } from 'age-encryption';
@@ -37,9 +37,9 @@ esbuild entry.js \
       --outfile=age.min.js
 ```
   
-[**Rust Crypto**](https://github.com/RustCrypto)
+[**Agecord-Wasm**](https://github.com/SenseiDeElite/agecord/tree/main/wasm)
 
-*"Cryptographic algorithms written in pure Rust"*
+*"WebAssembly Agecord protocol"*
 
 - Our project provides the [`agecord`](https://github.com/SenseiDeElite/agecord/tree/main/wasm) crate, a WebAssembly wrapper around RustCrypto implementations of [Argon2id](https://github.com/RustCrypto/password-hashes/tree/master/argon2), [XChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [SHAKE256](https://github.com/RustCrypto/XOFs/tree/master/shake), and [ML-DSA-87](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), built by compiling native Rust code to WebAssembly.
 - Every exported function sits behind its own Cargo feature (the export name with `_` written as `-`), and nothing is enabled by default. Rather than shipping one module with everything in it, each part of the extension gets its own WASM module containing only the functions it imports.
@@ -47,26 +47,12 @@ esbuild entry.js \
 - From [tools](https://github.com/SenseiDeElite/agecord/tree/main/tools), run:
 
 ```sh
-tools/build-wasm.sh
+./build-wasm.sh
 ```
 
-  To build a single library, name it (e.g. `tools/build-wasm.sh sign`). For each library the script compiles the crate, generates the entry file and bundles it into `src/lib/`.
+  To build a single library, name it (e.g. `./build-wasm.sh sign`). For each library the script compiles the crate, generates the entry file and bundles it into [`lib/`](https://github.com/SenseiDeElite/agecord/tree/main/src/lib).
 
 After finishing, move `age.min.js` (typage) to [lib/](https://github.com/SenseiDeElite/agecord/tree/main/src/lib). The `agecord-*.min.js` libraries are written there directly by the script.
-
-### Third-Party Notices
- 
-Everything pulled in by the [`agecord`](https://github.com/SenseiDeElite/agecord/tree/main/wasm) crate (including transitive dependencies) is generated with [cargo-about](https://github.com/EmbarkStudios/cargo-about):
-
-```sh
-cargo about init && cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
-```
- 
-  This produces an HTML report of every crate in the resolved dependency tree, grouped by license text.
- 
-- `THIRD_PARTY_NOTICES.html` is an intermediate file, not a shipped artifact. It gets folded into two places:
-  - **[`NOTICES.md`](https://github.com/SenseiDeElite/agecord/blob/main/NOTICES.md)** — Markdown notices for the repository.
-  - **`src/popup/licenses.html`** — the bundled page the extension's `About` screen links to.
 
 ### Packaging
 
