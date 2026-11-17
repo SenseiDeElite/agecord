@@ -41,31 +41,22 @@ esbuild entry.js \
 
 *"Cryptographic algorithms written in pure Rust"*
 
-- Our project provides [rustcrypto-wasm](https://github.com/SenseiDeElite/agecord/tree/main/rustcrypto-wasm), a WebAssembly wrapper around RustCrypto implementations of [Argon2id](https://github.com/RustCrypto/password-hashes/tree/master/argon2), [XChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [SHAKE256](https://github.com/RustCrypto/XOFs/tree/master/shake), and [ML-DSA-87](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), built by compiling native Rust code to WebAssembly.
-- For compiling, run:
+- Our project provides the [`agecord`](https://github.com/SenseiDeElite/agecord/tree/main/wasm) crate, a WebAssembly wrapper around RustCrypto implementations of [Argon2id](https://github.com/RustCrypto/password-hashes/tree/master/argon2), [XChaCha20Poly1305](https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305), [SHAKE256](https://github.com/RustCrypto/XOFs/tree/master/shake), and [ML-DSA-87](https://github.com/RustCrypto/signatures/tree/master/ml-dsa), built by compiling native Rust code to WebAssembly.
+- Every exported function sits behind its own Cargo feature (the export name with `_` written as `-`), and nothing is enabled by default. Rather than shipping one module with everything in it, each part of the extension gets its own WASM module containing only the functions it imports.
+
+- From [tools](https://github.com/SenseiDeElite/agecord/tree/main/tools), run:
 
 ```sh
-wasm-pack build --target web --release
+tools/build-wasm.sh
 ```
 
-- For bundling, use esbuild:
-  
-```sh
-esbuild entry.js \
-      --bundle \
-      --format=esm \
-      --minify \
-      --charset=utf8 \
-      --tree-shaking=true \
-      --loader:.wasm=binary \
-      --outfile=rustcrypto-wasm.min.js
-```
+  To build a single library, name it (e.g. `tools/build-wasm.sh sign`). For each library the script compiles the crate, generates the entry file and bundles it into `src/lib/`.
 
-After finishing, move the libraries to [lib/](https://github.com/SenseiDeElite/agecord/tree/main/src/lib).
+After finishing, move `age.min.js` (typage) to [lib/](https://github.com/SenseiDeElite/agecord/tree/main/src/lib). The `agecord-*.min.js` libraries are written there directly by the script.
 
 ### Third-Party Notices
  
-Everything pulled in by `rustcrypto-wasm` (including transitive dependencies) is generated with [cargo-about](https://github.com/EmbarkStudios/cargo-about):
+Everything pulled in by the [`agecord`](https://github.com/SenseiDeElite/agecord/tree/main/wasm) crate (including transitive dependencies) is generated with [cargo-about](https://github.com/EmbarkStudios/cargo-about):
 
 ```sh
 cargo about init && cargo about generate about.hbs > THIRD_PARTY_NOTICES.html
