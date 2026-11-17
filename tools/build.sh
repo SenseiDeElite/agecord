@@ -23,9 +23,8 @@ DIST_DIR="dist"
 # Unlisted files under src/ or missing listed files both fail the build, preventing silent package changes.
 
 # Paths in SRC_* are relative to src/.
-# SRC_SHARED -> .crx, .xpi, source .zip (content/content.js is bundled in extensions, original in source).
+# SRC_SHARED -> .crx, .xpi, source .zip
 # SRC_CHROMIUM_ONLY -> .crx only (Chromium cannot use the SVG icon).
-# SRC_SOURCE_ONLY -> source .zip only (inlined into content.js by esbuild).
 SRC_SHARED=(
   'assets/agecord-512.svg'
   'background/background.js'
@@ -33,7 +32,9 @@ SRC_SHARED=(
   'content/cdn-bridge.js'
   'content/content.css'
   'content/content.js'
+  'content/emoji_map.js'
   'content/file-crypto-worker.js'
+  'content/highlight_map.js'
   'content/upload-interceptor.js'
   'lib/age.min.js'
   'lib/rustcrypto-wasm.min.js'
@@ -47,10 +48,6 @@ SRC_SHARED=(
 )
 SRC_CHROMIUM_ONLY=(
   'assets/agecord-512.png'
-)
-SRC_SOURCE_ONLY=(
-  'content/emoji_map.js'
-  'content/highlight_map.js'
 )
 
 # Files in the source .zip that are not under src/ (paths relative to the repo root).
@@ -188,7 +185,6 @@ stage_src() {
   local -a args=()
   for f in "${SRC_SHARED[@]}";         do args+=("shared:$f");   done
   for f in "${SRC_CHROMIUM_ONLY[@]}";  do args+=("chromium:$f"); done
-  for f in "${SRC_SOURCE_ONLY[@]}";    do args+=("source:$f");   done
   python3 - "$SRC_DIR" "$dest" "$target" "${args[@]}" <<'PYEOF'
 import os
 import shutil
@@ -196,7 +192,7 @@ import sys
 
 src, dest, target, *entries = sys.argv[1:]
 
-groups = {"shared": [], "chromium": [], "source": []}
+groups = {"shared": [], "chromium": []}
 for entry in entries:
     group, rel = entry.split(":", 1)
     groups[group].append(rel)
@@ -356,41 +352,6 @@ check_src() {
   fi
 }
 
-# Bundles the content script as a classic IIFE in STAGE.
-#   bundle_content STAGE
-# esbuild reads content.js, emoji_map.js and highlight_map.js from src/
-# and writes $STAGE/content/content.js. Inlined maps are never staged; workers and popup/*
-# remain untouched ES modules.
-
-bundle_content() {
-  local stage="$1"
-  local esbuild="${ESBUILD:-esbuild}"
-  if ! command -v "$esbuild" >/dev/null 2>&1; then
-    echo "error: esbuild not found" >&2
-    exit 1
-  fi
-
-  local banner
-  banner="$(cat <<'BANNER'
-/*
- * This source code is licensed under the GNU General Public License v3.0 (GPL-3.0).
- * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/LICENSE
- */
-'use strict';
-BANNER
-)"
-
-  "$esbuild" "$SRC_DIR/content/content.js" \
-    --bundle \
-    --format=iife \
-    --minify \
-    --target=chrome155,firefox159 \
-    --charset=utf8 \
-    --tree-shaking=true \
-    --banner:js="$banner" \
-    --outfile="$stage/content/content.js"
-}
-
 build_chromium() {
   local crx3_py="tools/crx3/crx3.py"
   local pem_file="tools/agecord.pem"
@@ -410,9 +371,6 @@ build_chromium() {
 
   echo "==> [chromium] Installing $manifest as manifest.json..."
   cp -- "$manifest" "$STAGE/manifest.json"
-
-  echo "==> [chromium] Bundling content script (IIFE)..."
-  bundle_content "$STAGE"
 
   local -a files
   mapfile -t files < <(ext_files chromium)
@@ -443,9 +401,6 @@ build_firefox() {
   stage_src "$STAGE" firefox
   cp -- "$manifest" "$STAGE/manifest.json"
 
-  echo "==> [firefox] Bundling content script (IIFE)..."
-  bundle_content "$STAGE"
-
   local -a files args=()
   mapfile -t files < <(ext_files firefox)
   check_tree "$STAGE" "${files[@]}"
@@ -460,7 +415,7 @@ build_firefox() {
 
 # Source package preserves the repository layout and includes everything needed to reproduce the build:
 # src/, rustcrypto-wasm/ with build steps in docs/, and this script.
-# Contains exactly SRC_SHARED + SRC_SOURCE_ONLY + SOURCE_EXTRA, and nothing else.
+# Contains exactly SRC_SHARED + SOURCE_EXTRA, and nothing else.
 build_source() {
   local manifest="$MANIFEST_DIR/firefox.json"
   check_src
@@ -476,7 +431,7 @@ build_source() {
 
   local -a args=()
   local f
-  for f in "${SRC_SHARED[@]}" "${SRC_SOURCE_ONLY[@]}"; do args+=("--file=$SRC_DIR/$f"); done
+  for f in "${SRC_SHARED[@]}"; do args+=("--file=$SRC_DIR/$f"); done
   for f in "${SOURCE_EXTRA[@]}"; do args+=("--file=$f"); done
   for f in "${SOURCE_EXEC[@]}";  do args+=("--exec=$f"); done
 
