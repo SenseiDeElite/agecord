@@ -47,6 +47,8 @@
         "https://discord.com/*"
       ],
       "js": [
+        "content/emoji_map.js",
+        "content/highlight_map.js",
         "content/content.js"
       ],
       "css": [
