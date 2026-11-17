@@ -86,9 +86,3 @@ Packaging is handled by [`build.sh`](https://github.com/SenseiDeElite/agecord/bl
 ./build.sh firefox
 ./build.sh source
 ```
-
-#### Content script bundle (IIFE)
-
-`src/content/content.js` is the ES-module source entry: it imports `rustcrypto-wasm.min.js`, `emoji_map.js` and `highlight_map.js`. The shipped `content/content.js` is not that file. `build.sh` bundles it into a single classic script, listed directly in each manifest's `content_scripts`.
-
-- Everything the bundle inlines (`emoji_map.js`, `highlight_map.js` etc) is dropped from the package.
