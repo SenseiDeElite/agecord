@@ -4,7 +4,7 @@
 
 **Build environment:** [Arch Linux x86-64](https://archlinux.org/)
 
-**Toolchain**: [npm v12.2.2](https://github.com/npm/cli/releases/tag/v12.2.2), [esbuild v0.28.2](https://github.com/evanw/esbuild/releases/tag/v0.28.2), [wasm-pack v0.15.1](https://github.com/wasm-bindgen/wasm-pack/releases/tag/v0.15.1), [rust 1.100.0](https://github.com/rust-lang/rust/releases/tag/1.100.0) (including rust-wasm target), [wasm-bindgen 0.2.128](https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.128), [binaryen 130](https://github.com/WebAssembly/binaryen/releases/tag/version_130) and [LLVM 23.1.5](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.5).
+**Toolchain**: [npm v12.2.2](https://github.com/npm/cli/releases/tag/v12.2.2), [esbuild v0.28.2](https://github.com/evanw/esbuild/releases/tag/v0.28.2), [wasm-pack v0.15.1](https://github.com/wasm-bindgen/wasm-pack/releases/tag/v0.15.1), [rust 1.100.0](https://github.com/rust-lang/rust/releases/tag/1.100.0) (including rust-wasm target), [wasm-bindgen 0.2.130](https://github.com/wasm-bindgen/wasm-bindgen/releases/tag/0.2.130), [binaryen 130](https://github.com/WebAssembly/binaryen/releases/tag/version_130) and [LLVM 23.1.5](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.5).
 
 To reproduce the [libraries](https://github.com/SenseiDeElite/agecord/tree/main/src/lib), follow the steps below.
 
