@@ -63,3 +63,10 @@ Packaging is handled by [`build.sh`](https://github.com/SenseiDeElite/agecord/bl
 ./build.sh firefox
 ./build.sh source
 ```
+
+### Third-Party Notices
+
+From [wasm/](https://github.com/SenseiDeElite/agecord/tree/main/wasm), generate an intermediary file with [cargo-about](https://github.com/EmbarkStudios/cargo-about):
+```sh
+cargo about generate --all-features --locked --format json -o about.json
+```
