@@ -37,7 +37,10 @@ SRC_SHARED=(
   'content/highlight_map.js'
   'content/upload-interceptor.js'
   'lib/age.min.js'
-  'lib/rustcrypto-wasm.min.js'
+  'lib/agecord-encrypt.min.js'
+  'lib/agecord-identity.min.js'
+  'lib/agecord-sign.min.js'
+  'lib/agecord-vault.min.js'
   'popup/crypto-worker.js'
   'popup/import-helper.html'
   'popup/import-helper.js'
@@ -59,18 +62,19 @@ SOURCE_EXTRA=(
   'docs/TROUBLESHOOTING.md'
   'docs/USAGE.md'
   'manifests/firefox.json'
+  'tools/build-wasm.sh'
   'tools/build.sh'
-  'rustcrypto-wasm/.cargo/config.toml'
-  'rustcrypto-wasm/Cargo.lock'
-  'rustcrypto-wasm/Cargo.toml'
-  'rustcrypto-wasm/LICENSE'
-  'rustcrypto-wasm/about.toml'
-  'rustcrypto-wasm/entry.js'
-  'rustcrypto-wasm/src/lib.rs'
+  'wasm/.cargo/config.toml'
+  'wasm/Cargo.lock'
+  'wasm/Cargo.toml'
+  'wasm/LICENSE'
+  'wasm/about.toml'
+  'wasm/src/lib.rs'
 )
 
 # Files stored with the executable bit in the source package.
 SOURCE_EXEC=(
+  'tools/build-wasm.sh'
   'tools/build.sh'
 )
 
@@ -414,7 +418,7 @@ build_firefox() {
 }
 
 # Source package preserves the repository layout and includes everything needed to reproduce the build:
-# src/, rustcrypto-wasm/ with build steps in docs/, and this script.
+# src/, wasm/ with build steps in docs/, and this script.
 # Contains exactly SRC_SHARED + SOURCE_EXTRA, and nothing else.
 build_source() {
   local manifest="$MANIFEST_DIR/firefox.json"
