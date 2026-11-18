@@ -57,7 +57,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## [cfg-if 1.0.5](https://github.com/rust-lang/cfg-if), [js-sys 0.3.106](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys), [wasm-bindgen-macro-support 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support), [wasm-bindgen-macro 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro), [wasm-bindgen-shared 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared), [wasm-bindgen 0.2.129](https://github.com/wasm-bindgen/wasm-bindgen)
+## [cfg-if 1.0.5](https://github.com/rust-lang/cfg-if), [js-sys 0.3.107](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys), [wasm-bindgen-macro-support 0.2.130](https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support), [wasm-bindgen-macro 0.2.130](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro), [wasm-bindgen-shared 0.2.130](https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared), [wasm-bindgen 0.2.130](https://github.com/wasm-bindgen/wasm-bindgen)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2014 Alex Crichton
@@ -122,38 +122,6 @@ DEALINGS IN THE SOFTWARE.
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2014 The Rust Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-## [blake2 0.11.0](https://github.com/RustCrypto/hashes)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright (c) 2017-2026 The RustCrypto Project Developers
-Copyright (c) 2017 Artyom Pavlov
-Copyright (c) 2015-2016 The blake2-rfc Developers, Cesar Barros
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -245,6 +213,38 @@ DEALINGS IN THE SOFTWARE.
 ```
 Copyright (c) 2017-2025 RustCrypto Developers
 Copyright (c) 2017 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+## [blake2 0.11.0](https://github.com/RustCrypto/hashes)
+[MIT License](https://opensource.org/license/MIT)
+```
+Copyright (c) 2017-2026 The RustCrypto Project Developers
+Copyright (c) 2017 Artyom Pavlov
+Copyright (c) 2015-2016 The blake2-rfc Developers, Cesar Barros
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -391,7 +391,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [keccak 0.2.2](https://github.com/RustCrypto/sponges), [zeroize 1.9.1](https://github.com/RustCrypto/utils)
+## [keccak 0.2.2](https://github.com/RustCrypto/sponges), [zeroize 1.9.2](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2018-2026 The RustCrypto Project Developers
@@ -452,7 +452,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [bumpalo 3.20.3](https://github.com/fitzgen/bumpalo)
+## [bumpalo 3.20.4](https://github.com/fitzgen/bumpalo)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2019 Nick Fitzgerald
@@ -603,36 +603,6 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [argon2 0.6.0](https://github.com/RustCrypto/password-hashes)
-[MIT License](https://opensource.org/license/MIT)
-```
-Copyright (c) 2021-2026 The RustCrypto Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
 ## [crypto-common 0.2.2](https://github.com/RustCrypto/traits)
 [MIT License](https://opensource.org/license/MIT)
 ```
@@ -663,7 +633,37 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [inout 0.2.2](https://github.com/RustCrypto/utils)
+## [argon2 0.6.0](https://github.com/RustCrypto/password-hashes)
+[MIT License](https://opensource.org/license/MIT)
+```
+Copyright (c) 2021-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+## [inout 0.2.6](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2022-2025 The RustCrypto Project Developers
@@ -724,7 +724,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [ml-dsa 0.1.1](https://github.com/RustCrypto/signatures)
+## [ml-dsa 0.1.2](https://github.com/RustCrypto/signatures)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2024-2026 RustCrypto Developers
@@ -754,7 +754,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [module-lattice 0.2.3](https://github.com/RustCrypto/KEMs)
+## [module-lattice 0.2.4](https://github.com/RustCrypto/KEMs)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2024-2026 RustCrypto Developers
@@ -778,7 +778,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## [ctutils 0.4.2](https://github.com/RustCrypto/utils)
+## [ctutils 0.4.8](https://github.com/RustCrypto/utils)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) 2025-2026 The RustCrypto Project Developers
@@ -838,7 +838,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## [libc 0.2.189](https://github.com/rust-lang/libc)
+## [libc 0.2.191](https://github.com/rust-lang/libc)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Copyright (c) The Rust Project Developers
@@ -891,7 +891,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTI
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## [once_cell 1.21.4](https://github.com/matklad/once_cell), [proc-macro2 1.0.107](https://github.com/dtolnay/proc-macro2), [quote 1.0.47](https://github.com/dtolnay/quote), [rustversion 1.0.23](https://github.com/dtolnay/rustversion), [syn 3.0.6](https://github.com/dtolnay/syn), [unicode-ident 1.0.26](https://github.com/dtolnay/unicode-ident)
+## [proc-macro2 1.0.107](https://github.com/dtolnay/proc-macro2), [quote 1.0.47](https://github.com/dtolnay/quote), [rustversion 1.0.23](https://github.com/dtolnay/rustversion), [syn 3.0.10](https://github.com/dtolnay/syn), [unicode-ident 1.0.27](https://github.com/dtolnay/unicode-ident)
 [MIT License](https://opensource.org/license/MIT)
 ```
 Permission is hereby granted, free of charge, to any
@@ -945,7 +945,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## [unicode-ident 1.0.26](https://github.com/dtolnay/unicode-ident)
+## [unicode-ident 1.0.27](https://github.com/dtolnay/unicode-ident)
 [Unicode License v3](https://www.unicode.org/license.txt)
 ```
 UNICODE LICENSE V3
