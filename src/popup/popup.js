@@ -26,7 +26,7 @@ import {
   ml_dsa87_keygen,
   ml_dsa87_verifying_key_from_seed,
   shake256,
-} from '../lib/rustcrypto-wasm.min.js';
+} from '../lib/agecord-identity.min.js';
 
 // Callers await cryptoReady before using the WASM-backed functions above.
 const cryptoReady = _rustcryptoInit();
