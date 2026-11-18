@@ -20,7 +20,7 @@
 
 import { Encrypter, Decrypter }   from '../lib/age.min.js';
 import { init, ml_dsa87_sign, ml_dsa87_verify, ml_dsa87_verifying_key_from_seed }
-  from '../lib/rustcrypto-wasm.min.js';
+  from '../lib/agecord-sign.min.js';
 
 await init();
 
