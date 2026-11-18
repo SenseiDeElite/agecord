@@ -1,6 +1,6 @@
 [package]
 name = "agecord"
-version = "0.4.1"
+version = "0.4.2"
 authors = ["Sensei <https://github.com/SenseiDeElite>"]
 description = "WebAssembly Agecord protocol"
 license = "MIT"
@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 wasm-bindgen       = "0.2.128"
 getrandom          = { version = "0.4.3", features = ["wasm_js"] }
-zeroize            = "1.9.1"
+zeroize            = "1.9.2"
 
 # Algorithm crates are optional: each is compiled in only when a feature that
 # needs it is enabled (see [features]).
