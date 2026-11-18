@@ -22,7 +22,7 @@ _self="$(realpath -e -- "${BASH_SOURCE[0]}")"
 cd -P -- "$(dirname -- "$_self")/.."
 ROOT="$(pwd -P)"
 
-CRATE_DIR="rustcrypto-wasm"
+CRATE_DIR="wasm"
 LIB_DIR="src/lib"
 
 # variant -> consuming component -> features (space separated).
@@ -97,7 +97,7 @@ build_variant() {
   {
     echo '/*'
     echo ' * This source code is licensed under the MIT License.'
-    echo ' * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/rustcrypto-wasm/LICENSE'
+    echo ' * See the full license text: https://github.com/SenseiDeElite/agecord/blob/main/wasm/LICENSE'
     echo ' */'
     echo
     echo "import wasmBytes from './${name}_bg.wasm';"
