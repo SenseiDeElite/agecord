@@ -16,7 +16,7 @@
 'use strict';
 
 import { init as _rustcryptoInit, xchacha20poly1305_encrypt }
-  from '../lib/rustcrypto-wasm.min.js';
+  from '../lib/agecord-encrypt.min.js';
 
 // init() is idempotent. Fire it immediately so WASM is ready before any message
 // arrives, but service workers forbid top-level await — store the Promise instead.
