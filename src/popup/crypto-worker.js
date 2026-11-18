@@ -8,7 +8,7 @@
 'use strict';
 
 import { init, argon2id, xchacha20poly1305_encrypt, xchacha20poly1305_decrypt }
-  from '../lib/rustcrypto-wasm.min.js';
+  from '../lib/agecord-vault.min.js';
 
 // WASM init fires immediately but isn't awaited at top level — if we did,
 // the module would finish evaluating after the first postMessage arrives,
