@@ -1203,6 +1203,10 @@ async function doUnlock() {
 // ─── Setup / keygen ──────────────────────────────────────────────────────────
 
 const setupPassEl = document.getElementById('setup-passphrase');
+// Cap for NEW passphrases (setup, import, export, change), enforced by validatePassphrase().
+// No maxlength: over-limit input is rejected rather than truncated.
+// Not applied to EXISTING passphrases, so older identities/blobs with longer passphrases remain usable.
+const PASSPHRASE_MAX = 128;
 const strengthBar = document.getElementById('strength-bar');
 const strengthLbl = document.getElementById('strength-label');
 // The visible label updates on every keystroke but is aria-hidden; screen
@@ -1244,6 +1248,8 @@ function isPrintableAscii(s) {
 // Returns { fieldId, message } or null. The caller names the field because the
 // same rule applies to the setup, import, export and change-passphrase forms.
 function validatePassphrase(p, fieldId) {
+  if (p.length > PASSPHRASE_MAX)
+    return { fieldId, message: `Passphrase must be at most ${PASSPHRASE_MAX} characters.` };
   const errs = [];
   if (p.length < 14)           errs.push('at least 14 characters');
   if (!/[A-Z]/.test(p))        errs.push('an uppercase letter (A–Z)');
