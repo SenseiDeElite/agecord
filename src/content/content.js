@@ -2058,6 +2058,9 @@ function renderWithEmoji(container, text, emojiSize = 22) {
 
 let _fetchIframe   = null;
 let _iframeReady   = false;
+// Real origin of the bridge document, learned from its READY message. With use_dynamic_url the
+// origin of the document may differ from the origin of the getURL() string used as its src.
+let _iframeOrigin  = null;
 let _iframeQueue   = [];
 const _iframePending = new Map();
 
@@ -2066,6 +2069,7 @@ function getFetchIframe() {
 
   _fetchIframe = null;
   _iframeReady = false;
+  _iframeOrigin = null;
 
   const host = document.createElement('div');
   host.id = 'age-fetch-iframe-host';
@@ -2108,7 +2112,13 @@ function iframePlainFetch(cdnUrl, opts) {
       }
       const targetWindow = _fetchIframe.contentWindow;
       _iframePending.set(requestId, { resolve, reject, source: targetWindow, cdnUrl });
-      const iframeOrigin = new URL(chrome.runtime.getURL('')).origin;
+      // withIframe() runs this only after the READY handshake, which sets _iframeOrigin to the
+      // document's real origin (it can differ from the getURL() src origin under use_dynamic_url).
+      if (!_iframeOrigin) {
+        _iframePending.delete(requestId);
+        reject(new Error('fetch iframe origin unknown'));
+        return;
+      }
       targetWindow.postMessage(
         {
           type:         'AGE_FETCH_RAW',
@@ -2123,7 +2133,7 @@ function iframePlainFetch(cdnUrl, opts) {
           expectedTotal: opts.expectedTotal ?? null,
           parentOrigin: location.origin,
         },
-        iframeOrigin
+        _iframeOrigin
       );
     });
   });
@@ -2132,6 +2142,10 @@ function iframePlainFetch(cdnUrl, opts) {
 window.addEventListener('message', (e) => {
   if (e.data?.type === 'AGE_IFRAME_READY') {
     if (!_fetchIframe || e.source !== _fetchIframe.contentWindow) return;
+    // e.source only identifies the window, not the document loaded in it; if the frame were
+    // navigated away, its origin would change. Require an extension origin before trusting it.
+    if (!/^(chrome|moz)-extension:\/\//.test(e.origin)) return;
+    _iframeOrigin = e.origin;
     _iframeReady = true;
     const queue  = _iframeQueue.splice(0);
     for (const fn of queue) fn();
@@ -2180,7 +2194,13 @@ function _spawnWorker(pendingMap) {
   // Blob Worker bridges page-origin context to extension module via dynamic import.
   // Direct extension-origin Worker construction is blocked in content scripts.
   const workerUrl = chrome.runtime.getURL('content/file-crypto-worker.js');
-  const shimSrc   = `import(${JSON.stringify(workerUrl)});`;
+  // The worker cannot call runtime.getURL itself, and its relative imports would resolve to the
+  // real (non-dynamic) extension URL, which is blocked with use_dynamic_url. Pass getURL() URLs in.
+  const libUrls   = {
+    age:  chrome.runtime.getURL('lib/age.min.js'),
+    sign: chrome.runtime.getURL('lib/agecord-sign.min.js'),
+  };
+  const shimSrc   = `self.__AGE_LIB_URLS=${JSON.stringify(libUrls)};import(${JSON.stringify(workerUrl)});`;
   const shimBlob  = new Blob([shimSrc], { type: 'application/javascript' });
   const shimUrl   = URL.createObjectURL(shimBlob);
 
