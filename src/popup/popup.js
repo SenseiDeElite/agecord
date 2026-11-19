@@ -31,6 +31,16 @@ import {
 // Callers await cryptoReady before using the WASM-backed functions above.
 const cryptoReady = _rustcryptoInit();
 
+// ─── Layout mode ─────────────────────────────────────────────────────────────
+
+// A toolbar popup is a fixed size. When the same page is shown as a full tab/window
+// (mobile browsers, popup.html opened in a tab), let it fill the viewport instead.
+// tabs.getCurrent() resolves to undefined inside a real popup. CSS also covers
+// touch-only devices up front so there is no resize flash.
+browser.tabs.getCurrent().then(tab => {
+  if (tab) document.documentElement.classList.add('is-tab');
+});
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const MAX_CONTACTS    = 1000;
@@ -916,7 +926,7 @@ async function resetToSetupScreen() {
 }
 
 wireConfirmModal({
-  openBtn:    ['btn-goto-setup', 'btn-forgot'],
+  openBtn:    'btn-goto-setup',
   cancelBtn:  'btn-reset-cancel',
   confirmBtn: 'btn-reset-confirm',
   modal:      'modal-reset-keypair',
@@ -1204,12 +1214,12 @@ let _strengthTimer = null;
 function updateStrength() {
   const p = setupPassEl.value;
   let score = 0;
-  if (p.length >= 20) score++;
+  if (p.length >= 14) score++;
   if (p.length >= 30) score++;
   if (/[A-Z]/.test(p)) score++;
   if (/[a-z]/.test(p)) score++;
   if (/[0-9]/.test(p)) score++;
-  if (/[^A-Za-z0-9]/.test(p)) score++;
+  if (/[!@#$%^&*]/.test(p)) score++;
   const level  = !p ? 0 : score <= 2 ? 1 : score === 3 ? 2 : score === 4 ? 3 : 4;
   const charge = level / 4;
   strengthBar.style.width = `${charge * 100}%`;
@@ -1235,11 +1245,11 @@ function isPrintableAscii(s) {
 // same rule applies to the setup, import, export and change-passphrase forms.
 function validatePassphrase(p, fieldId) {
   const errs = [];
-  if (p.length < 20)           errs.push('at least 20 characters');
+  if (p.length < 14)           errs.push('at least 14 characters');
   if (!/[A-Z]/.test(p))        errs.push('an uppercase letter (A–Z)');
   if (!/[a-z]/.test(p))        errs.push('a lowercase letter (a–z)');
   if (!/[0-9]/.test(p))        errs.push('a number (0–9)');
-  if (!/[^A-Za-z0-9]/.test(p)) errs.push('a special character (e.g. !&*)');
+  if (!/[!@#$%^&*]/.test(p))   errs.push('a special character (!@#$%^&*)');
   return errs.length
     ? { fieldId, message: 'Passphrase must include: ' + errs.join(', ') + '.' }
     : null;
@@ -3021,6 +3031,8 @@ document.getElementById('about-notices-link').addEventListener('click', () => {
 function showAbout() {
   const ver = browser.runtime.getManifest().version;
   document.getElementById('about-version').textContent = 'v' + ver;
+  const logo = document.getElementById('about-logo');
+  if (!logo.getAttribute('src')) logo.src = browser.runtime.getURL('assets/agecord-512.svg');
   show('about');
 }
 
