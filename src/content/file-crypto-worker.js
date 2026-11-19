@@ -18,9 +18,10 @@
 
 'use strict';
 
-import { Encrypter, Decrypter }   from '../lib/age.min.js';
-import { init, ml_dsa87_sign, ml_dsa87_verify, ml_dsa87_verifying_key_from_seed }
-  from '../lib/agecord-sign.min.js';
+const { age: ageUrl, sign: signUrl } = self.__AGE_LIB_URLS;
+const { Encrypter, Decrypter } = await import(ageUrl);
+const { init, ml_dsa87_sign, ml_dsa87_verify, ml_dsa87_verifying_key_from_seed } =
+  await import(signUrl);
 
 await init();
 
