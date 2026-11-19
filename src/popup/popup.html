@@ -7,7 +7,7 @@
 <html lang="en" class="popup">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <title>Agecord</title>
   <link rel="stylesheet" href="popup.css">
@@ -125,8 +125,7 @@
 
         <button id="btn-unlock" type="submit" class="btn btn-block">Unlock</button>
         <div class="link-row">
-          <button id="btn-goto-setup" type="button" class="btn btn-text" hidden>Set up new keypair</button>
-          <button id="btn-forgot" type="button" class="btn btn-text is-quiet">Forgot passphrase?</button>
+          <button id="btn-goto-setup" type="button" class="btn btn-text">Set up new keypair</button>
         </div>
       </form>
     </main>
@@ -229,6 +228,7 @@
       </header>
 
       <div class="main-scroll">
+        <div class="pane pane-head">
         <h1 class="title-xl">Agecord</h1>
 
         <section class="master">
@@ -293,6 +293,9 @@
           <input id="contacts-search" type="search" placeholder="Search" aria-label="Search contacts" autocomplete="off">
         </div>
 
+        </div>
+
+        <div class="pane pane-list">
         <div class="sect">
           <span>Contacts</span>
           <span class="sect-actions">
@@ -310,6 +313,7 @@
           </span>
           <strong id="no-contacts-title">No contacts yet</strong>
           <span id="no-contacts-msg">Add a new entry to start encrypting.</span>
+        </div>
         </div>
       </div>
 
@@ -559,7 +563,7 @@
       </header>
 
       <div class="hero">
-        <img class="about-logo" src="../assets/agecord-512.svg" alt="" width="72" height="72">
+        <img class="about-logo" id="about-logo" alt="" width="72" height="72">
         <h2>Agecord</h2>
         <p id="about-version"></p>
       </div>
