@@ -343,7 +343,9 @@ function isDraftTarget(el) {
 const DRAFT_PREVIEW_PREFIX   = 'NO_LIST___';
 const DRAFT_PREVIEW_ROOT_SEL = 'section form ' + DRAFT_PREVIEW_SEL;
 // Every message root that has no li id: quoted messages and the draft preview.
-const ID_LESS_ROOT_SEL = '[class*="quotedChatMessage__"], ' + DRAFT_PREVIEW_ROOT_SEL;
+// Discord's hashed class names have come both as "name__hash" and "name_hash";
+// stem + ONE underscore matches either.
+const ID_LESS_ROOT_SEL = '[class*="quotedChatMessage_"], ' + DRAFT_PREVIEW_ROOT_SEL;
 
 // ─── Route patterns ────────────────────────────────────────────────────────────
 
@@ -383,22 +385,46 @@ function cdnChannelId(url) {
 // Returns the channel ID for the outgoing signature context, or null to skip
 // encryption. Channel binding prevents cross-channel replay.
 
-// null sends natively; drafts have no channel ID, so use focus, not the stale URL.
-// Split view: SECTION → THREAD_ID; otherwise → CHANNEL_ID.
+// A chat pane: message list + composer. The side pane is a <section>; the search
+// bar also sits in a <section>, so match the complementary role, not the tag.
+const CHAT_PANE_SEL = 'main, section[role="complementary"]';
 
+// Channel shown by the pane, read from its message list.
+// Rows are "chat-messages-<channelId>-<messageId>"; the intro row
+// ("...-<channelId>-<channelId>") keeps empty channels resolvable.
+// The pane normally shows the URL's thread/voice channel; differs only
+// for stale pane state (e.g. an open thread after navigating elsewhere).
+// null if the list is not rendered. 
+// KEEP IN SYNC with upload-interceptor.js
+const PANE_MESSAGE_ID_RE = /^chat-messages-(\d{17,20})-\d{17,20}$/;
+function paneChannelId(pane) {
+  const list = pane?.querySelector('ol[data-list-id="chat-messages"]');
+  if (!list) return null;
+  const votes = new Map();
+  let best = null, bestN = 0;
+  for (const el of list.querySelectorAll('[id^="chat-messages-"]')) {
+    const m = PANE_MESSAGE_ID_RE.exec(el.id);
+    if (!m) continue;
+    const n = (votes.get(m[1]) ?? 0) + 1;
+    votes.set(m[1], n);
+    if (n > bestN) { best = m[1]; bestN = n; }
+  }
+  return best;
+}
+
+// null sends natively; drafts have no channel ID, so use focus, not the stale URL.
+// Side pane (SECTION): the URL's thread, or — with no thread in the URL — the
+// channel the pane itself shows (the URL's voice chat, normally the same id).
+// Otherwise → CHANNEL_ID.
 function getSendChannelId(fromEl) {
   const active = fromEl || document.activeElement;
   if (active && isDraftTarget(active)) return null;
 
-  const threadId = getCurrentThreadId();
-  if (threadId && active) {
-    let el = active;
-    for (let n = 0; n < 20; n++) {
-      if (!el.parentElement) break;
-      el = el.parentElement;
-      if (el.tagName === 'SECTION') return threadId;
-      if (el.tagName === 'MAIN')    return getCurrentChannelId();
-    }
+  const pane = active?.closest?.(CHAT_PANE_SEL) ?? null;
+  if (pane?.tagName === 'SECTION') {
+    const threadId = getCurrentThreadId();
+    if (threadId) return threadId;
+    return paneChannelId(pane) ?? getCurrentChannelId();
   }
   return getCurrentChannelId();
 }
@@ -3094,8 +3120,10 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
 // Detects forwarded messages and avoids invalid attachment verification.
 // Shows a notice because original channel signing context may differ.
 function isForwardedAttachment(liElement) {
-  const el = liElement.querySelector('[data-text-variant="text-sm/semibold"]');
-  return el?.textContent.trim() === 'Forwarded';
+  for (const el of liElement.querySelectorAll('[data-text-variant]')) {
+    if (el.textContent.trim() === 'Forwarded') return true;
+  }
+  return false;
 }
 
 // ─── Large-file confirmation prompt ──────────────────────────────────────────
