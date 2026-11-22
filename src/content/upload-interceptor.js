@@ -66,13 +66,66 @@
 
   // ─── Foreign UI ─────────────────────────────────────────────
 
-  // Third-party UI that reuses Discord's file-input component (e.g. Vencord's
-  // Themes tab) is not a message composer: its files must reach that UI
-  // untouched. Positive marker only.
+  // Uploads using Discord's plumbing outside the message composer must reach their own handler unchanged.
+  // Exclude by category, not component, so new Discord surfaces need no new entries:
+  // third-party UI (e.g. Vencord Themes) and modals/dialogs without a message composer.
   const FOREIGN_UI_SEL = '.vc-settings-tab';
+  const MODAL_UI_SEL   = '[role="dialog"], [aria-modal="true"]';
+  const SLATE_SEL      = '[data-slate-editor="true"]';
+  const MESSAGE_ITEM_SEL = 'li[id^="chat-messages-"]';
+
+  // A message composer form: holds a Slate editor and is not an edit box
+  // inside a message row (Discord's search bar is a Slate editor with no form).
+  function isComposerForm(form) {
+    return !!form && !form.closest(MESSAGE_ITEM_SEL) && !!form.querySelector(SLATE_SEL);
+  }
+
+  function containsComposer(root) {
+    return [...root.querySelectorAll(SLATE_SEL)].some(ed => isComposerForm(ed.closest('form')));
+  }
 
   function isForeignUiTarget(el) {
-    return !!el?.closest?.(FOREIGN_UI_SEL);
+    if (!el?.closest) return false;
+    if (el.closest(FOREIGN_UI_SEL)) return true;
+    const dialog = el.closest(MODAL_UI_SEL);
+    return !!dialog && !containsComposer(dialog);
+  }
+
+  // ─── Source pane ──────────────────────────────────────────────────────────────
+
+  // Deliver to the pane the event came from, never to whichever composer happens
+  // to hold focus: after a file-picker click, a drop or a paste outside the
+  // textbox, focus says nothing about the user's intent (split view).
+  const PANE_SEL = 'main, section[role="complementary"]';
+
+  // Chat pane an element belongs to. Discord's drop overlay is a sibling of
+  // <main>, so use the nearest ancestor that contains exactly one pane.
+  // null when ambiguous (e.g. sidebar) — callers then fall back to focus.
+  function ownerPane(el) {
+    for (let n = el; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+      if (n.matches(PANE_SEL)) return n;
+      const panes = n.querySelectorAll(PANE_SEL);
+      if (panes.length === 1) return panes[0];
+      if (panes.length > 1) return null;
+    }
+    return null;
+  }
+
+  // { pane, form } the event targets. Both are null when the source is unknown
+  // (ambiguous target, or a pane with no composer such as a locked thread):
+  // the focus-based lookup then decides, for the id and the destination alike.
+  function resolveUploadSource(el) {
+    const own  = el?.closest?.('form');
+    const pane = ownerPane(el);
+    const form = isComposerForm(own)
+      ? own
+      : (pane ? [...pane.querySelectorAll('form')].find(isComposerForm) ?? null : null);
+    return form ? { pane, form } : { pane: null, form: null };
+  }
+
+  // Text-only pastes become attachments only when pasted into a real composer.
+  function isComposerTarget(el) {
+    return isComposerForm(el?.closest?.('form'));
   }
 
   // ─── Attachment-pending guard ─────────────────────────────────────────────────
@@ -363,7 +416,8 @@
       if (active) {
         const exact = composers.find(c => c === active);
         if (exact) return exact;
-        const ancestor = composers.find(c => c.contains(active));
+        // Match the whole composer form: the attach/emoji buttons are not inside the textbox.
+        const ancestor = composers.find(c => c.closest('form')?.contains(active));
         if (ancestor) return ancestor;
       }
     }
@@ -373,22 +427,37 @@
     return nonEdit ?? all[0] ?? null;
   }
 
-  // Resolves active composer route at capture time.
-  // Returns ids together to avoid post-await route races.
-  function getInterceptorLocation() {
-    // Determine whether the active composer is inside MAIN or SECTION so we
-    // can pick the right ID in split thread view.
-    const active = document.activeElement;
-    let composerRole = null;
-    if (active) {
-      let el = active;
-      while (el && el !== document.body) {
-        const tag = el.tagName;
-        if (tag === 'MAIN') { composerRole = 'MAIN'; break; }
-        if (tag === 'SECTION') { composerRole = 'SECTION'; break; }
-        el = el.parentElement;
-      }
+  // Resolves the active composer route at capture time; returns IDs together to avoid post-await route races.
+  // The channel is read from the pane's message rows (chat-messages-<channelId>-<messageId>);
+  // the intro row keeps empty channels resolvable. Usually this matches the URL, but it matters
+  // when the pane shows a different channel (e.g. a stale thread after navigation).
+  // null when not rendered. 
+  // KEEP IN SYNC with content.js
+  const PANE_MESSAGE_ID_RE = /^chat-messages-(\d{17,20})-\d{17,20}$/;
+  function paneChannelId(pane) {
+    const list = pane?.querySelector('ol[data-list-id="chat-messages"]');
+    if (!list) return null;
+    const votes = new Map();
+    let best = null, bestN = 0;
+    for (const el of list.querySelectorAll('[id^="chat-messages-"]')) {
+      const m = PANE_MESSAGE_ID_RE.exec(el.id);
+      if (!m) continue;
+      const n = (votes.get(m[1]) ?? 0) + 1;
+      votes.set(m[1], n);
+      if (n > bestN) { best = m[1]; bestN = n; }
     }
+    return best;
+  }
+
+  // sourcePane: the pane the event came from (see ownerPane). When null, use the
+  // pane of the composer getFileInputOnChange() will deliver to, so the id
+  // always matches the destination (walking up from document.activeElement is
+  // wrong: Discord's search bar sits inside a <section> that is not a pane).
+  function getInterceptorLocation(sourcePane = null) {
+    // Determine whether the receiving composer is inside MAIN or SECTION so we
+    // can pick the right ID in split thread view.
+    const pane = sourcePane ?? getMainTextbox()?.closest(PANE_SEL) ?? null;
+    const composerRole = pane ? (pane.tagName === 'MAIN' ? 'MAIN' : 'SECTION') : null;
 
     const threadMatch = THREAD_PATH_PATTERN.exec(location.href);
     if (threadMatch) {
@@ -401,7 +470,10 @@
     const chanMatch = CHANNEL_PATH_PATTERN.exec(location.href);
     if (chanMatch) {
       const { guildId, channelId } = chanMatch.pathname.groups;
-      return { channelId, guildId };
+      // With no thread in the URL, a side pane is the URL's voice chat (same id).
+      // If it ever shows another channel, its own message ids say which.
+      const sidePaneChannel = composerRole === 'SECTION' ? paneChannelId(pane) : null;
+      return { channelId: sidePaneChannel ?? channelId, guildId };
     }
 
     return { channelId: null, guildId: null };
@@ -532,30 +604,32 @@
 
   // Delivers files to React and starts tray tracking.
   // _attachmentPending is set by the caller before encryption.
-  function deliverFileList(dt) {
-    const onChange = getFileInputOnChange();
+  // sourceForm: composer form of the pane the upload came from; omitted by
+  // typed-send callers, which keep the focus-based lookup.
+  function deliverFileList(dt, sourceForm) {
+    const onChange = getFileInputOnChange(sourceForm);
     onChange({ currentTarget: { files: dt.files, err: null } });
     watchTrayAndClearPending();
   }
 
   // Encrypts files and delivers them in one step — the common case for every
   // upload entry point below.
-  async function deliverEncryptedFiles(files, channelId, guildId) {
-    deliverFileList(await encryptFileList(files, channelId, guildId));
+  async function deliverEncryptedFiles(files, channelId, guildId, sourceForm) {
+    deliverFileList(await encryptFileList(files, channelId, guildId), sourceForm);
   }
 
   // Only explicit PASSTHROUGH permits raw delivery; all other failures rethrow.
   // Set _attachmentPending before await to serialize concurrent upload flows.
-  async function deliverFilesRespectingGate(files, channelId, guildId) {
+  async function deliverFilesRespectingGate(files, channelId, guildId, sourceForm) {
     _attachmentPending = true;
     try {
-      await deliverEncryptedFiles(files, channelId, guildId);
+      await deliverEncryptedFiles(files, channelId, guildId, sourceForm);
     } catch (e) {
       if (e?.code === 'PASSTHROUGH') {
         const dt = new DataTransfer();
         for (const f of files) dt.items.add(f);
         try {
-          deliverFileList(dt);
+          deliverFileList(dt, sourceForm);
         } catch (deliverErr) {
           _attachmentPending = false; // delivery threw before tray tracking started
           throw deliverErr;
@@ -586,28 +660,30 @@
   // Wraps already-signed age bytes as message.txt.age and hands them to React's
   // onChange, identical to what AGE_DO_UPLOAD and the paste handler both need —
   // factored out so neither has to duplicate the DataTransfer/File plumbing.
-  function uploadSignedMessageBytes(buffer) {
+  function uploadSignedMessageBytes(buffer, sourceForm) {
     const file = new File([buffer], 'message.txt.age', { type: 'application/octet-stream' });
     const dt   = new DataTransfer();
     dt.items.add(file);
-    deliverFileList(dt);
+    deliverFileList(dt, sourceForm);
   }
 
   // PASSTHROUGH path for long pasted text: deliver raw message.txt.
-  function deliverPlainTextFile(text) {
+  function deliverPlainTextFile(text, sourceForm) {
     const file = new File([text], 'message.txt', { type: 'text/plain' });
     const dt   = new DataTransfer();
     dt.items.add(file);
-    deliverFileList(dt);
+    deliverFileList(dt, sourceForm);
   }
 
   // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-  // Returns React's onChange from the file input closest to the active composer.
+  // Returns React's onChange from the file input of the source composer form when
+  // given, else the one closest to the active composer.
   // Throws if the input or its React props are missing.
-  function getFileInputOnChange() {
-    const activeTb   = getMainTextbox();
-    const activeForm = activeTb?.closest('form');
+  function getFileInputOnChange(sourceForm) {
+    const activeForm = sourceForm?.isConnected
+      ? sourceForm
+      : getMainTextbox()?.closest('form');
     const input = (activeForm?.querySelector('input[type="file"]'))
                ?? document.querySelector('input[type="file"]');
     if (!input) throw new Error('file input not found');
@@ -687,7 +763,8 @@
 
     // Resolve channelId/guildId synchronously — activeElement (and location.href's
     // relevance to it) is unreliable after any await.
-    const { channelId, guildId } = getInterceptorLocation();
+    const src = resolveUploadSource(e.target);
+    const { channelId, guildId } = getInterceptorLocation(src.pane);
 
     // Stop unconditionally BEFORE the _attachmentPending check. Returning early
     // without stopping lets the trusted drop fall through to Discord raw.
@@ -697,7 +774,7 @@
     if (_attachmentPending) return;
 
     try {
-      await deliverFilesRespectingGate(files, channelId, guildId);
+      await deliverFilesRespectingGate(files, channelId, guildId, src.form);
     } catch (dropErr) {
       err('drop: failed — %s', dropErr?.message ?? dropErr);
     }
@@ -718,7 +795,8 @@
     const files = [...(input.files ?? [])];
     if (files.length === 0) return;
 
-    const { channelId, guildId } = getInterceptorLocation();
+    const src = resolveUploadSource(input);
+    const { channelId, guildId } = getInterceptorLocation(src.pane);
 
     // Stop unconditionally — same reason as drop.
     e.stopImmediatePropagation();
@@ -729,7 +807,7 @@
     clearStalePending();
 
     try {
-      await deliverFilesRespectingGate(files, channelId, guildId);
+      await deliverFilesRespectingGate(files, channelId, guildId, src.form);
     } catch (changeErr) {
       err('change: failed — %s', changeErr?.message ?? changeErr);
     }
@@ -751,8 +829,12 @@
     const needsInterception = files.length > 0 || text.length > NATIVE_PASTE_FILE_THRESHOLD;
     if (!needsInterception) return;
     if (isDraftTarget(e.target) || isForeignUiTarget(e.target)) return; // native handling
+    // Long text pasted anywhere but a message composer (search bar, edit box,
+    // any other field) is just text.
+    if (files.length === 0 && !isComposerTarget(e.target)) return;
 
-    const { channelId, guildId } = getInterceptorLocation();
+    const src = resolveUploadSource(e.target);
+    const { channelId, guildId } = getInterceptorLocation(src.pane);
 
     e.stopImmediatePropagation();
     e.preventDefault();
@@ -761,16 +843,16 @@
 
     try {
       if (files.length > 0) {
-        await deliverFilesRespectingGate(files, channelId, guildId);
+        await deliverFilesRespectingGate(files, channelId, guildId, src.form);
       } else if (text.length <= MESSAGE_TEXT_MAX_CHARS) {
         // Single-message path: use the typed-send compress+sign pipeline.
         // Keep PASSTHROUGH handling here; generic file delivery is separate.
         try {
           const buffer = await encryptTextMessage(text, channelId, guildId);
-          uploadSignedMessageBytes(buffer);
+          uploadSignedMessageBytes(buffer, src.form);
         } catch (msgErr) {
           if (msgErr?.code === 'PASSTHROUGH') {
-            deliverPlainTextFile(text);
+            deliverPlainTextFile(text, src.form);
           } else {
             throw msgErr; // BLOCKED, timeout, worker error — nothing delivered.
           }
@@ -779,7 +861,7 @@
         // Too long for a single encrypted message — attach the full,
         // untruncated text as a real encrypted file instead.
         const textFile = new File([text], 'message.txt', { type: 'text/plain' });
-        await deliverFilesRespectingGate([textFile], channelId, guildId);
+        await deliverFilesRespectingGate([textFile], channelId, guildId, src.form);
       }
     } catch (pasteErr) {
       err('paste: failed — %s', pasteErr?.message ?? pasteErr);
