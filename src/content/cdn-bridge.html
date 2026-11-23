@@ -13,7 +13,7 @@
   cross-origin fetches to cdn.discordapp.com via host_permissions.
 
   Returns decrypted data to the parent content script using
-  postMessage(ArrayBuffer) with zero-copy transfer.
+  a private MessageChannel port (zero-copy ArrayBuffer transfer).
   -->
 </head>
 <body>
