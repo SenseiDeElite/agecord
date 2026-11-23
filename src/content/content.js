@@ -2084,18 +2084,33 @@ function renderWithEmoji(container, text, emojiSize = 22) {
 
 let _fetchIframe   = null;
 let _iframeReady   = false;
-// Real origin of the bridge document, learned from its READY message. With use_dynamic_url the
-// origin of the document may differ from the origin of the getURL() string used as its src.
-let _iframeOrigin  = null;
+// Private MessageChannel port to the bridge document. All requests/results travel on it, never on the
+// shared page window. The INIT that hands over the other end is authenticated by a per-iframe secret
+// carried in the iframe URL hash (the iframe lives in a closed shadow root, so the page cannot read it).
+let _bridgePort    = null;
 let _iframeQueue   = [];
 const _iframePending = new Map();
+
+// Closes the current port and fails every request still waiting on it (nothing can answer them any more).
+function resetBridge() {
+  const port = _bridgePort;
+  _bridgePort = null;
+  _iframeReady = false;
+  if (!port) return;
+  port.onmessage = null;
+  try { port.close(); } catch {}
+  for (const [id, entry] of _iframePending) {
+    if (entry.port !== port) continue;
+    _iframePending.delete(id);
+    entry.reject(Object.assign(new Error('fetch iframe replaced'), { code: 'FETCH_FAILED' }));
+  }
+}
 
 function getFetchIframe() {
   if (_fetchIframe?.isConnected) return _fetchIframe;
 
   _fetchIframe = null;
-  _iframeReady = false;
-  _iframeOrigin = null;
+  resetBridge();
 
   const host = document.createElement('div');
   host.id = 'age-fetch-iframe-host';
@@ -2103,13 +2118,18 @@ function getFetchIframe() {
   const shadow = host.attachShadow({ mode: 'closed' });
 
   const iframe = document.createElement('iframe');
-  // Pass parentOrigin via query instead of ancestorOrigins, which may be
-  // redacted by Referrer-Policy and break the READY handshake.
-  iframe.src = chrome.runtime.getURL('content/cdn-bridge.html') +
-               '?parentOrigin=' + encodeURIComponent(location.origin);
+  // One-time secret known only to this content script and the bridge document it loads.
+  const secret = newRequestId();
+  iframe.src = chrome.runtime.getURL('content/cdn-bridge.html') + '#' + secret;
   iframe.style.cssText = 'display:none;';
-  // allow-same-origin lets chrome.runtime APIs work inside the iframe (extension origin required).
-  iframe.sandbox = 'allow-scripts allow-same-origin';
+  iframe.addEventListener('load', () => {
+    if (_fetchIframe !== iframe || !iframe.contentWindow) return;
+    const { port1, port2 } = new MessageChannel();
+    _bridgePort = port1;
+    port1.onmessage = onBridgeMessage;
+    // '*' is acceptable: a navigated-away frame has no bridge listener, and the secret is single-use.
+    iframe.contentWindow.postMessage({ type: 'AGE_BRIDGE_INIT', secret }, '*', [port2]);
+  }, { once: true });
   shadow.appendChild(iframe);
   document.documentElement.appendChild(host);
 
@@ -2132,21 +2152,14 @@ function iframePlainFetch(cdnUrl, opts) {
   return new Promise((resolve, reject) => {
     const requestId = newRequestId();
     withIframe(() => {
-      if (!_fetchIframe?.contentWindow) {
+      const port = _bridgePort;
+      if (!port) {
         reject(new Error('fetch iframe unavailable'));
         return;
       }
-      const targetWindow = _fetchIframe.contentWindow;
-      _iframePending.set(requestId, { resolve, reject, source: targetWindow, cdnUrl });
-      // withIframe() runs this only after the READY handshake, which sets _iframeOrigin to the
-      // document's real origin (it can differ from the getURL() src origin under use_dynamic_url).
-      if (!_iframeOrigin) {
-        _iframePending.delete(requestId);
-        reject(new Error('fetch iframe origin unknown'));
-        return;
-      }
-      targetWindow.postMessage(
-        {
+      _iframePending.set(requestId, { resolve, reject, port, cdnUrl });
+      try {
+        port.postMessage({
           type:         'AGE_FETCH_RAW',
           requestId,
           cdnUrl,
@@ -2157,33 +2170,29 @@ function iframePlainFetch(cdnUrl, opts) {
           hintLen:      PUBKEY_HINT_LEN,
           allowedHints: opts.allowedHints,
           expectedTotal: opts.expectedTotal ?? null,
-          parentOrigin: location.origin,
-        },
-        _iframeOrigin
-      );
+        });
+      } catch (err) {
+        _iframePending.delete(requestId);
+        reject(Object.assign(new Error('fetch iframe request failed'), { code: 'FETCH_FAILED' }));
+      }
     });
   });
 }
 
-window.addEventListener('message', (e) => {
-  if (e.data?.type === 'AGE_IFRAME_READY') {
-    if (!_fetchIframe || e.source !== _fetchIframe.contentWindow) return;
-    // e.source only identifies the window, not the document loaded in it; if the frame were
-    // navigated away, its origin would change. Require an extension origin before trusting it.
-    if (!/^(chrome|moz)-extension:\/\//.test(e.origin)) return;
-    _iframeOrigin = e.origin;
+// Port messages only: the page window never sees them.
+function onBridgeMessage(e) {
+  const d = e.data;
+  if (d?.type === 'AGE_BRIDGE_READY') {
+    if (_iframeReady) return;
     _iframeReady = true;
-    const queue  = _iframeQueue.splice(0);
-    for (const fn of queue) fn();
+    for (const fn of _iframeQueue.splice(0)) fn();
     return;
   }
 
-  if (e.data?.type === 'AGE_FETCH_RAW_RESULT') {
-    const { requestId, buffer, error, code, totalBytes, cdnUrl: echoedUrl } = e.data;
+  if (d?.type === 'AGE_FETCH_RAW_RESULT') {
+    const { requestId, buffer, error, code, totalBytes, cdnUrl: echoedUrl } = d;
     const entry = _iframePending.get(requestId);
-    // Match against the per-request source snapshot so results from an old
-    // iframe (replaced mid-flight) are still delivered rather than dropped.
-    if (!entry || e.source !== entry.source) return;
+    if (!entry) return;
     // Bind the reply to the URL we asked for. A mismatched reply is IGNORED (neither completes nor fails
     // the request), so the real reply can still arrive.
     if (echoedUrl !== entry.cdnUrl) return;
@@ -2192,7 +2201,7 @@ window.addEventListener('message', (e) => {
     else if (buffer !== undefined && !isArrayBuffer(buffer)) entry.reject(Object.assign(new Error('bad reply'), { code: 'FETCH_FAILED' }));
     else       entry.resolve({ buffer, totalBytes: Number.isSafeInteger(totalBytes) ? totalBytes : null });
   }
-});
+}
 
 // ─── File crypto Worker pool ──────────────────────────────────────────────────
 
