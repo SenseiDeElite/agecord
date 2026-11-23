@@ -6,15 +6,16 @@
 // cdn-bridge.js — Agecord
 
 // Hidden iframe bridge for extension-origin cross-origin fetches.
-// Transfers fetched ArrayBuffers to the parent via postMessage.
+// Transfers fetched ArrayBuffers to the parent over a private MessageChannel port.
 // Crypto is handled by content.js and file-crypto-worker.js.
 
 'use strict';
 
-// Trusted parent origin from this iframe's src query.
-// Used exclusively for postMessage origin validation and replies.
-// Do not trust origin values supplied in message payloads.
-const expectedParentOrigin = new URLSearchParams(location.search).get('parentOrigin');
+// One-time secret from this iframe's URL hash, known only to content.js (the iframe sits in a closed
+// shadow root, so the page cannot read src). A bridge framed by the page has no secret and is never
+// initialised. After INIT, all traffic uses the private MessageChannel port; window messages are ignored.
+const secret = location.hash.slice(1);
+let port = null;
 
 // Both limits mirror content.js (the two worlds cannot share code).
 const SIG_VERSION = 0x01;                  // KEEP IN SYNC (content.js SIG_VERSION)
@@ -136,10 +137,18 @@ async function fetchFull(cdnUrl, req) {
   return { buffer: total === out.buffer.byteLength ? out.buffer : out.buffer.transfer(total), totalBytes: total };
 }
 
-window.addEventListener('message', async (e) => {
+addEventListener('message', (e) => {
+  if (port) return;                                           // one-shot
   if (e.source !== window.parent) return;
-  if (!expectedParentOrigin || e.origin !== expectedParentOrigin) return;
+  const d = e.data;
+  if (d?.type !== 'AGE_BRIDGE_INIT' || !secret || d.secret !== secret) return;
+  if (e.ports.length !== 1) return;
+  port = e.ports[0];
+  port.onmessage = onRequest;
+  port.postMessage({ type: 'AGE_BRIDGE_READY' });
+});
 
+async function onRequest(e) {
   const { type, requestId, cdnUrl } = e.data ?? {};
   if (type !== 'AGE_FETCH_RAW') return;
   // requestId is opaque here: it is only echoed back.
@@ -149,8 +158,8 @@ window.addEventListener('message', async (e) => {
 
   // cdnUrl is echoed in EVERY reply: content.js ignores a reply whose URL is not the one it asked for.
   function reply(payload) {
-    window.parent.postMessage({ type: 'AGE_FETCH_RAW_RESULT', requestId, cdnUrl, ...payload },
-      expectedParentOrigin, payload.buffer ? [payload.buffer] : []);
+    port.postMessage({ type: 'AGE_FETCH_RAW_RESULT', requestId, cdnUrl, ...payload },
+      payload.buffer ? [payload.buffer] : []);
   }
 
   try {
@@ -169,12 +178,4 @@ window.addEventListener('message', async (e) => {
     log(`[age-iframe] AGE_FETCH_RAW ${c ?? 'error'} requestId=${requestId}:`, err?.message ?? err);
     reply({ code: err?.code ?? 'FETCH_FAILED', error: err?.message ?? String(err) });
   }
-});
-
-// Signal readiness to the parent using its origin from the src query.
-// Avoids '*' and ancestorOrigins, which may be redacted by Referrer-Policy.
-if (expectedParentOrigin) {
-  window.parent.postMessage({ type: 'AGE_IFRAME_READY' }, expectedParentOrigin);
-} else {
-  console.error('[age-iframe] AGE_IFRAME_READY: parentOrigin missing from iframe src');
 }
