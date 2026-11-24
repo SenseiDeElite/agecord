@@ -2464,11 +2464,17 @@ async function doImportContacts(json) {
   const dupIndices     = new Set();
   const fileChannelIds = new Map();
   const fileServerIds  = new Map();
+  // The file's own claim "contact <id> holds <key>", used to resolve group/server members by key.
+  // An id that occurs more than once in the file is ambiguous and is never kept here.
+  const fileKeyById    = new Map();
   entries.forEach((entry, idx) => {
     const id = idOf(entry);
     if (id) {
-      if (seenUUIDs.has(id)) { dupIndices.add(idx); dupIndices.add(seenUUIDs.get(id)); }
-      else seenUUIDs.set(id, idx);
+      if (seenUUIDs.has(id)) { dupIndices.add(idx); dupIndices.add(seenUUIDs.get(id)); fileKeyById.delete(id); }
+      else {
+        seenUUIDs.set(id, idx);
+        if ((entry.type ?? 'contact') === 'contact' && typeof entry.ageRecipient === 'string') fileKeyById.set(id, entry.ageRecipient);
+      }
     }
     if (!isObj(entry)) return;
     if (typeof entry.channelId === 'string' && entry.channelId) {
@@ -2486,13 +2492,28 @@ async function doImportContacts(json) {
   const existingContactCount = Object.values(next).filter(c => c.type === 'contact' || !c.type).length;
   const existingServerCount  = Object.values(next).filter(c => c.type === 'server').length;
 
+  // Same uniqueness rules as validateContactFields (add/edit): one contact per key/name.
+  // keyHolders maps each full ageRecipient to its holder IDs.
+  const keyHolders = new Map();
+  const usedNames  = new Set();
+  for (const [uid, c] of Object.entries(next)) {
+    if (c.type !== 'contact' && c.type) continue;
+    if (typeof c.ageRecipient === 'string') {
+      const held = keyHolders.get(c.ageRecipient);
+      if (held) held.push(uid); else keyHolders.set(c.ageRecipient, [uid]);
+    }
+    if (typeof c.username === 'string') usedNames.add(c.username);
+  }
+
   let contactsAdded = 0;
   let serversAdded  = 0, groupsAdded = 0;
-  let skipped = 0, limitSkipped = 0;
+  // skipped: malformed or duplicated inside the file. exists: collides with an entry already in
+  // the profile. unresolved: group/server whose members could
+  // not all be matched to a local contact. limitSkipped: a MAX_* cap.
+  let skipped = 0, exists = 0, unresolved = 0, limitSkipped = 0;
 
   const nameOk = n => typeof n === 'string' && n.length >= MIN_USERNAME && n.length <= MAX_USERNAME && isPrintableAscii(n);
   const chanOk = c => typeof c === 'string' && /^\d+$/.test(c) && c.length >= MIN_CHANNEL_ID && c.length <= MAX_CHANNEL_ID;
-  const addedContactIds = new Set();   // contacts actually added by THIS import
 
   // ── Pass A: contacts ──────────────────────────────────────────────────────────
   for (let idx = 0; idx < entries.length; idx++) {
@@ -2505,23 +2526,52 @@ async function doImportContacts(json) {
 
     const { channelId, username, ageRecipient, enabled } = entry;
     if (!chanOk(channelId) || !nameOk(username))                     { skipped++; continue; }
+    // Cheap collision checks first: restoring a backup onto a profile that already holds the
+    // contacts must not pay for a deep key validation per entry. A key equal to a stored one
+    // needs no validation of its own.
+    if (Object.prototype.hasOwnProperty.call(next, id)
+        || existingChannelIds.has(channelId)
+        || keyHolders.has(ageRecipient)
+        || usedNames.has(username))                                  { exists++; continue; }
     if (validateRecipientDeep(ageRecipient, 'import'))               { skipped++; continue; }
-    if (Object.prototype.hasOwnProperty.call(next, id))              { skipped++; continue; }
-    if (existingChannelIds.has(channelId))                           { skipped++; continue; }
     if (existingContactCount + contactsAdded >= MAX_CONTACTS)        { limitSkipped++; continue; }
 
     next[id] = { id, type: 'contact', channelId, username, ageRecipient, enabled: enabled !== false };
     existingChannelIds.set(channelId, next[id]);
-    addedContactIds.add(id);
+    keyHolders.set(ageRecipient, [id]);
+    usedNames.add(username);
     contactsAdded++;
   }
 
-  // Members: deduplicated, and every one must be a contact added by this import.
-  // The length is checked BEFORE any per-member work so a huge array costs nothing.
-  const cleanMembers = (memberIds, max) => {
+  // Resolve members by key, not id. A file id is only a label: M resolves to the
+  // local contact holding the file's key—M itself if it holds it, otherwise the
+  // unique contact that does. Never match by id alone; every member must declare
+  // its key, preventing access to unnamed contacts. Imported contacts are in
+  // keyHolders, so they resolve to themselves.
+  const memberCache = new Map();
+  const resolveMember = m => {
+    if (typeof m !== 'string') return null;
+    let r = memberCache.get(m);
+    if (r !== undefined) return r;
+    r = null;
+    const holders = keyHolders.get(fileKeyById.get(m));   // get(undefined) -> undefined: unknown id
+    if (holders) r = holders.includes(m) ? m : (holders.length === 1 ? holders[0] : null);
+    memberCache.set(m, r);
+    return r;
+  };
+  // Returns deduplicated local member IDs; null for invalid memberIds shape/size,
+  // false if any member cannot resolve. Any unresolved member rejects the WHOLE
+  // entry to avoid silently shrinking its group. Validate length before member
+  // resolution to bound work; the result is non-empty and ≤ max.
+  const resolveMembers = (memberIds, max) => {
     if (!Array.isArray(memberIds) || memberIds.length < 1 || memberIds.length > max) return null;
-    const uniq = [...new Set(memberIds)];
-    return uniq.every(m => typeof m === 'string' && addedContactIds.has(m)) ? uniq : null;
+    const out = new Set();
+    for (const m of memberIds) {
+      const r = resolveMember(m);
+      if (r === null) return false;
+      out.add(r);
+    }
+    return [...out];
   };
 
   // ── Pass B: groups and servers ────────────────────────────────────────────────
@@ -2536,10 +2586,11 @@ async function doImportContacts(json) {
     if (type === 'group') {
       const { channelId, name, memberIds, enabled } = entry;
       if (!chanOk(channelId) || !nameOk(name))                       { skipped++; continue; }
-      if (Object.prototype.hasOwnProperty.call(next, id))            { skipped++; continue; }
-      if (existingChannelIds.has(channelId))                         { skipped++; continue; }
-      const members = cleanMembers(memberIds, MAX_GROUP_MEMBERS);
-      if (!members)                                                  { skipped++; continue; }
+      if (Object.prototype.hasOwnProperty.call(next, id))            { exists++; continue; }
+      if (existingChannelIds.has(channelId))                         { exists++; continue; }
+      const members = resolveMembers(memberIds, MAX_GROUP_MEMBERS);
+      if (members === null)                                          { skipped++; continue; }
+      if (members === false)                                         { unresolved++; continue; }
 
       next[id] = { id, type: 'group', channelId, name, memberIds: members, enabled: enabled !== false };
       existingChannelIds.set(channelId, next[id]);
@@ -2549,11 +2600,12 @@ async function doImportContacts(json) {
       const { serverId, name, memberIds, enabled } = entry;
       if (typeof serverId !== 'string' || !/^\d{1,20}$/.test(serverId)) { skipped++; continue; }
       if (!nameOk(name))                                             { skipped++; continue; }
-      if (Object.prototype.hasOwnProperty.call(next, id))            { skipped++; continue; }
-      if (existingServerIds.has(serverId))                           { skipped++; continue; }
+      if (Object.prototype.hasOwnProperty.call(next, id))            { exists++; continue; }
+      if (existingServerIds.has(serverId))                           { exists++; continue; }
       if (existingServerCount + serversAdded >= MAX_SERVERS)         { limitSkipped++; continue; }
-      const members = cleanMembers(memberIds, MAX_SERVER_MEMBERS);
-      if (!members)                                                  { skipped++; continue; }
+      const members = resolveMembers(memberIds, MAX_SERVER_MEMBERS);
+      if (members === null)                                          { skipped++; continue; }
+      if (members === false)                                         { unresolved++; continue; }
 
       next[id] = { id, type: 'server', serverId, name, memberIds: members, enabled: enabled !== false };
       existingServerIds.set(serverId, next[id]);
@@ -2586,6 +2638,8 @@ async function doImportContacts(json) {
   if (contactsAdded)  parts.push(`${contactsAdded} contact${contactsAdded !== 1 ? 's' : ''} added`);
   if (groupsAdded)    parts.push(`${groupsAdded} group${groupsAdded !== 1 ? 's' : ''} added`);
   if (serversAdded)   parts.push(`${serversAdded} server${serversAdded !== 1 ? 's' : ''} added`);
+  if (exists)         parts.push(`${exists} skipped (already in your list)`);
+  if (unresolved)     parts.push(`${unresolved} group${unresolved !== 1 ? 's/servers' : '/server'} skipped (members not found)`);
   if (skipped)        parts.push(`${skipped} skipped (invalid or duplicate)`);
   if (limitSkipped)   parts.push(`${limitSkipped} skipped (limit reached)`);
   showImportResult(true, (parts.join(', ') || 'Nothing changed') + '.');
