@@ -23,7 +23,7 @@ const initReady = init();
 
 // Contacts ciphertext (background.js):
 //   [0x01][nonce+ct+tag]
-//   Salt is stored separately in chrome.storage.local.
+//   Salt is stored separately in browser.storage.local.
 
 // Keep formats separate; they are not interchangeable.
 
@@ -57,7 +57,7 @@ self.onmessage = async ({ data }) => {
     // ── Argon2id key derivation ─────────────────────────────────────────────
 
     // Inputs are transferred ArrayBuffers. Outputs are transferred back; the
-    // caller base64-encodes only before writing to chrome.storage
+    // caller base64-encodes only before writing to browser.storage
 
     if (data.op === 'ARGON2ID_DERIVE') {
       const passwordBytes = new Uint8Array(data.passwordBytes);
