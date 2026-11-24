@@ -2570,6 +2570,9 @@ function listenForInterceptorMessages() {
 
       // Pass recipient context to avoid self-only encryption.
       // Prevents ID re-derivation after async navigation; live-evaluated.
+      // A request that lands while the boot-time unlock pull is in flight must not be judged
+      // against a still-empty session.
+      await _awaitBootUnlock();
       const gate = resolveUploadGate(fileChannelId, fileGuildId);
       if (gate.outcome !== 'encrypt') {
         throw Object.assign(new Error(gate.reason), { code: gate.outcome.toUpperCase() });
@@ -2641,6 +2644,7 @@ function listenForInterceptorMessages() {
       }
 
       // Both ids passed explicitly — see getActiveEntry's doc comment.
+      await _awaitBootUnlock(); // see AGE_ENCRYPT_FILE
       const gate = resolveUploadGate(msgChannelId, msgGuildId ?? null);
       if (gate.outcome !== 'encrypt') {
         throw Object.assign(new Error(gate.reason), { code: gate.outcome.toUpperCase() });
@@ -2774,6 +2778,7 @@ function applyUnlockPayload(payload) {
     if (_globalOn) {
       attachEnterHook();
       relayInterceptorState(true);
+      scheduleWarmUp();
     } else {
       // Unlocked but globally disabled — replace any stale 'locked' placeholders with 'disabled'.
       relayInterceptorState(false);
@@ -2849,6 +2854,16 @@ function listenForMessages() {
 
 // Pulls unlock state from background during boot. The direct request/response
 // path avoids a second sendMessage round trip and listener-timing races.
+// Settles when the boot-time unlock pull has finished, or after a cap so a stuck background
+// worker cannot hang an upload.
+const BOOT_UNLOCK_WAIT_MS = 8_000;
+let _bootUnlock = Promise.resolve();
+function _awaitBootUnlock() {
+  let t;
+  return Promise.race([_bootUnlock, new Promise(r => { t = setTimeout(r, BOOT_UNLOCK_WAIT_MS); })])
+    .finally(() => clearTimeout(t));
+}
+
 async function requestUnlock() {
   try {
     const resp = await chrome.runtime.sendMessage({ type: 'REQUEST_UNLOCK' });
@@ -3880,21 +3895,43 @@ function processLiFull(li) {
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 
+// DOM-dependent setup. The message channels below deliberately live outside this function.
 async function init() {
-  listenForMessages();
-  // Report the state once, BEFORE the unlock pull, so a payload that lands first
-  // is never overwritten by a stale "locked" relay.
-  relayInterceptorState(!!_session?.mldsaSeedBytes);
-  requestUnlock();
-  listenForInterceptorMessages();
   startNavObserver();
   waitForMessageList();
-  // Warm up iframe and workers before any attachment is found so the first
-  // decrypt pays no cold-start penalty.
+}
+
+// Warms the bridge iframe and workers so the first decrypt pays no cold-start penalty. Only
+// done for a session that can decrypt, and only after the page has loaded and gone idle:
+// a locked or disabled session never uses them, and spawning them during page load
+// competes with first paint and the app's own boot.
+let _warmUpScheduled = false;
+function scheduleWarmUp() {
+  if (_warmUpScheduled) return;
+  _warmUpScheduled = true;
+  const run = () => { _warmUpScheduled = false; if (canDecrypt()) warmUpCrypto(); };
+  const idle = () => (typeof requestIdleCallback === 'function'
+    ? requestIdleCallback(run, { timeout: 2000 }) : setTimeout(run, 0));
+  if (document.readyState === 'complete') idle();
+  else window.addEventListener('load', idle, { once: true });
+}
+
+function warmUpCrypto() {
   getFetchIframe();
   getTextWorker();   // never terminated
   getMediaWorker();  // terminated on nav, recreated lazily
 }
+
+// Set up the DOM-free bridge at top level before the interceptor can post.
+// Order is critical:
+// 1. Register listeners first.
+// 2. Relay state once before the unlock pull, preventing a stale "locked"
+//    relay from overwriting a payload that arrives first.
+// 3. Pull unlock state; upload handlers await this via _awaitBootUnlock.
+listenForMessages();
+relayInterceptorState(!!_session?.mldsaSeedBytes);
+_bootUnlock = requestUnlock();
+listenForInterceptorMessages();
 
 if (document.body) {
   init().catch(e => console.error('[age] init error:', e));
