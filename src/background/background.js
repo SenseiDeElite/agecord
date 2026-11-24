@@ -11,7 +11,7 @@
 // popup ↔ background: contacts JSON ↔ ciphertext.
 
 // Message decryption runs in content script (file-crypto-worker.js);
-// chrome.storage.session stores transient unlock state securely.
+// browser.storage.session stores transient unlock state securely.
 
 'use strict';
 
@@ -54,7 +54,7 @@ const fromB64 = b64   => Uint8Array.fromBase64(b64);
 
 // XChaCha20-Poly1305 envelope:
 // [version][24-byte nonce][ciphertext+tag]
-// Stored as base64 in chrome.storage.local (contactsEnc).
+// Stored as base64 in browser.storage.local (contactsEnc).
 
 // Note: crypto-worker.js uses a different envelope with embedded salt.
 // Here salt is stored separately (contactsSaltB64). Keep formats distinct.
@@ -87,7 +87,7 @@ function encryptContacts(jsonStr) {
 
 // ─── Identity state ───────────────────────────────────────────────────────────
 
-// Keys held in chrome.storage.session; shared by ensureIdentity's read and
+// Keys held in browser.storage.session; shared by ensureIdentity's read and
 // RELOCK's clear so the two can't silently drift out of sync.
 
 // age_contacts_key mirrors _contactsKeyBytes and is written atomically with
@@ -100,7 +100,7 @@ async function ensureIdentity() {
   if (_identity) return true;
   const myEpoch = _epoch;
   try {
-    const d = await chrome.storage.session.get(SESSION_KEYS);
+    const d = await browser.storage.session.get(SESSION_KEYS);
     if (_epoch !== myEpoch) return _identity !== null; // superseded mid-read
     if (!d.age_unlocked || !d.age_identity) return false;
     _identity = d.age_identity;
@@ -151,14 +151,14 @@ async function sendUnlockToTab(tabId) {
   const payload = buildUnlockPayload();
   if (!payload) return;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'UNLOCK', ...payload });
+    await browser.tabs.sendMessage(tabId, { type: 'UNLOCK', ...payload });
   } catch (e) {
     console.info(`[age] sendUnlockToTab: tab ${tabId} not reachable, will self-heal via its own pull:`, e?.message);
   }
 }
 
 // Returns all currently-open Discord tabs.
-const getDiscordTabs = () => chrome.tabs.query({ url: 'https://discord.com/*' });
+const getDiscordTabs = () => browser.tabs.query({ url: 'https://discord.com/*' });
 
 // Fire-and-forget broadcast for RELOCK and CONTACTS_UPDATED.
 // No retry needed; payloads are not timing-sensitive.
@@ -166,7 +166,7 @@ const getDiscordTabs = () => chrome.tabs.query({ url: 'https://discord.com/*' })
 async function broadcastToTabs(payload) {
   const tabs = await getDiscordTabs();
   for (const tab of tabs) {
-    chrome.tabs.sendMessage(tab.id, payload)
+    browser.tabs.sendMessage(tab.id, payload)
       .catch(e => console.info(`[age] broadcastToTabs: tab ${tab.id} did not receive ${payload.type}:`, e?.message));
   }
 }
@@ -194,7 +194,7 @@ function handleUnlock(msg, _sender, sendResponse) {
       // one must never overwrite a key that is already in the session.
       // age_contacts is written separately so an over-quota list
       // drops only the mirror, never the unlock.
-      await chrome.storage.session.set({
+      await browser.storage.session.set({
         age_unlocked:  true,
         age_identity:  _identity,
         age_recipient: _ageRecipient,
@@ -202,14 +202,14 @@ function handleUnlock(msg, _sender, sendResponse) {
         ...(_contactsKeyBytes ? { age_contacts_key: toB64(_contactsKeyBytes) } : {}),
       });
       try {
-        await chrome.storage.session.set({ age_contacts: _contacts });
+        await browser.storage.session.set({ age_contacts: _contacts });
       } catch (e) {
         console.warn('[age] UNLOCK: contacts mirror not stored in session:', e?.message);
-        await chrome.storage.session.remove('age_contacts').catch(() => {});
+        await browser.storage.session.remove('age_contacts').catch(() => {});
       }
       if (_epoch !== myEpoch) {
         // Superseded during the write; remove the stale identity from storage.
-        await chrome.storage.session.remove(SESSION_KEYS)
+        await browser.storage.session.remove(SESSION_KEYS)
           .catch(e => console.error('[age] UNLOCK post-RELOCK cleanup failed:', e?.message));
         sendResponse({ ok: false, error: 'superseded' });
         return;
@@ -248,7 +248,7 @@ function handleRelock(_msg, _sender, sendResponse) {
   
   // The epoch bump above additionally covers reads that already passed that
   // check and are waiting on their own .get() to resolve.
-  chrome.storage.session.remove(SESSION_KEYS)
+  browser.storage.session.remove(SESSION_KEYS)
     .catch(e => console.error('[age] RELOCK session clear failed:', e?.message));
   broadcastToTabs({ type: 'RELOCK' })
     .catch(e => console.error('[age] RELOCK broadcast failed:', e?.message));
@@ -260,7 +260,7 @@ function handleReloadDiscordTabs(_msg, _sender, sendResponse) {
   (async () => {
     try {
       const tabs = await getDiscordTabs();
-      for (const t of tabs) chrome.tabs.reload(t.id);
+      for (const t of tabs) browser.tabs.reload(t.id);
     } catch (e) {
       console.error('[age] RELOAD_DISCORD_TABS failed:', e?.message);
     }
@@ -287,18 +287,18 @@ function handleContactsUpdated(msg, _sender, sendResponse) {
       // cannot resurrect the data.
       const myEpoch = _epoch;
       try {
-        await chrome.storage.session.set({
+        await browser.storage.session.set({
           age_recipient: _ageRecipient,
           age_global_on: _globalOn,
         });
         try {
-          await chrome.storage.session.set({ age_contacts: _contacts });
+          await browser.storage.session.set({ age_contacts: _contacts });
         } catch (e) {
           console.warn('[age] CONTACTS_UPDATED: contacts mirror not stored in session:', e?.message);
-          await chrome.storage.session.remove('age_contacts').catch(() => {});
+          await browser.storage.session.remove('age_contacts').catch(() => {});
         }
         if (_epoch !== myEpoch) {
-          await chrome.storage.session.remove(SESSION_KEYS);
+          await browser.storage.session.remove(SESSION_KEYS);
         }
       } catch (e) {
         console.error('[age] CONTACTS_UPDATED session sync failed:', e?.message);
@@ -369,7 +369,7 @@ const handlers = {
 // Default-deny: each type requires a handler and a SENDER_POLICY entry.
 // Null-prototype tables prevent inherited keys such as "toString" and "__proto__".
 
-const POPUP_URL = chrome.runtime.getURL('popup/popup.html');
+const POPUP_URL = browser.runtime.getURL('popup/popup.html');
 const DISCORD_ORIGIN = 'https://discord.com';
 
 // Exact page match, ignoring query/hash. popup/import-helper.html is excluded.
@@ -396,7 +396,7 @@ const SENDER_POLICY = {
   REQUEST_UNLOCK:      isDiscordTopFrame,
 };
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const type = msg?.type;
   if (typeof type !== 'string') return false;
   const handler = handlers[type];
