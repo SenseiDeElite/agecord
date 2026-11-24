@@ -264,7 +264,7 @@ let _msgObserver2 = null; // second observer for the thread-panel ol in split vi
 // ─── Context invalidation ─────────────────────────────────────────────────────
 
 // Set when the extension context is invalidated.
-// Checked by observers/timers to avoid chrome.runtime calls after teardown.
+// Checked by observers/timers to avoid browser.runtime calls after teardown.
 let _contextInvalidated = false;
 
 function _signalContextInvalidated() {
@@ -295,7 +295,7 @@ function _signalContextInvalidated() {
 // Returns false and signals invalidation if the context is already dead.
 function isContextValid() {
   if (_contextInvalidated) return false;
-  if (!chrome.runtime?.id) { _signalContextInvalidated(); return false; }
+  if (!browser.runtime?.id) { _signalContextInvalidated(); return false; }
   return true;
 }
 
@@ -1044,7 +1044,7 @@ async function handleEncryptClick() {
   if (_sending) return;
   if (!canDecrypt()) return;
   // Bail immediately if the extension context has been invalidated (update/reload/disable).
-  // On-demand check so the send path never attempts chrome.runtime IPC against a dead context.
+  // On-demand check so the send path never attempts browser.runtime IPC against a dead context.
   if (!isContextValid()) return;
   // Set _sending before the first await so Enter presses during the ~500ms text-extraction
   // window are blocked — otherwise a second Enter would start a duplicate encrypt cycle.
@@ -2120,7 +2120,7 @@ function getFetchIframe() {
   const iframe = document.createElement('iframe');
   // One-time secret known only to this content script and the bridge document it loads.
   const secret = newRequestId();
-  iframe.src = chrome.runtime.getURL('content/cdn-bridge.html') + '#' + secret;
+  iframe.src = browser.runtime.getURL('content/cdn-bridge.html') + '#' + secret;
   iframe.style.cssText = 'display:none;';
   iframe.addEventListener('load', () => {
     if (_fetchIframe !== iframe || !iframe.contentWindow) return;
@@ -2228,12 +2228,12 @@ let   _mediaWorkerBusy = false;
 function _spawnWorker(pendingMap) {
   // Blob Worker bridges page-origin context to extension module via dynamic import.
   // Direct extension-origin Worker construction is blocked in content scripts.
-  const workerUrl = chrome.runtime.getURL('content/file-crypto-worker.js');
+  const workerUrl = browser.runtime.getURL('content/file-crypto-worker.js');
   // The worker cannot call runtime.getURL itself, and its relative imports would resolve to the
   // real (non-dynamic) extension URL, which is blocked with use_dynamic_url. Pass getURL() URLs in.
   const libUrls   = {
-    age:  chrome.runtime.getURL('lib/age.min.js'),
-    sign: chrome.runtime.getURL('lib/agecord-sign.min.js'),
+    age:  browser.runtime.getURL('lib/age.min.js'),
+    sign: browser.runtime.getURL('lib/agecord-sign.min.js'),
   };
   const shimSrc   = `self.__AGE_LIB_URLS=${JSON.stringify(libUrls)};import(${JSON.stringify(workerUrl)});`;
   const shimBlob  = new Blob([shimSrc], { type: 'application/javascript' });
@@ -2794,7 +2794,7 @@ function listenForMessages() {
   // The listener itself is synchronous and returns nothing: no response is
   // ever sent, so the channel closes immediately in every browser. The async
   // work runs in handleBackgroundMessage, whose failures are logged here.
-  chrome.runtime.onMessage.addListener((msg) => {
+  browser.runtime.onMessage.addListener((msg) => {
     handleBackgroundMessage(msg)
       .catch(e => console.error('[age] background message handler failed:', e?.message ?? e));
   });
@@ -2866,7 +2866,7 @@ function _awaitBootUnlock() {
 
 async function requestUnlock() {
   try {
-    const resp = await chrome.runtime.sendMessage({ type: 'REQUEST_UNLOCK' });
+    const resp = await browser.runtime.sendMessage({ type: 'REQUEST_UNLOCK' });
     if (resp?.ok) await applyUnlockPayload(resp);
   } catch (e) {
     console.info('[age] REQUEST_UNLOCK failed:', e?.message);
