@@ -40,27 +40,35 @@
 
   // ─── Draft panes (forum post / new thread) ─────────────────────────────────────
 
-  // Drafts lack a channel ID until posted, so pass them through unchanged; use only positive markers.
-  // Forum post: the composer form contains the channel list; targets outside <main> qualify.
-  // New thread: the composer form is inside <section> and contains Discord's NO_LIST___ starter preview.
-  // Never classify section[role=complementary] as a draft.
+  // Drafts have no channel ID until posted; leave them unchanged.
+  // New thread: a role-less <section> contains the NO_LIST___ preview, composer,
+  // popups, and drop overlay (overlay is outside the form).
+  // Forum post: composer/form are inside the forum list; drop overlay is its sibling.
+  // Never classify content under section[role="complementary"] as a draft.
   // KEEP IN SYNC with content/content.js.
 
   // DRAFT-GUARD-BEGIN
   const DRAFT_FORUM_SEL   = '[data-list-id^="forum-channel-list-"]';
-  const DRAFT_PREVIEW_SEL = '[data-list-item-id^="NO_LIST___"]';
+  // Slash-command autocomplete rows also carry a NO_LIST___<index> id (role="option",
+  // always inside a listbox) and can appear in a real thread pane: they must not count.
+  const DRAFT_PREVIEW_SEL = '[data-list-item-id^="NO_LIST___"]:not([role="option"])';
   const REAL_PANE_SEL     = 'section[role="complementary"]';
   function isDraftTarget(el) {
     if (!el?.closest) return false;
-    // New thread: the starter-message preview lives in the composer form.
-    if (el.closest('section form')?.querySelector(DRAFT_PREVIEW_SEL)) return true;
-    // Forum post composer form.
-    if (el.closest('form')?.querySelector(DRAFT_FORUM_SEL)) return true;
+    // New thread: the draft panel is a <section> holding the starter-message preview.
+    if (el.closest('section')?.querySelector(DRAFT_PREVIEW_SEL)) return true;
+    // Forum new post: the composer and its form sit inside the forum list.
+    if (el.closest(DRAFT_FORUM_SEL)) return true;
     // Real thread / forum-post side panes always have a channel id.
     if (el.closest(REAL_PANE_SEL)) return false;
-    // Anywhere else on a forum page (no <main>): drop zones and overlays are not
-    // inside the composer form, but the forum itself can never hold a message.
-    return !document.querySelector('main') && !!document.querySelector(DRAFT_FORUM_SEL);
+    // Forum page, outside the list (the new-post drop overlay is a sibling of the list):
+    // draft unless the nearest ancestor that contains the list also contains a real pane
+    // (then the target belongs to an open forum post, e.g. its drop overlay).
+    if (!document.querySelector(DRAFT_FORUM_SEL)) return false;
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      if (n.querySelector(DRAFT_FORUM_SEL)) return !n.querySelector(REAL_PANE_SEL);
+    }
+    return false;
   }
   // DRAFT-GUARD-END
 
@@ -422,9 +430,9 @@
       }
     }
 
-    if (composers.length > 0) return composers[0];
-    const nonEdit = all.find(el => !el.closest('li[id^="chat-messages-"]'));
-    return nonEdit ?? all[0] ?? null;
+    // Composers only: never the search bar or an inline edit box. null when the
+    // channel has no composer, so callers fail visibly instead of using a wrong editor.
+    return composers[0] ?? null;
   }
 
   // Resolves the active composer route at capture time; returns IDs together to avoid post-await route races.
