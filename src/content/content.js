@@ -313,26 +313,36 @@ function getMessageRoots() {
 
 // ─── Draft panes (forum post / new thread) ─────────────────────────────────────
 
-// A draft has no channel id until its first message exists, so it cannot be
-// signed for and is passed through to Discord untouched. Only POSITIVE markers
-// are used.
-// KEEP IN SYNC with content/upload-interceptor.js
+// Drafts lack a channel ID until their first message; pass them through unchanged.
+// New thread: role-less <section> contains the starter preview, composer, popups,
+// and drop overlay (overlay is outside the form).
+// Forum post: composer/form are inside the forum list; drop overlay is its sibling,
+// so classify per ancestor.
+// Never a draft: anything under section[role="complementary"] (thread/forum pane).
+// KEEP IN SYNC with content/upload-interceptor.js.
 
 // DRAFT-GUARD-BEGIN
 const DRAFT_FORUM_SEL   = '[data-list-id^="forum-channel-list-"]';
-const DRAFT_PREVIEW_SEL = '[data-list-item-id^="NO_LIST___"]';
+// Slash-command autocomplete rows also carry a NO_LIST___<index> id (role="option",
+// always inside a listbox) and can appear in a real thread pane: they must not count.
+const DRAFT_PREVIEW_SEL = '[data-list-item-id^="NO_LIST___"]:not([role="option"])';
 const REAL_PANE_SEL     = 'section[role="complementary"]';
 function isDraftTarget(el) {
   if (!el?.closest) return false;
-  // New thread: the starter-message preview lives in the composer form.
-  if (el.closest('section form')?.querySelector(DRAFT_PREVIEW_SEL)) return true;
-  // Forum post composer form.
-  if (el.closest('form')?.querySelector(DRAFT_FORUM_SEL)) return true;
+  // New thread: the draft panel is a <section> holding the starter-message preview.
+  if (el.closest('section')?.querySelector(DRAFT_PREVIEW_SEL)) return true;
+  // Forum new post: the composer and its form sit inside the forum list.
+  if (el.closest(DRAFT_FORUM_SEL)) return true;
   // Real thread / forum-post side panes always have a channel id.
   if (el.closest(REAL_PANE_SEL)) return false;
-  // Anywhere else on a forum page (no <main>): drop zones and overlays are not
-  // inside the composer form, but the forum itself can never hold a message.
-  return !document.querySelector('main') && !!document.querySelector(DRAFT_FORUM_SEL);
+  // Forum page, outside the list (the new-post drop overlay is a sibling of the list):
+  // draft unless the nearest ancestor that contains the list also contains a real pane
+  // (then the target belongs to an open forum post, e.g. its drop overlay).
+  if (!document.querySelector(DRAFT_FORUM_SEL)) return false;
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    if (n.querySelector(DRAFT_FORUM_SEL)) return !n.querySelector(REAL_PANE_SEL);
+  }
+  return false;
 }
 // DRAFT-GUARD-END
 
@@ -484,14 +494,12 @@ function resolveUploadGate(channelId, guildId) {
 
 // ─── Enter key interception ───────────────────────────────────────────────────
 
-// Returns all composer textboxes (1 normally, 2 in split view).
-// Editors inside chat-message lis (inline edit boxes) are excluded.
+// Returns all composer textboxes (1 normally, 2 in split view): Slate editors inside a
+// <form> and outside a message row. Other Slate editors (the search bar, inline message
+// edit) are never returned, so a channel without a composer (system DM) yields [].
 function getTextboxes() {
-  const all = [...document.querySelectorAll('[data-slate-editor="true"]')];
-  const composers = all.filter(el =>
+  return [...document.querySelectorAll('[data-slate-editor="true"]')].filter(el =>
     el.closest('form') && !el.closest('li[id^="chat-messages-"]'));
-  if (composers.length > 0) return composers;
-  return all.filter(el => !el.closest('li[id^="chat-messages-"]'));
 }
 
 // Closed over `tb` so split-view composers are independently hooked.
@@ -501,11 +509,11 @@ function _makeEnterHandler(tb) {
     // Enter confirming an IME candidate must reach Discord untouched: bail out
     // before any preventDefault/stopPropagation so the composition isn't swallowed.
     if (e.isComposing) return;
-    if (document.querySelector('[role="listbox"]')) return;
-    const focused = document.activeElement;
-    if (focused &&
-        (focused.closest('[class*="editContainer_"]') ||
-         focused.closest('[class*="messageEditorForm_"]'))) return;
+    // While an autocomplete popup (@mention, :emoji, #channel, /command) is open, Enter
+    // accepts the suggestion instead of sending. Discord renders the popup inside this
+    // composer's own <form>, so look only there: a listbox elsewhere (e.g. the search
+    // suggestions popout) must not make Enter fall through to a native plaintext send.
+    if (tb.closest('form')?.querySelector('[role="listbox"]')) return;
     const raw = tb.innerText?.trim() ?? '';
     if (!raw) return;
     // getSendChannelId() must be called synchronously — document.activeElement is
@@ -3141,11 +3149,15 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
   }
 }
 
-// Detects forwarded messages and avoids invalid attachment verification.
-// Shows a notice because original channel signing context may differ.
-function isForwardedAttachment(liElement) {
-  for (const el of liElement.querySelectorAll('[data-text-variant]')) {
-    if (el.textContent.trim() === 'Forwarded') return true;
+// Detect forwarded messages; attachment verification is invalid because the original
+// channel signing context may differ. Show a notice. Forwards structurally contain
+// the original message's "message-accessories-<id>" inside their own accessories.
+// Do not rely on the localised "Forwarded" header.
+const ACCESSORIES_SEL = '[id^="message-accessories-"]';
+function isForwardedAttachment(root) {
+  for (const inner of root.querySelectorAll(ACCESSORIES_SEL)) {
+    const outer = inner.parentElement?.closest(ACCESSORIES_SEL);
+    if (outer && root.contains(outer)) return true;
   }
   return false;
 }
@@ -3746,8 +3758,9 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
   if (insertAfter?.parentElement) {
     insertAfter.parentElement.insertBefore(wrapper, insertAfter.nextSibling);
   } else {
-    // Each <li> has exactly one [id^="message-content-"] for its own text —
-    // reply quotes do not get a message-content- id.
+    // The li's own text body is the first [id^="message-content-"] in DOM order. Reply
+    // references do not get one; a forwarded message has a second, same-id element
+    // inside its forward container, which comes later.
     const contentEl = liElement.querySelector('[id^="message-content-"]');
     if (contentEl?.parentElement) {
       contentEl.parentElement.insertBefore(wrapper, contentEl.nextSibling);
