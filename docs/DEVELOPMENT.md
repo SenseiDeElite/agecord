@@ -52,7 +52,69 @@ esbuild entry.js \
 
   To build a single library, name it (e.g. `./build-wasm.sh sign`). For each library the script compiles the crate, generates the entry file and bundles it into [`lib/`](https://github.com/SenseiDeElite/agecord/tree/main/src/lib).
 
-After finishing, move `age.min.js` (typage) to [lib/](https://github.com/SenseiDeElite/agecord/tree/main/src/lib). The `agecord-*.min.js` libraries are written there directly by the script.
+[**tlottie**](https://github.com/dkaraush/tlottie)
+
+*"Rust library for drawing Lottie animations"*
+
+1. Download [tlottie v1.0.6 source code](https://github.com/dkaraush/tlottie/releases/tag/v1.0.6).
+
+2. In `Cargo.toml`, replace the upstream `[profile.release]` with: 
+
+```toml
+[profile.release]
+opt-level = 3
+debug = false
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+```
+
+3. Build:
+
+```sh
+RUSTFLAGS="-C target-feature=+simd128" \
+cargo build --locked --target wasm32-unknown-unknown --release \
+  --no-default-features --features wasm,std
+```
+
+4. Optimize with wasm-opt:
+
+```sh
+wasm-opt \
+  --enable-bulk-memory \
+  --enable-simd \
+  --generate-global-effects \
+  -O4 \
+  --monomorphize \
+  --generate-global-effects \
+  -O4 \
+  --converge \
+  target/wasm32-unknown-unknown/release/tlottie.wasm -o tlottie.wasm
+```
+
+5. Bundle into a single JS module. tlottie has no JS glue, so create an `entry.js` next to `tlottie.wasm`:
+
+```js
+import wasmBytes from './tlottie.wasm';
+
+export const init = async () =>
+    (await WebAssembly.instantiate(wasmBytes, {})).instance.exports;
+```
+
+Then bundle it with esbuild:
+
+```sh
+esbuild entry.js \
+      --bundle \
+      --format=esm \
+      --minify \
+      --charset=utf8 \
+      --tree-shaking=true \
+      --loader:.wasm=binary \
+      --outfile=tlottie.min.js
+```
+
+After finishing, move `age.min.js` and `tlottie.min.js` to [lib/](https://github.com/SenseiDeElite/agecord/tree/main/src/lib). The `agecord-*.min.js` libraries are written there directly by the build script below.
 
 ### Packaging
 
