@@ -3092,6 +3092,8 @@ function showAbout() {
   const ver = browser.runtime.getManifest().version;
   document.getElementById('about-version').textContent = 'v' + ver;
   const logo = document.getElementById('about-logo');
+  logo.draggable = false;
+  logo.oncontextmenu = (e) => e.preventDefault();
   if (!logo.getAttribute('src')) logo.src = browser.runtime.getURL('assets/agecord-512.svg');
   show('about');
 }
