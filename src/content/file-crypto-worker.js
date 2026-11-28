@@ -4,7 +4,8 @@
  */
 
 // file-crypto-worker.js — Worker for file/text crypto: age encrypt/decrypt,
-// compression, and ML-DSA-87 signing and verification.
+// compression, and ML-DSA-87 signing and verification. Also hosts the tlottie
+// renderer for Lottie stickers (LOTTIE_* ops, loaded lazily on first use).
 
 // Format:
 // [version 1 B][signature sigLen B][hint hintLen B][age ciphertext]
@@ -18,12 +19,127 @@
 
 'use strict';
 
-const { age: ageUrl, sign: signUrl } = self.__AGE_LIB_URLS;
+const { age: ageUrl, sign: signUrl, tlottie: tlottieUrl } = self.__AGE_LIB_URLS;
 const { Encrypter, Decrypter } = await import(ageUrl);
 const { init, ml_dsa87_sign, ml_dsa87_verify, ml_dsa87_verifying_key_from_seed } =
   await import(signUrl);
 
 await init();
+
+// ─── Lottie (tlottie) ──────────────────────────────────────────────────────────
+
+// tlottie is bare WASM (no JS glue), instantiated lazily because most workers
+// never render stickers and compilation is expensive.
+
+// Linear memory: any export may grow memory and detach prior buffer views.
+// Create views from tl.memory.buffer immediately before use; never retain them.
+// The render buffer is instance-owned and overwritten by the next render, so
+// copy it immediately with .slice() before returning.
+// WASM32 usize pointers arrive as signed i32; normalise with >>> 0.
+// tlottie_new/tlottie_render* returning null is fatal: drop the instance so its
+// handle becomes invalid and later requests fail as "unknown instance".
+
+// Lottie JSON comes from Discord's CDN in a size-limited encrypted text message;
+// tlottie enforces parse limits and returns null, so no extra size/complexity gate.
+// Width, height, and frame count come from tlottie.
+const LOTTIE_MAX_INSTANCES = 64;
+
+let _tlPromise = null;
+let _tl = null;                       // the exports, once instantiated (lets lottieDrop stay synchronous)
+const _lottie = new Map();            // handle -> { inst, width, height, frameCount, frameRate }
+let _lottieNextHandle = 1;
+
+function loadTlottie() {
+  if (typeof tlottieUrl !== 'string') return Promise.reject(new Error('tlottie library URL missing'));
+  _tlPromise ??= import(tlottieUrl)
+    .then(({ init }) => init())
+    .then((tl) => (_tl = tl))
+    .catch((e) => { _tlPromise = null; throw e; });
+  return _tlPromise;
+}
+
+// Frees the wasm instance and forgets the handle. Safe on unknown/duplicate handles.
+function lottieDrop(handle) {
+  const entry = _lottie.get(handle);
+  if (!entry) return;
+  _lottie.delete(handle);
+  _tl?.tlottie_drop(entry.inst);   // the module is necessarily loaded: an entry only exists after a successful tlottie_new
+}
+
+// Parses the JSON and registers an instance. Returns { handle, width, height, frameCount, frameRate }.
+async function lottieOpen(buffer) {
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0)
+    throw new Error('LOTTIE_OPEN: buffer must be a non-empty transferred ArrayBuffer');
+  if (_lottie.size >= LOTTIE_MAX_INSTANCES)
+    throw new Error('LOTTIE_OPEN: too many open instances');
+
+  const tl  = await loadTlottie();
+  const len = buffer.byteLength;
+  const ptr = tl.tlottie_alloc(len) >>> 0;
+  if (!ptr) throw new Error('LOTTIE_OPEN: tlottie_alloc failed');
+
+  let inst = 0;
+  try {
+    // Fresh view AFTER the alloc call (it may have grown the memory).
+    new Uint8Array(tl.memory.buffer, ptr, len).set(new Uint8Array(buffer));
+    inst = tl.tlottie_new(ptr, len) >>> 0;
+  } finally {
+    tl.tlottie_free(ptr, len);   // tlottie_new copies what it needs; the input is never kept
+  }
+  if (!inst) throw new Error('LOTTIE_OPEN: tlottie_new returned null');
+
+  const width      = tl.tlottie_width(inst);
+  const height     = tl.tlottie_height(inst);
+  const frameCount = tl.tlottie_frame_count(inst);
+  const frameRate  = tl.tlottie_frame_rate(inst);
+  if (!(width > 0 && height > 0 && frameCount > 0 && Number.isFinite(frameRate) && frameRate > 0)) {
+    tl.tlottie_drop(inst);
+    throw new Error('LOTTIE_OPEN: animation has no usable size, frames or frame rate');
+  }
+
+  const handle = _lottieNextHandle++;
+  _lottie.set(handle, { inst, width, height, frameCount, frameRate });
+  return { handle, width, height, frameCount, frameRate };
+}
+
+// Renders one frame and returns its straight-alpha RGBA bytes as an ArrayBuffer the caller owns.
+// `recycle`: an ArrayBuffer of exactly width*height*4 bytes that the caller transferred back
+// from a previous frame; the copy lands in it, so steady-state playback allocates nothing per frame.
+async function lottieRender({ handle, frame, width, height, recycle }) {
+  const entry = _lottie.get(handle);
+  if (!entry) throw new Error('LOTTIE_FRAME: unknown instance');
+  // tlottie takes u32 sizes; anything else would wrap silently at the wasm boundary.
+  if (!Number.isInteger(width) || !Number.isInteger(height) ||
+      width < 1 || height < 1 || width > 0xFFFFFFFF || height > 0xFFFFFFFF)
+    throw new Error('LOTTIE_FRAME: bad render size');
+  if (typeof frame !== 'number' || !Number.isFinite(frame))
+    throw new Error('LOTTIE_FRAME: bad frame');
+
+  const tl = await loadTlottie();
+  // The instance may have been closed while the module was loading (or by a concurrent failure).
+  if (_lottie.get(handle) !== entry) throw new Error('LOTTIE_FRAME: unknown instance');
+
+  const f = Math.min(Math.max(frame, 0), entry.frameCount - 1);
+  const ptr = tl.tlottie_render(entry.inst, f, width, height, 1) >>> 0;   // antialias on
+  if (!ptr) {
+    lottieDrop(handle);
+    throw new Error('LOTTIE_FRAME: tlottie_render returned null');
+  }
+
+  const bytes = width * height * 4;
+  const mem = tl.memory.buffer;                       // re-derived: never cached across calls
+  if (ptr + bytes > mem.byteLength) {                  // cannot happen with a sound module; do not read OOB views
+    lottieDrop(handle);
+    throw new Error('LOTTIE_FRAME: render pointer out of range');
+  }
+  // Copy out of linear memory immediately; the instance overwrites this buffer on the next render.
+  const src = new Uint8Array(mem, ptr, bytes);
+  if (recycle instanceof ArrayBuffer && recycle.byteLength === bytes) {
+    new Uint8Array(recycle).set(src);
+    return recycle;
+  }
+  return src.slice().buffer;
+}
 
 // ─── Compression helpers ───────────────────────────────────────────────────────
 
@@ -367,6 +483,25 @@ self.onmessage = async ({ data }) => {
         result.plainBytes.fill(0);
       }
       self.postMessage({ op: resultOp, id, sigValid: true, plaintext });
+      return;
+    }
+
+    // Lottie stickers. The JSON arrives as a transferred ArrayBuffer; frames leave as transferred
+    // RGBA copies. LOTTIE_CLOSE is fire-and-forget (no `id`).
+    if (op === 'LOTTIE_OPEN') {
+      const info = await lottieOpen(data.buffer);
+      self.postMessage({ op: 'LOTTIE_OPEN_RESULT', id, ...info });
+      return;
+    }
+
+    if (op === 'LOTTIE_FRAME') {
+      const buffer = await lottieRender(data);
+      self.postMessage({ op: 'LOTTIE_FRAME_RESULT', id, width: data.width, height: data.height, buffer }, [buffer]);
+      return;
+    }
+
+    if (op === 'LOTTIE_CLOSE') {
+      if (Number.isInteger(data.handle)) lottieDrop(data.handle);
       return;
     }
 
