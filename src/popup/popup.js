@@ -1590,7 +1590,7 @@ function validateRecipientDeep(recipient, fieldId) {
     return err('The age1pq1… part is not a valid key (checksum or length mismatch) — check that it was copied correctly.');
   }
   const dsa = parts[1].slice('mldsa87:'.length);
-  let ok = false;
+  let ok;
   // Standard: RFC 4648 §4, base64 alphabet and "=" padding
   try { ok = dsa.length === DSA_B64_LEN && /^[A-Za-z0-9+/]+$/.test(dsa) && fromB64(dsa).length === DSA_KEY_LEN; }
   catch { ok = false; }
