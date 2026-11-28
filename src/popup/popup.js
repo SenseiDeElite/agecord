@@ -75,7 +75,7 @@ const store = {
 // Writes reuse the background-held key, avoiding re-prompts.
 
 // _contacts is the unlocked in-memory source of truth. The key (never the passphrase)
-// is cached in storage.session (age_contacts_key) so popup/background saves can resume.
+// is cached in storage.session (agecord_contacts_key) so popup/background saves can resume.
 
 // Serialize saveContacts() to preserve encryption/write order and prevent stale overwrites.
 let _saveContactsChain = Promise.resolve();
@@ -87,7 +87,7 @@ function saveContacts(contacts) {
       await saveContactsImpl(contacts);
       return true;
     } catch (e) {
-      console.error('[age] saveContacts failed:', e?.message);
+      console.error('[agecord] saveContacts failed:', e?.message);
       showToast(e?.message === 'CONTACTS_SALT_INVALID'
         ? 'Contacts not saved: the stored salt is missing or damaged'
         : 'Not saved to disk - your changes will be lost when the browser closes', true);
@@ -139,19 +139,19 @@ async function loadContacts() {
       await setSessionContacts(parsed);
       return parsed;
     } catch (e) {
-      console.warn('[age] loadContacts: local decrypt failed:', e?.message);
+      console.warn('[agecord] loadContacts: local decrypt failed:', e?.message);
     }
   }
 
   // Fall back to the session-cached contacts.
   try {
-    const s = await browser.storage.session.get('age_contacts');
-    if (s.age_contacts && typeof s.age_contacts === 'object') {
-      return s.age_contacts;
+    const s = await browser.storage.session.get('agecord_contacts');
+    if (s.agecord_contacts && typeof s.agecord_contacts === 'object') {
+      return s.agecord_contacts;
     }
   } catch {}
 
-  console.warn('[age] loadContacts: no contacts key available and no session fallback.');
+  console.warn('[agecord] loadContacts: no contacts key available and no session fallback.');
   return {};
 }
 
@@ -186,14 +186,14 @@ async function selfRecipientFor(identity) {
   return value;
 }
 
-// Relays contacts + ageRecipient; content scripts cannot access session storage.
+// Relays contacts + agecordRecipient; content scripts cannot access session storage.
 // bgUnlock derives the Argon2id key unless supplied, then broadcasts identity + contacts.
 
 // refreshContacts defaults false; only doUnlock() reloads storage. Other callers use authoritative
 // in-memory _contacts, which may contain unsaved or intentionally reset edits.
 // opts.contactsKeyB64 supplies an already-derived key and skips Argon2id.
 async function bgUnlock(identity, passphrase, { refreshContacts = false, contactsKeyB64: givenKey = null } = {}) {
-  const ageRecipient = await selfRecipientFor(identity);
+  const agecordRecipient = await selfRecipientFor(identity);
   const globalOn     = await readGlobalOn();
   _globalOn = globalOn;
   let contactsKeyB64 = givenKey;
@@ -212,19 +212,19 @@ async function bgUnlock(identity, passphrase, { refreshContacts = false, contact
       }
     } catch (e) {
       // Leave _contacts unchanged; showMain() retries local decryption when needed.
-      console.warn('[age] bgUnlock: could not derive/decrypt contacts locally:', e?.message);
+      console.warn('[agecord] bgUnlock: could not derive/decrypt contacts locally:', e?.message);
       if (e?.message === 'CONTACTS_SALT_INVALID')
         showToast('Contacts cannot be read: the stored salt is missing or damaged', true);
     }
   }
-  return bgSend({ type: 'UNLOCK', identity, contactsKeyB64, contacts: _contacts, ageRecipient, globalOn });
+  return bgSend({ type: 'UNLOCK', identity, contactsKeyB64, contacts: _contacts, agecordRecipient, globalOn });
 }
 
 // Passes an existing contacts key (read from storage.session) to the background.
 async function bgUnlockWithKey(identity, contactsKeyB64) {
-  const ageRecipient = await selfRecipientFor(identity);
+  const agecordRecipient = await selfRecipientFor(identity);
   const globalOn     = await readGlobalOn();
-  return bgSend({ type: 'UNLOCK', identity, contactsKeyB64, contacts: _contacts, ageRecipient, globalOn });
+  return bgSend({ type: 'UNLOCK', identity, contactsKeyB64, contacts: _contacts, agecordRecipient, globalOn });
 }
 
 // bgUnlockResume: restores identity + contacts after service-worker loss.
@@ -258,7 +258,7 @@ async function withSaveButton(btn, savingLabel, fn) {
   try {
     await fn();
   } catch (e) {
-    console.error('[age] save failed:', e?.message);
+    console.error('[agecord] save failed:', e?.message);
     showToast(e?.message || 'Not saved', true);
   } finally {
     btn.disabled    = originalDisabled;
@@ -268,9 +268,9 @@ async function withSaveButton(btn, savingLabel, fn) {
 
 async function bgContactsUpdated() {
   const identity     = _sessionIdentity ?? await getSessionIdentity();
-  const ageRecipient = identity ? await selfRecipientFor(identity) : null;
+  const agecordRecipient = identity ? await selfRecipientFor(identity) : null;
   const globalOn     = await readGlobalOn();
-  return bgSend({ type: 'CONTACTS_UPDATED', contacts: _contacts, ageRecipient, globalOn });
+  return bgSend({ type: 'CONTACTS_UPDATED', contacts: _contacts, agecordRecipient, globalOn });
 }
 
 // contactsByChannelId → Map<channelId, entry>, used for duplicate-channelId enforcement.
@@ -547,37 +547,37 @@ const SERVER_IDS_EDIT  = { id: 'edit-server-id-input',       name: 'edit-server-
 
 async function getSessionIdentity() {
   try {
-    const r = await browser.storage.session.get(['age_unlocked', 'age_identity']);
-    return r.age_unlocked === true ? (r.age_identity ?? null) : null;
+    const r = await browser.storage.session.get(['agecord_unlocked', 'agecord_identity']);
+    return r.agecord_unlocked === true ? (r.agecord_identity ?? null) : null;
   } catch {}
   return null;
 }
 
 async function setSession(identity) {
   try {
-    await browser.storage.session.set({ age_unlocked: true, age_identity: identity });
+    await browser.storage.session.set({ agecord_unlocked: true, agecord_identity: identity });
   } catch {}
 }
 
 // Persisted so the background can recover after a SW restart without waiting for UNLOCK.
 async function setSessionRecipient(recipient) {
   try {
-    if (recipient) await browser.storage.session.set({ age_recipient: recipient });
+    if (recipient) await browser.storage.session.set({ agecord_recipient: recipient });
   } catch {}
 }
 
 // Persisted so the background can recover contacts after a SW restart without waiting for UNLOCK.
 async function setSessionContacts(contacts) {
   try {
-    await browser.storage.session.set({ age_contacts: contacts });
+    await browser.storage.session.set({ agecord_contacts: contacts });
   } catch {}
 }
 
 async function clearSession() {
   try {
     await browser.storage.session.remove(
-      ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient',
-       'age_contacts_key', 'age_global_on', 'pending_unlock']);
+      ['agecord_unlocked', 'agecord_identity', 'agecord_contacts', 'agecord_recipient',
+       'agecord_contacts_key', 'agecord_global_on', 'pending_unlock']);
   } catch {}
 }
 
@@ -585,8 +585,8 @@ async function clearSession() {
 // the popup is a trusted context and may read it. No passphrase is cached.
 async function getSessionContactsKey() {
   try {
-    const r = await browser.storage.session.get('age_contacts_key');
-    return typeof r.age_contacts_key === 'string' && r.age_contacts_key ? r.age_contacts_key : null;
+    const r = await browser.storage.session.get('agecord_contacts_key');
+    return typeof r.agecord_contacts_key === 'string' && r.agecord_contacts_key ? r.agecord_contacts_key : null;
   } catch {}
   return null;
 }
@@ -793,9 +793,9 @@ async function boot() {
     // Seed contacts from session storage so the list renders instantly on reopen,
     // before the background has re-established the contacts key.
     try {
-      const s = await browser.storage.session.get('age_contacts');
-      if (s.age_contacts && typeof s.age_contacts === 'object')
-        _contacts = s.age_contacts;
+      const s = await browser.storage.session.get('agecord_contacts');
+      if (s.agecord_contacts && typeof s.agecord_contacts === 'object')
+        _contacts = s.agecord_contacts;
     } catch {}
 
      // showMain() renders immediately; contact load/broadcast completes async.
@@ -806,7 +806,7 @@ async function boot() {
     // Re-sync with the background in parallel; showMain's own loadContacts()
     // call will refresh the list once the key is available.
     bgUnlockResume(identity).catch(e =>
-      console.warn('[age] bgUnlockResume failed:', e?.message));
+      console.warn('[agecord] bgUnlockResume failed:', e?.message));
   } else {
     // Handles popup dismissal during unlock.
     // Clears stale partial session data from racing doUnlock().
@@ -1522,7 +1522,7 @@ async function showMain() {
     try {
       _contacts = await loadContacts();
     } catch (e) {
-      console.warn('[age] showMain: loadContacts failed:', e?.message);
+      console.warn('[agecord] showMain: loadContacts failed:', e?.message);
     }
   }
   renderContacts(); // re-render with the now-populated contacts list
@@ -2622,7 +2622,7 @@ async function doImportContacts(json) {
       await ensureContactsKey();
       saved = await saveContacts(next);
     } catch (e) {
-      console.error('[age] import: could not save:', e?.message);
+      console.error('[agecord] import: could not save:', e?.message);
     }
     if (!saved) {
       await setSessionContacts(_contacts);   // undo the session copy; memory was never changed
@@ -2680,7 +2680,7 @@ async function checkPendingImport() {
     await browser.storage.session.remove(['pending_import', 'pending_import_tab']);
     await doImportContacts(data.pending_import);
   } catch (e) {
-    console.error('[age] checkPendingImport failed:', e?.message);
+    console.error('[agecord] checkPendingImport failed:', e?.message);
     showImportResult(false, 'Import failed: ' + (e?.message || 'unknown error'));
   }
 }
@@ -2706,18 +2706,18 @@ async function myRecipient() {
 }
 
 async function showMyKey() {
-  const ageRecipient = await myRecipient();
-  if (!ageRecipient) return;
-  document.getElementById('my-key-box').textContent = ageRecipient;
+  const agecordRecipient = await myRecipient();
+  if (!agecordRecipient) return;
+  document.getElementById('my-key-box').textContent = agecordRecipient;
   renderFingerprint(document.getElementById('my-key-fp'), 'Computing fingerprint…');
   show('my-key');
-  renderFingerprint(document.getElementById('my-key-fp'), await keyFingerprint(ageRecipient));
+  renderFingerprint(document.getElementById('my-key-fp'), await keyFingerprint(agecordRecipient));
 }
 
 document.getElementById('btn-copy-key').addEventListener('click', async () => {
-  const ageRecipient = await myRecipient();
-  if (!ageRecipient) return;
-  await navigator.clipboard.writeText(ageRecipient);
+  const agecordRecipient = await myRecipient();
+  if (!agecordRecipient) return;
+  await navigator.clipboard.writeText(agecordRecipient);
   const btn   = document.getElementById('btn-copy-key');
   const label = document.getElementById('btn-copy-key-label');
   btn.classList.add('copied');
@@ -3056,8 +3056,8 @@ async function deriveSelfRecipient(identityBlob) {
   await cryptoReady;
   const lines = identityBlob.split('\n');
   if (!lines[1]?.startsWith('mldsa87seed:')) throw new Error('Identity has no ML-DSA-87 seed.');
-  const ageRecipient = await identityToRecipient(lines[0]);
-  return ageRecipient + ';mldsa87:' + mldsaPubB64FromSeedLine(lines[1]);
+  const agecordRecipient = await identityToRecipient(lines[0]);
+  return agecordRecipient + ';mldsa87:' + mldsaPubB64FromSeedLine(lines[1]);
 }
 
 async function keyFingerprint(recipient) {
@@ -3132,4 +3132,4 @@ async function bootWithDraftCheck() {
   await checkPendingImport();
 }
 
-bootWithDraftCheck().catch(e => console.error('[age] popup boot error:', e));
+bootWithDraftCheck().catch(e => console.error('[agecord] popup boot error:', e));
