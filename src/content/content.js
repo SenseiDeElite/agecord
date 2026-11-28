@@ -164,10 +164,12 @@ function _splitAttachId(attachId) {
 
 // The only place a cache entry is dropped. Media entries are { url, type,
 // originalName } and own a blob: URL that must be revoked; text entries are a
-// plain plaintext string and own nothing.
+// plain plaintext string and own nothing, except the Lottie players (tlottie
+// instances in the text worker) rendered from them.
 function _releaseEntry(attachId) {
   const cached = _decryptedCache.get(attachId);
   if (cached && typeof cached === 'object' && cached.url) URL.revokeObjectURL(cached.url);
+  _disposeLottieSlot(attachId);   // Lottie stickers rendered from this entry own a worker instance
   _decryptedCache.delete(attachId);
   _processedIds.delete(attachId);
 }
@@ -203,6 +205,7 @@ function _wipeAttachmentState({ includeCache = true, workers = null } = {}) {
     if (includeCache) {
       _revealedAttachments.clear();
       for (const id of [..._decryptedCache.keys()]) _releaseEntry(id);
+      _disposeAllLottie();   // also any player whose entry was never cached
       _processedIds.clear();
     }
   }
@@ -404,7 +407,7 @@ const CHAT_PANE_SEL = 'main, section[role="complementary"]';
 // ("...-<channelId>-<channelId>") keeps empty channels resolvable.
 // The pane normally shows the URL's thread/voice channel; differs only
 // for stale pane state (e.g. an open thread after navigating elsewhere).
-// null if the list is not rendered. 
+// null if the list is not rendered.
 // KEEP IN SYNC with upload-interceptor.js
 const PANE_MESSAGE_ID_RE = /^chat-messages-(\d{17,20})-\d{17,20}$/;
 function paneChannelId(pane) {
@@ -566,6 +569,10 @@ function _outsideEnterGuard(e) {
 function attachEnterHook() {
   // Idempotent: the same listener + capture flag is only ever registered once.
   window.addEventListener('keydown', _outsideEnterGuard, { capture: true });
+  window.addEventListener('click',   _onStickerClick, { capture: true });
+  window.addEventListener('keydown', _onStickerKey,   { capture: true });
+  window.addEventListener('pointerdown', _trackComposer, { capture: true, passive: true });
+  window.addEventListener('focusin',     _trackComposer, { capture: true, passive: true });
   for (const tb of getTextboxes()) {
     if (tb._ageKeyHandler) continue;
     tb._ageKeyHandler = _makeEnterHandler(tb);
@@ -575,6 +582,11 @@ function attachEnterHook() {
 
 function detachEnterHook() {
   window.removeEventListener('keydown', _outsideEnterGuard, { capture: true });
+  window.removeEventListener('click',   _onStickerClick, { capture: true });
+  window.removeEventListener('keydown', _onStickerKey,   { capture: true });
+  window.removeEventListener('pointerdown', _trackComposer, { capture: true });
+  window.removeEventListener('focusin',     _trackComposer, { capture: true });
+  _lastComposer = null;
   for (const tb of getTextboxes()) {
     if (tb._ageKeyHandler) {
       tb.removeEventListener('keydown', tb._ageKeyHandler, { capture: true });
@@ -588,6 +600,135 @@ function detachEnterHook() {
       delete tb._ageKeyHandler;
     }
   });
+}
+
+// ─── Sticker click interception ───────────────────────────────────────────────
+
+// Discord sends clicked stickers as native sticker_ids messages, bypassing our encryption.
+// While channel encryption is active, swallow the click and replace the composer with
+// the sticker's canonical URL; Enter then encrypts it as normal text.
+
+// Sticker DOM cells, <img>/<canvas>, and "Send a wave" carry data-type="sticker",
+// data-id, data-name, and data-format-type. Class names are hashed and ignored.
+// format-type: 1 PNG, 2 APNG, 3 Lottie, 4 GIF; raster formats use .png/.gif.
+// Lottie uses Discord's canonical /stickers/<id>.json URL and is rendered by tlottie
+// in the text worker, never as an <img>.
+const _STICKER_EXT_BY_FORMAT = { 1: 'png', 2: 'png', 3: 'json', 4: 'gif' };
+const _STICKER_ATTR_SEL = '[data-type="sticker"][data-id]';
+const _STICKER_PICKER_SEL = '#sticker-picker-grid';
+
+// The element carrying the sticker's data-* attributes for this event target, or null when the
+// target is not a sticker we should intercept. Scope is deliberate: stickers already rendered in the
+// message list (li[id^="chat-messages-"]) also carry data-type="sticker" and must keep working.
+function _stickerElFromTarget(target, key) {
+  if (!(target instanceof Element)) return null;
+
+  // Picker search box: Enter sends the highlighted cell (aria-activedescendant).
+  if (key && target.matches('input[aria-controls="sticker-picker-grid"]')) {
+    if (key !== 'Enter') return null;
+    const cell = document.getElementById(target.getAttribute('aria-activedescendant') ?? '');
+    return cell?.querySelector(_STICKER_ATTR_SEL) ?? null;
+  }
+
+  // Picker: only real grid cells (the sticker div, its <img>/<canvas>, or the cell's padding).
+  // Pack header icons ("Frequently Used", server packs) also carry data-type="sticker" but sit
+  // outside any gridcell; they must keep their native collapse/expand behavior.
+  if (target.closest(_STICKER_PICKER_SEL)) {
+    return target.closest('[role="gridcell"]')?.querySelector(_STICKER_ATTR_SEL) ?? null;
+  }
+
+  // "Send a wave" / first-message button: a role=button, outside any message row, wrapping the sticker.
+  const btn = target.closest('[role="button"]');
+  if (!btn || btn.closest('li[id^="chat-messages-"]') || btn.closest('[role="dialog"]')) return null;
+  return btn.querySelector(_STICKER_ATTR_SEL);
+}
+
+function _stickerFromEl(el) {
+  const stickerId = el.dataset.id ?? '';
+  const name      = el.dataset.name ?? '';
+  const ext       = _STICKER_EXT_BY_FORMAT[Number(el.dataset.formatType)];
+  if (!/^\d{17,20}$/.test(stickerId) || !ext || !name || name.length > STICKER_NAME_MAX) return null;
+  return { stickerId, ext, name };
+}
+
+// The popout trigger (Add Emoji / Open sticker picker) that currently has the picker open:
+// the expanded button inside the owning composer's form. aria-expanded is an ARIA attribute,
+// so this needs no hashed class names and no localized labels.
+function _expandedTrigger(tb) {
+  return tb.closest('form')?.querySelector('[aria-expanded="true"]') ?? null;
+}
+
+// Composer the user last pressed or focused inside. The picker can only be opened from a composer's
+// own form, so this breaks ties when no trigger button shows an expanded state.
+let _lastComposer = null;
+function _trackComposer(e) {
+  const form = e.target instanceof Element ? e.target.closest('form') : null;
+  if (!form) return;
+  const tb = getTextboxes().find(x => x.closest('form') === form);
+  if (tb) _lastComposer = tb;
+}
+
+// Returns the composer owning a sticker click. The picker is portaled, so resolve
+// ownership via its expanded trigger; "Send a wave" belongs to its pane's composer.
+// Required to distinguish draft composers (forum/thread) from real composers on
+// the same page. null = no composer (channel has none).
+function _stickerOwnerComposer(stickerEl) {
+  const tbs = getTextboxes();
+  if (!tbs.length) return null;
+  if (!stickerEl.closest(_STICKER_PICKER_SEL)) {
+    const pane = stickerEl.closest(CHAT_PANE_SEL);
+    const inPane = pane ? tbs.find(tb => pane.contains(tb)) : null;
+    if (inPane) return inPane;
+  }
+  const open = tbs.filter(tb => _expandedTrigger(tb));
+  if (open.length) return open[0];
+  if (tbs.length === 1) return tbs[0];
+  if (_lastComposer && tbs.includes(_lastComposer)) return _lastComposer;
+  // Ambiguous (several composers, no open trigger): prefer a real composer; a draft never encrypts.
+  return tbs.find(tb => !isDraftTarget(tb)) ?? null;
+}
+
+function _handleStickerEvent(e, key) {
+  if (!e.isTrusted) return;
+  const el = _stickerElFromTarget(e.target, key);
+  if (!el) return;
+  const tb = _stickerOwnerComposer(el);
+  if (!tb) return;
+  // Gate exactly like Enter, evaluated for the OWNING composer. getSendChannelId(tb) is null for
+  // drafts (new forum post / new thread: no channel exists yet), and then the sticker is left to
+  // Discord untouched, unencrypted, exactly as a first message is today.
+  const channelId = getSendChannelId(tb);
+  if (!channelId || !isEncryptionActive(channelId, getCurrentServerId())) return;
+
+  // From here the native send MUST NOT happen, even if we cannot build a URL: it would be plaintext.
+  e.preventDefault();
+  e.stopImmediatePropagation();
+
+  const sticker = _stickerFromEl(el);
+  if (!sticker) {
+    console.info('[age] Sticker not sent: unsupported sticker type.');
+    return;
+  }
+  // Discord closes the picker after a send; we swallowed that, so close it ourselves (before the
+  // insert, so the page-world focus() below is the last focus change).
+  try { _expandedTrigger(tb)?.click(); } catch {}
+  // One-time token marks the exact composer for the page world (it cannot see our module state).
+  const token = newRequestId();
+  tb.dataset.ageStickerTarget = token;
+  setTimeout(() => { if (tb.dataset.ageStickerTarget === token) delete tb.dataset.ageStickerTarget; }, 1000);
+  window.postMessage({
+    type: 'AGE_REPLACE_COMPOSER_TEXT',
+    token,
+    text: buildStickerUrl(sticker.stickerId, sticker.ext, sticker.name),
+  }, PAGE_ORIGIN);
+}
+
+function _onStickerClick(e) { _handleStickerEvent(e, null); }
+function _onStickerKey(e) {
+  if (e.isComposing || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.key === 'Enter' || (e.key === ' ' && !(e.target instanceof HTMLInputElement))) {
+    _handleStickerEvent(e, e.key);
+  }
 }
 
 // ─── Crypto helpers ───────────────────────────────────────────────────────────
@@ -827,6 +968,14 @@ function _clearRelTimestampsIn(root) {
     const entry = _relTimestampEls.get(t);
     if (entry) { clearTimeout(entry.timer); _relTimestampEls.delete(t); }
   });
+}
+
+// The one way a rendered message wrapper leaves the DOM: stops its live timestamps and frees any
+// Lottie players inside it, then removes it.
+function _discardMsgWrapper(el) {
+  _clearRelTimestampsIn(el);
+  _disposeLottieIn(el);
+  el.remove();
 }
 
 // ─── Send ─────────────────────────────────────────────────────────────────────
@@ -1289,7 +1438,7 @@ function showQuotedPlaceholder(container, reason) {
   }
   if (!hasAgeFile) return;
   container.querySelectorAll('[data-age-msg], [data-age-msg-slot], [data-age-attachment]')
-    .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+    .forEach(el => { _discardMsgWrapper(el); });
   const text = reason === 'disabled' ? _status('Decryption disabled.', 'lock-open') : _status('Extension locked.', 'lock');
   renderDecryptedMessage(container, text, undefined, lastAnchor);
 }
@@ -1370,19 +1519,53 @@ function decodeDiscordName(rawName) {
   return String(rawName);
 }
 function encodeDiscordName(name) {
-  return encodeURIComponent(name).replace(/%20/g, '+');
+  // encodeURIComponent leaves ! ' ( ) * raw; parentheses would break the [label](url) and bare-URL
+  // tokenizers, so they are escaped too. searchParams decodes them back to the original name.
+  return encodeURIComponent(name).replace(/%20/g, '+')
+    .replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
 // ── Sticker URL parsing ───────────────────────────────────────────────────────
 
-// Parses Discord sticker URLs; returns id, extension, and optional decoded name.
-// Validates id/extension and safely decodes name parameters.
+// Canonical sticker URL; only accepted/rendered shape:
+// https://media.discordapp.net/stickers/<id>.<ext>?size=160&name=<name>&lossless=true
+// Require size, name, and lossless=true in that order. lossless=true must be last,
+// so URLs truncated by MAX_INLINE_MESSAGE_CHARS cannot pass validation or trigger fetches.
 const STICKER_URL_PATTERN = new URLPattern({
   protocol: 'https',
   hostname: 'media.discordapp.net',
   pathname: '/stickers/:stickerId(\\d+).:ext([a-zA-Z0-9]+)',
 });
+// name = one or more of: plain chars, or complete %XX escapes. A dangling '%' or '%C' is rejected.
+const STICKER_QUERY_RE = /^\?size=160&name=((?:[^%&\s]|%[0-9A-Fa-f]{2})+)&lossless=true$/;
+const STICKER_NAME_MAX = 100;
+
+// Lottie stickers use a different host and a bare URL: no size/name/lossless query, nothing but the id.
+// https://cdn.discordapp.com/stickers/<id>.json
+// The name is not part of the URL, so a parsed Lottie sticker gets a fixed accessible label.
+const LOTTIE_URL_PATTERN = new URLPattern({
+  protocol: 'https',
+  hostname: 'cdn.discordapp.com',
+  pathname: '/stickers/:stickerId(\\d{17,20}).json',
+});
+const LOTTIE_URL_RE = /^https:\/\/cdn\.discordapp\.com\/stickers\/\d{17,20}\.json$/;   // KEEP IN SYNC (cdn-bridge.js)
+const LOTTIE_STICKER_LABEL = 'Sticker';
+
+// Returns { stickerId, ext, decodedName, lottie? } or null. decodedName is never null.
+// Lottie results carry lottie:true and ext:'json'.
 function parseStickerUrl(url) {
+  return _parseLottieStickerUrl(url) ?? _parseImageStickerUrl(url);
+}
+
+function _parseLottieStickerUrl(url) {
+  if (!LOTTIE_URL_RE.test(url)) return null;     // exact canonical shape: also rejects any query/fragment/port/userinfo
+  let match;
+  try { match = LOTTIE_URL_PATTERN.exec(url); } catch { return null; }
+  if (!match) return null;
+  return { stickerId: match.pathname.groups.stickerId, ext: 'json', decodedName: LOTTIE_STICKER_LABEL, lottie: true };
+}
+
+function _parseImageStickerUrl(url) {
   let match;
   try { match = STICKER_URL_PATTERN.exec(url); } catch { return null; }
   if (!match) return null;
@@ -1390,33 +1573,100 @@ function parseStickerUrl(url) {
   const ext = rawExt.toLowerCase();
   if (!RENDERABLE_IMAGE.has(ext)) return null;
   const parsed = URL.parse(url);
-  if (!parsed) return null;
-  const rawName = parsed.searchParams.get('name');
-  if (rawName === null) return { stickerId, ext, decodedName: null };
-  try {
-    const decodedName = decodeDiscordName(rawName);
-    return { stickerId, ext, decodedName };
-  } catch {
-    return null;
-  }
+  if (!parsed || parsed.username || parsed.password || parsed.port || parsed.hash) return null;
+  const q = STICKER_QUERY_RE.exec(parsed.search);
+  if (!q) return null;                       // missing / reordered / cut-off params
+  let decodedName;
+  try { decodedName = decodeURIComponent(q[1].replace(/\+/g, ' ')); } catch { return null; }  // invalid UTF-8
+  if (!decodedName || decodedName.length > STICKER_NAME_MAX) return null;
+  return { stickerId, ext, decodedName };
 }
 
- // Returns true if plaintext is exactly one renderable token:
- // emoji/sticker markdown, bare sticker URL, or shortcode.
+function buildStickerUrl(stickerId, ext, name) {
+  if (ext === 'json') return `https://cdn.discordapp.com/stickers/${stickerId}.json`;
+  return `https://media.discordapp.net/stickers/${stickerId}.${ext}?size=160&name=${encodeDiscordName(name)}&lossless=true`;
+}
+
+// One <img> per complete sticker. The URL is rebuilt from the parsed fields, never taken verbatim.
+// inline-block so several stickers in one message wrap side by side.
+function _makeStickerImg(parsed) {
+  if (parsed.lottie) return _makeLottieSticker(parsed);
+  const img = document.createElement('img');
+  img.src            = buildStickerUrl(parsed.stickerId, parsed.ext, parsed.decodedName);
+  img.alt            = parsed.decodedName;
+  img.title          = parsed.decodedName;
+  img.referrerPolicy = 'no-referrer';
+  img.loading        = 'lazy';
+  img.decoding       = 'async';
+  img.style.cssText  = [
+    'display:inline-block',
+    'vertical-align:top',
+    'width:160px',
+    'height:160px',
+    'object-fit:contain',
+    'margin:4px 4px 4px 0',
+  ].join(';');
+  img.addEventListener('contextmenu', (e) => e.stopPropagation());
+  return img;
+}
+
+// ── Sticker-only messages (any number of stickers) ────────────────────────────
+
+// A sticker token is [label](url) with label === name=, or a bare url. Sticky: matches only at lastIndex.
+const _STICKER_TOKEN_RE = new RegExp(
+  '\\[([^\\]]{1,512})\\]\\((https://[^\\s<>"()]{1,2048})\\)|(https://[^\\s<>"\'()]{1,2048})', 'y');
+const _STICKER_HOST_PREFIXES = ['https://media.discordapp.net/stickers/', 'https://cdn.discordapp.com/stickers/'];
+
+// True if `rem` is the beginning of a sticker token that was cut off (by the display cap).
+function _isCutStickerTail(rem) {
+  if (rem.length > 1024) return false;
+  let u = rem;
+  if (u.startsWith('[')) {
+    const close = u.indexOf('](');
+    if (close === -1) return /^\[[^\]\n]*\]?$/.test(u);     // cut inside the label
+    u = u.slice(close + 2);
+  }
+  if (u === '' || _STICKER_HOST_PREFIXES.some(p => p.startsWith(u))) return true;
+  return _STICKER_HOST_PREFIXES.some(p => u.startsWith(p)) && !/[\s)]/.test(u);
+}
+
+// If `text` consists solely of complete sticker tokens separated by whitespace, returns
+// { count, text }. When `truncated` (text was cut at the display cap), one unfinished token at the
+// very end is dropped from the returned text instead of failing the whole message, so every complete
+// sticker before it still renders. Otherwise null.
+function scanStickerOnly(text, truncated) {
+  const ws = /\s/y;
+  let pos = 0, count = 0;
+  for (;;) {
+    for (;;) { ws.lastIndex = pos; if (pos < text.length && ws.test(text)) pos++; else break; }
+    if (pos >= text.length) break;
+    _STICKER_TOKEN_RE.lastIndex = pos;
+    const m = _STICKER_TOKEN_RE.exec(text);
+    if (m) {
+      const p = parseStickerUrl(m[2] ?? m[3]);
+      if (p && (m[1] === undefined || m[1] === p.decodedName)) { count++; pos = _STICKER_TOKEN_RE.lastIndex; continue; }
+    }
+    if (truncated && count > 0 && _isCutStickerTail(text.slice(pos))) {
+      return { count, text: text.slice(0, pos).trimEnd() };
+    }
+    return null;
+  }
+  return count > 0 ? { count, text } : null;
+}
+
+ // Returns true if plaintext is exactly one renderable emoji token, or only stickers
+ // (any number): emoji/sticker markdown, bare sticker URL, or shortcode.
 function isJumboEmoji(plaintext) {
   const t = plaintext.trim();
   if (_shortcodeOnlyRe.test(t)) return true;
   if (EMOJI_SEQ_FULL_RE.test(t)) return true;
   const mdm = MDLINK_FULL_RE.exec(t);
   if (mdm) {
-    const label = mdm[1];
-    const url   = mdm[2];
-    const ep = parseNitroEmojiUrl(url);
-    if (ep && ep.emojiName === label) return true;
-    const sp = parseStickerUrl(url);
-    if (sp && sp.decodedName !== null && sp.decodedName === label) return true;
+    const ep = parseNitroEmojiUrl(mdm[2]);
+    if (ep && ep.emojiName === mdm[1]) return true;
   }
-  if (parseStickerUrl(t)) return true;
+  // One or more complete stickers and nothing else.
+  if (scanStickerOnly(t, false)) return true;
   return false;
 }
 
@@ -1882,28 +2132,11 @@ function _renderInlineMdLink(container, match, inner, emojiSize) {
   }
 
   // Sticker: [label](sticker-url) where label === decoded name= param.
-  // Only rendered at emojiSize ≥ 48 (jumbo); otherwise falls back to plain link.
+  // Only rendered at emojiSize >= 48 (jumbo); otherwise falls back to plain link.
   const stickerParsed = parseStickerUrl(url);
-  if (stickerParsed && stickerParsed.decodedName !== null &&
-      stickerParsed.decodedName === label) {
+  if (stickerParsed && stickerParsed.decodedName === label) {
     if (emojiSize >= 48) {
-      const encodedName = encodeDiscordName(stickerParsed.decodedName);
-      const canonicalStickerUrl =
-        `https://media.discordapp.net/stickers/${stickerParsed.stickerId}.${stickerParsed.ext}?size=160&name=${encodedName}&lossless=true`;
-      const img = document.createElement('img');
-      img.src           = canonicalStickerUrl;
-      img.alt           = stickerParsed.decodedName;
-      img.title         = stickerParsed.decodedName;
-      img.referrerPolicy = 'no-referrer';
-      img.style.cssText = [
-        'display:block',
-        'width:160px',
-        'height:160px',
-        'object-fit:contain',
-        'margin:4px 0',
-      ].join(';');
-      img.addEventListener('contextmenu', (e) => e.stopPropagation());
-      container.appendChild(img);
+      container.appendChild(_makeStickerImg(stickerParsed));
       return;
     }
     if (isUrlLikeLabel(label)) {
@@ -1994,30 +2227,12 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
         pos = earliest.index + earliest.match.length;
         continue;
       }
-      // Bare sticker URL: only rendered at emojiSize ≥ 48 (jumbo); otherwise plain link.
+      // Bare sticker URL: only rendered at emojiSize >= 48 (jumbo); otherwise plain link.
+      // parseStickerUrl is strict (size, name, lossless=true all present), so a URL cut by the
+      // display cap is never rendered as an image.
       const bareStickerParsed = parseStickerUrl(url);
       if (bareStickerParsed && emojiSize >= 48) {
-        const encodedName = bareStickerParsed.decodedName
-          ? encodeDiscordName(bareStickerParsed.decodedName)
-          : null;
-        const canonicalUrl = encodedName
-          ? `https://media.discordapp.net/stickers/${bareStickerParsed.stickerId}.${bareStickerParsed.ext}?size=160&name=${encodedName}&lossless=true`
-          : `https://media.discordapp.net/stickers/${bareStickerParsed.stickerId}.${bareStickerParsed.ext}?size=160&lossless=true`;
-        const altText = bareStickerParsed.decodedName ?? `sticker:${bareStickerParsed.stickerId}`;
-        const img = document.createElement('img');
-        img.src           = canonicalUrl;
-        img.alt           = altText;
-        img.title         = altText;
-        img.referrerPolicy = 'no-referrer';
-        img.style.cssText = [
-          'display:block',
-          'width:160px',
-          'height:160px',
-          'object-fit:contain',
-          'margin:4px 0',
-        ].join(';');
-        img.addEventListener('contextmenu', (e) => e.stopPropagation());
-        container.appendChild(img);
+        container.appendChild(_makeStickerImg(bareStickerParsed));
       } else {
         appendLinkOrText(container, url, url);
       }
@@ -2187,6 +2402,34 @@ function iframePlainFetch(cdnUrl, opts) {
   });
 }
 
+// Fetches a Lottie sticker's JSON (https://cdn.discordapp.com/stickers/<id>.json) through the bridge.
+// Resolves the raw bytes as a transferred ArrayBuffer. The bridge re-validates the URL shape.
+function iframeFetchLottie(cdnUrl) {
+  return new Promise((resolve, reject) => {
+    if (!LOTTIE_URL_RE.test(cdnUrl)) { reject(Object.assign(new Error('bad Lottie URL'), { code: 'BAD_REQUEST' })); return; }
+    const requestId = newRequestId();
+    withIframe(() => {
+      const port = _bridgePort;
+      if (!port) {
+        reject(new Error('fetch iframe unavailable'));
+        return;
+      }
+      _iframePending.set(requestId, {
+        resolve: ({ buffer }) => (isArrayBuffer(buffer) && buffer.byteLength > 0)
+          ? resolve(buffer)
+          : reject(Object.assign(new Error('empty Lottie response'), { code: 'FETCH_FAILED' })),
+        reject, port, cdnUrl,
+      });
+      try {
+        port.postMessage({ type: 'AGE_FETCH_LOTTIE', requestId, cdnUrl });
+      } catch (err) {
+        _iframePending.delete(requestId);
+        reject(Object.assign(new Error('fetch iframe request failed'), { code: 'FETCH_FAILED' }));
+      }
+    });
+  });
+}
+
 // Port messages only: the page window never sees them.
 function onBridgeMessage(e) {
   const d = e.data;
@@ -2242,6 +2485,8 @@ function _spawnWorker(pendingMap) {
   const libUrls   = {
     age:  browser.runtime.getURL('lib/age.min.js'),
     sign: browser.runtime.getURL('lib/agecord-sign.min.js'),
+    // Loaded lazily by the worker, only when a Lottie sticker is first drawn.
+    tlottie: browser.runtime.getURL('lib/tlottie.min.js'),
   };
   const shimSrc   = `self.__AGE_LIB_URLS=${JSON.stringify(libUrls)};import(${JSON.stringify(workerUrl)});`;
   const shimBlob  = new Blob([shimSrc], { type: 'application/javascript' });
@@ -2269,7 +2514,9 @@ function _spawnWorker(pendingMap) {
     if (op === 'ENCRYPT_RESULT' ||
         op === 'COMPRESS_ENCRYPT_RESULT' ||
         op === 'VERIFY_DECRYPT_RESULT' ||
-        op === 'VERIFY_DECRYPT_DECOMPRESS_RESULT') {
+        op === 'VERIFY_DECRYPT_DECOMPRESS_RESULT' ||
+        op === 'LOTTIE_OPEN_RESULT' ||
+        op === 'LOTTIE_FRAME_RESULT') {
       entry.resolve(data);
     } else {
       entry.reject(new Error(data.error ?? `Worker op failed: ${op}`));
@@ -2529,6 +2776,246 @@ function workerVerifyDecryptDecompress(fileBuffer, prefixBytes, candidateKeysB64
       [fileBuffer]
     );
   });
+}
+
+// ─── Lottie stickers ──────────────────────────────────────────────────────────
+
+// Lottie JSON is fetched by the bridge and rasterised by tlottie in the TEXT worker.
+// This context only requests frames and paints returned RGBA copies; it never parses
+// or renders Lottie.
+
+// Per sticker: one <canvas>, one worker instance, one rAF loop while onscreen and
+// the tab is visible. Any fetch/worker/tlottie failure is fatal: close the player,
+// leave the canvas empty, log the error, and never retry.
+
+// Lifetime follows attachment helpers: player belongs to its message slot (attachId)
+// and is disposed by _releaseEntry(attachId), _wipeAttachmentState(), or
+// _discardMsgWrapper().
+
+const LOTTIE_CSS_PX = 160;                  // same footprint as the <img> stickers
+const LOTTIE_JSON_CACHE_MAX = 16;
+const LOTTIE_DETACH_POLL_MS = 5000;
+const _lottieJson = new Map();              // stickerId -> Promise<ArrayBuffer>, insertion-ordered LRU
+const _lottiePlayers = new Set();           // live players: { canvas, slot, pause, resume, dispose }
+const _lottieByCanvas = new WeakMap();      // canvas -> player
+
+// The shared JSON bytes. Callers must .slice() before transferring: transfer detaches the buffer.
+function _lottieJsonBytes(stickerId) {
+  let p = _lottieJson.get(stickerId);
+  if (p) {
+    _lottieJson.delete(stickerId);
+    _lottieJson.set(stickerId, p);
+    return p;
+  }
+  p = iframeFetchLottie(buildStickerUrl(stickerId, 'json'));
+  p.catch(() => { if (_lottieJson.get(stickerId) === p) _lottieJson.delete(stickerId); });   // failures are not cached
+  _lottieJson.set(stickerId, p);
+  while (_lottieJson.size > LOTTIE_JSON_CACHE_MAX) _lottieJson.delete(_lottieJson.keys().next().value);
+  return p;
+}
+
+// One request/response round trip to the text worker. Rejects if the worker reports an error or crashes.
+function _textWorkerRequest(message, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = _textWorkerNextId++;
+    _textWorkerPending.set(id, { resolve, reject });
+    try {
+      _postToWorker(getTextWorker(), { ...message, id }, transfer);
+    } catch (e) {
+      _textWorkerPending.delete(id);
+      reject(e);
+    }
+  });
+}
+
+// Fire-and-forget close. Never spawns a worker just to close something: a dead worker already lost it.
+function _closeLottieInstance(handle) {
+  try { if (_textWorker) _postToWorker(_textWorker, { op: 'LOTTIE_CLOSE', handle }); } catch {}
+}
+
+// Hidden tab: nothing is requested or painted. Browsers already pause rAF there, but the loop is also
+// stopped explicitly so no frame is requested the instant the tab comes back before it is visible.
+function _onLottieVisibilityChange() {
+  for (const player of _lottiePlayers) document.hidden ? player.pause() : player.resume();
+}
+
+function _makeLottieSticker(parsed) {
+  const canvas = document.createElement('canvas');
+  // Backing store: 160 CSS px at up to 2x device pixels. Resized to the animation's aspect on open.
+  const target = Math.round(LOTTIE_CSS_PX * Math.min(2, Math.max(1, window.devicePixelRatio || 1)));
+  canvas.width = canvas.height = target;
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', parsed.decodedName);
+  canvas.title = parsed.decodedName;
+  canvas.style.cssText = [
+    'display:inline-block',
+    'vertical-align:top',
+    `width:${LOTTIE_CSS_PX}px`,
+    `height:${LOTTIE_CSS_PX}px`,
+    'object-fit:contain',
+    'margin:4px 4px 4px 0',
+  ].join(';');
+  canvas.addEventListener('contextmenu', (e) => e.stopPropagation());
+  const player = _runLottiePlayer(canvas, parsed.stickerId, target);
+  if (_lottiePlayers.size === 0) document.addEventListener('visibilitychange', _onLottieVisibilityChange);
+  _lottiePlayers.add(player);
+  _lottieByCanvas.set(canvas, player);
+  return canvas;
+}
+
+// Tags every player under `root` with the message slot (attachId) it was rendered for, so that
+// _releaseEntry(attachId) can free exactly those.
+function _claimLottie(root, slot) {
+  for (const canvas of root.querySelectorAll('canvas')) {
+    const player = _lottieByCanvas.get(canvas);
+    if (player) player.slot = slot;
+  }
+}
+
+function _disposeLottieWhere(pred) {
+  for (const player of [..._lottiePlayers]) if (pred(player)) player.dispose();
+}
+const _disposeLottieSlot = (slot) => _disposeLottieWhere(p => p.slot === slot);
+const _disposeLottieIn   = (root) => _disposeLottieWhere(p => root.contains(p.canvas));
+const _disposeAllLottie  = ()     => _disposeLottieWhere(() => true);
+
+function _runLottiePlayer(canvas, stickerId, target) {
+  const ctx = canvas.getContext('2d');
+  const reduceMotion = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+  let state = 'idle';                       // idle -> opening -> ready; 'dead' is terminal
+  let handle = null, frameCount = 0, frameRate = 0;
+  let renderW = target, renderH = target;
+  let visible = false, busy = false, raf = 0, releaseTimer = 0;
+  let startedAt = 0, lastFrame = -1;
+  let spare = null;                         // the previous frame's buffer, sent back to be refilled
+  let observer = null;
+
+  // Idempotent. Frees the worker instance and every timer/observer; the canvas is left as is.
+  const dispose = () => {
+    if (state === 'dead') return;
+    state = 'dead';
+    cancelAnimationFrame(raf); raf = 0;
+    clearTimeout(releaseTimer);
+    observer?.disconnect(); observer = null;
+    spare = null;
+    _lottiePlayers.delete(player);
+    if (_lottiePlayers.size === 0) document.removeEventListener('visibilitychange', _onLottieVisibilityChange);
+    if (handle !== null) { _closeLottieInstance(handle); handle = null; }
+  };
+
+  // Fatal for this sticker: report, free everything, leave the canvas empty (nothing visible).
+  const fail = (err) => {
+    if (state === 'dead') return;
+    console.error('[age] Lottie sticker failed:', err);
+    dispose();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const draw = async (frame) => {
+    busy = true;
+    try {
+      const recycle = spare; spare = null;
+      const r = await _textWorkerRequest(
+        { op: 'LOTTIE_FRAME', handle, frame, width: renderW, height: renderH, recycle },
+        recycle ? [recycle] : undefined);
+      if (state === 'dead') return;
+      if (!isArrayBuffer(r.buffer) || r.width !== renderW || r.height !== renderH ||
+          r.buffer.byteLength !== renderW * renderH * 4) throw new Error('malformed frame from worker');
+      // Straight (un-premultiplied) RGBA, which is what ImageData expects. The ImageData wraps the
+      // transferred buffer (no copy); once painted, the buffer goes back to the worker for the next frame.
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(r.buffer), renderW, renderH), 0, 0);
+      spare = r.buffer;
+      lastFrame = frame;
+    } catch (e) {
+      fail(e);
+    } finally {
+      busy = false;
+    }
+  };
+
+  const tick = (now) => {
+    raf = 0;
+    if (state !== 'ready') return;
+    if (!canvas.isConnected) { dispose(); return; }      // Discord re-rendered the row: stop at once
+    if (!visible || document.hidden) return;
+    raf = requestAnimationFrame(tick);
+    if (busy) return;                                    // one frame in flight at a time
+    const frame = Math.floor(Math.max(0, now - startedAt) / 1000 * frameRate) % frameCount;
+    if (frame !== lastFrame) draw(frame);
+  };
+
+  const begin = () => {
+    if (state !== 'ready' || !visible || document.hidden) return;
+    if (reduceMotion) { if (lastFrame < 0 && !busy) draw(0); return; }   // one still frame, no loop
+    if (raf) return;                                     // (a frame still in flight is fine: tick waits for it)
+    startedAt = performance.now();
+    lastFrame = -1;
+    raf = requestAnimationFrame(tick);
+  };
+
+  const pause = () => { cancelAnimationFrame(raf); raf = 0; };
+
+  const open = async () => {
+    state = 'opening';
+    try {
+      const json = await _lottieJsonBytes(stickerId);
+      if (state === 'dead') return;
+      const copy = json.slice(0);                        // the transfer below detaches this copy, not the cached bytes
+      const info = await _textWorkerRequest({ op: 'LOTTIE_OPEN', buffer: copy }, [copy]);
+      if (!Number.isInteger(info.handle)) throw new Error('malformed open reply from worker');
+      if (state === 'dead') { _closeLottieInstance(info.handle); return; }   // gone while opening: do not leak it
+      handle = info.handle;
+      if (!(info.width > 0 && info.height > 0 && info.frameCount > 0 && info.frameRate > 0))
+        throw new Error('malformed animation info from worker');
+      frameCount = info.frameCount;
+      frameRate  = info.frameRate;
+      const scale = target / Math.max(info.width, info.height);   // long side = target, aspect kept
+      renderW = Math.max(1, Math.round(info.width * scale));
+      renderH = Math.max(1, Math.round(info.height * scale));
+      canvas.width = renderW; canvas.height = renderH;
+      state = 'ready';
+      begin();
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  // Offscreen stickers pause. A detached one is released: Discord removes message rows without telling
+  // us, so a periodic check (cheap) is what frees the worker instance.
+  const watchDetached = () => {
+    clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(() => {
+      if (state === 'dead') return;
+      if (!canvas.isConnected) dispose(); else if (!visible) watchDetached();
+    }, LOTTIE_DETACH_POLL_MS);
+  };
+
+  observer = new IntersectionObserver((entries) => {
+    if (state === 'dead') return;
+    visible = entries[entries.length - 1].isIntersecting;
+    if (visible) {
+      clearTimeout(releaseTimer);
+      if (state === 'idle') { if (!document.hidden) open(); }   // a hidden tab opens nothing until it is shown
+      else begin();
+    } else {
+      pause();
+      watchDetached();
+    }
+  });
+  observer.observe(canvas);
+
+  const player = {
+    canvas,
+    slot: null,
+    pause,
+    resume: () => {
+      if (state === 'dead') return;
+      if (state === 'idle' && visible) open(); else begin();
+    },
+    dispose,
+  };
+  return player;
 }
 
 let _pageRequestsInFlight = 0;
@@ -3122,7 +3609,7 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
   // Clear any unslotted [data-age-msg] placeholder (message.txt.age clears at decrypt-start;
   // media files clear here, just before inserting the player/image/download).
   liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-    .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+    .forEach(el => { _discardMsgWrapper(el); });
 
   const wrapper = document.createElement('div');
   wrapper.dataset.ageAttachment = cardKey;
@@ -3325,7 +3812,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
     // A placeholder from showAgePlaceholder (locked/disabled) has no slot key —
     // clear it now so it doesn't survive alongside the result.
     liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-      .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+      .forEach(el => { _discardMsgWrapper(el); });
 
     const capturedGeneration = _generation;
     // Hoisted so the catch block can reference it for error rendering.
@@ -3594,14 +4081,14 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
 
     if (!workerResult.sigValid) {
       liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-        .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+        .forEach(el => { _discardMsgWrapper(el); });
       renderDecryptedMessage(liElement, _sigFailureStatus(workerResult), undefined, _attMosaicItem ?? fileCard);
       return;
     }
 
     if (workerResult.reason === 'not-recipient') {
       liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-        .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+        .forEach(el => { _discardMsgWrapper(el); });
       renderDecryptedMessage(liElement, _notRecipientStatus(), undefined, _attMosaicItem ?? fileCard);
       return;
     }
@@ -3631,7 +4118,7 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     else console.error('[age] attachment decrypt error:', e?.message ?? e);
     // Replace the "Decrypting…" placeholder with an error badge.
     liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
-      .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+      .forEach(el => { _discardMsgWrapper(el); });
     if ((e?.message ?? e) === 'NOT_UNLOCKED') {
       // Only expected for a RELOCK race; already logged by the catch handler.
       renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'), undefined, _earlyMosaicItem ?? fileCard);
@@ -3717,16 +4204,16 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
   if (slotKey) {
     // Remove this slot's existing wrapper.
     liElement.querySelectorAll('[data-age-msg-slot]').forEach(el => {
-      if (el.dataset.ageMsgSlot === slotKey) { _clearRelTimestampsIn(el); el.remove(); }
+      if (el.dataset.ageMsgSlot === slotKey) { _discardMsgWrapper(el); }
     });
     // A final result (non-spinner) also clears any unslotted wrapper so two
     // status badges never appear at the same time.
     if (plaintext !== null) {
-      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])').forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])').forEach(el => { _discardMsgWrapper(el); });
     }
   } else {
     // Unslotted — clear ALL [data-age-msg] wrappers including per-slot ones.
-    liElement.querySelectorAll('[data-age-msg]').forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+    liElement.querySelectorAll('[data-age-msg]').forEach(el => { _discardMsgWrapper(el); });
   }
 
   const wrapper = document.createElement('div');
@@ -3748,9 +4235,14 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
     if (plaintext.length > MAX_INLINE_MESSAGE_CHARS) {
       console.info('[age] message truncated for display: %d of %d characters shown', MAX_INLINE_MESSAGE_CHARS, plaintext.length);
     }
-    const displayText = plaintext.length > MAX_INLINE_MESSAGE_CHARS ? plaintext.slice(0, MAX_INLINE_MESSAGE_CHARS) : plaintext;
-    const emojiSize = isJumboEmoji(displayText) ? 48 : 22;
+    const truncated = plaintext.length > MAX_INLINE_MESSAGE_CHARS;
+    let displayText = truncated ? plaintext.slice(0, MAX_INLINE_MESSAGE_CHARS) : plaintext;
+    // Sticker-only message cut by the cap: drop the unfinished last sticker, render the complete ones.
+    const stickers = scanStickerOnly(displayText, truncated);
+    if (stickers) displayText = stickers.text;
+    const emojiSize = (stickers || isJumboEmoji(displayText)) ? 48 : 22;
     renderBlockContent(wrapper, displayText, true, emojiSize);
+    if (slotKey) _claimLottie(wrapper, slotKey);
   }
 
   // Prefer the explicit insertAfter anchor, then fall back to after
@@ -3803,7 +4295,7 @@ function showAgePlaceholder(li, reason) {
   if (!hasAgeFile) return;
 
   li.querySelectorAll('[data-age-msg], [data-age-msg-slot], [data-age-attachment]')
-    .forEach(el => { _clearRelTimestampsIn(el); el.remove(); });
+    .forEach(el => { _discardMsgWrapper(el); });
 
   const text = reason === 'disabled'
     ? _status('Decryption disabled.', 'lock-open')
