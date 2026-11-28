@@ -78,7 +78,7 @@ async function lottieOpen(buffer) {
   const ptr = tl.tlottie_alloc(len) >>> 0;
   if (!ptr) throw new Error('LOTTIE_OPEN: tlottie_alloc failed');
 
-  let inst = 0;
+  let inst;
   try {
     // Fresh view AFTER the alloc call (it may have grown the memory).
     new Uint8Array(tl.memory.buffer, ptr, len).set(new Uint8Array(buffer));
