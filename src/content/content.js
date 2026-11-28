@@ -1460,7 +1460,7 @@ function scanExistingLocked(reason) {
 // TreeWalker serialises the message. Custom emoji are serialised as
 // [name](cdn-url) by upload-interceptor.js.
 
-const _shortcodeOnlyRe = /^:[a-zA-Z0-9_+\-]+:$/;
+const _shortcodeOnlyRe = /^:[a-zA-Z0-9_+-]+:$/;
 
 // Standard: Unicode Technical Standard #51 (UTS #51), RGI_Emoji property.
 
@@ -1511,13 +1511,8 @@ function parseNitroEmojiUrl(url) {
 
 // WHATWG URL Standard §5, application/x-www-form-urlencoded serializing
 
-// encodeURIComponent/decodeURIComponent alone do not apply this rule.
-// Decode '+' before decodeURIComponent.
-function decodeDiscordName(rawName) {
-  // URL.searchParams.get() has already percent- and plus-decoded the value. Decoding again turned a literal
-  // '+' (sent as %2B) into a space and could throw on a stray '%'. Identity by design.
-  return String(rawName);
-}
+// encodeURIComponent alone does not apply this rule.
+// URL.searchParams.get() already percent- and plus-decodes values, so no decode helper is needed.
 function encodeDiscordName(name) {
   // encodeURIComponent leaves ! ' ( ) * raw; parentheses would break the [label](url) and bare-URL
   // tokenizers, so they are escaped too. searchParams decodes them back to the original name.
@@ -2255,7 +2250,7 @@ function applyInlineMarkdown(container, text, emojiSize = 22) {
 // Raw emoji not converted by Discord are matched separately so all
 // emoji render with consistent sizing.
 function renderWithEmoji(container, text, emojiSize = 22) {
-  const shortcodeRe = /:([a-zA-Z0-9_+\-]+):/g;
+  const shortcodeRe = /:([a-zA-Z0-9_+-]+):/g;
   const emojiRe      = new RegExp(EMOJI_SEQ_RE.source, EMOJI_SEQ_RE.flags);
   const emojiSpanCss = `font-size:${emojiSize}px;line-height:1;display:inline-block;vertical-align:middle;flex-shrink:0;`;
 
@@ -2394,7 +2389,7 @@ function iframePlainFetch(cdnUrl, opts) {
           allowedHints: opts.allowedHints,
           expectedTotal: opts.expectedTotal ?? null,
         });
-      } catch (err) {
+      } catch {
         _iframePending.delete(requestId);
         reject(Object.assign(new Error('fetch iframe request failed'), { code: 'FETCH_FAILED' }));
       }
@@ -2422,7 +2417,7 @@ function iframeFetchLottie(cdnUrl) {
       });
       try {
         port.postMessage({ type: 'AGECORD_FETCH_LOTTIE', requestId, cdnUrl });
-      } catch (err) {
+      } catch {
         _iframePending.delete(requestId);
         reject(Object.assign(new Error('fetch iframe request failed'), { code: 'FETCH_FAILED' }));
       }
@@ -2836,7 +2831,10 @@ function _closeLottieInstance(handle) {
 // Hidden tab: nothing is requested or painted. Browsers already pause rAF there, but the loop is also
 // stopped explicitly so no frame is requested the instant the tab comes back before it is visible.
 function _onLottieVisibilityChange() {
-  for (const player of _lottiePlayers) document.hidden ? player.pause() : player.resume();
+  for (const player of _lottiePlayers) {
+    if (document.hidden) player.pause();
+    else player.resume();
+  }
 }
 
 function _makeLottieSticker(parsed) {
@@ -3776,179 +3774,175 @@ async function processEncryptedAttachment(liElement, fileCard, cdnUrl, originalN
 // Handles message.txt.age decryption and inline rendering.
 // Keeps text decrypt flow separate from media processing.
 async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, originalName, previousRoot) {
-  {
-    // Key includes li.id so two message.txt.age files in the same message
-    // (same liElement.id, different CDN URLs) get separate cache/in-flight slots.
-    const attachId = _attachId(liElement, cdnUrl);
+  // Key includes li.id so two message.txt.age files in the same message
+  // (same liElement.id, different CDN URLs) get separate cache/in-flight slots.
+  const attachId = _attachId(liElement, cdnUrl);
 
-    // Serve from cache on re-render — no CDN fetch needed.
-    if (_processedIds.has(attachId)) {
-      const cached = _decryptedCache.get(attachId);
-      if (cached) {
-        // Re-render only if the wrapper is missing after virtual-scroller reinsertion.
-        // Use _rootShowsSlot: attachId contains NUL, which CSS.escape() replaces with U+FFFD.
-        // Always call hideFileCard to re-hide cards recreated by Discord.
+  // Serve from cache on re-render — no CDN fetch needed.
+  if (_processedIds.has(attachId)) {
+    const cached = _decryptedCache.get(attachId);
+    if (cached) {
+      // Re-render only if the wrapper is missing after virtual-scroller reinsertion.
+      // Use _rootShowsSlot: attachId contains NUL, which CSS.escape() replaces with U+FFFD.
+      // Always call hideFileCard to re-hide cards recreated by Discord.
 
-        const mosaicItem = hideFileCard(fileCard);
-        if (!_rootShowsSlot(liElement, attachId)) {
-          try {
-            renderDecryptedMessage(liElement, cached, attachId, mosaicItem ?? fileCard);
-          } catch (e) {
-            // A cached plaintext that cannot be rendered must not throw outside any try on every re-render.
-            console.error('[agecord] cached message render failed:', e?.message ?? e);
-            _releaseEntry(attachId);
-            try { renderDecryptedMessage(liElement, _status("Couldn't display message.", 'lock-open'), attachId, mosaicItem ?? fileCard); } catch { }
-          }
+      const mosaicItem = hideFileCard(fileCard);
+      if (!_rootShowsSlot(liElement, attachId)) {
+        try {
+          renderDecryptedMessage(liElement, cached, attachId, mosaicItem ?? fileCard);
+        } catch (e) {
+          // A cached plaintext that cannot be rendered must not throw outside any try on every re-render.
+          console.error('[agecord] cached message render failed:', e?.message ?? e);
+          _releaseEntry(attachId);
+          try { renderDecryptedMessage(liElement, _status("Couldn't display message.", 'lock-open'), attachId, mosaicItem ?? fileCard); } catch { }
         }
       }
+    }
+    return;
+  }
+
+  // ── In-flight deduplication ───────────────────────────────────────────────
+
+  // Deduplicates concurrent attachment tasks by attachId and element.
+  // Reuses in-flight work; stale elements retry through cache.
+  if (await _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName, previousRoot)) return;
+
+  // No in-flight task — start one and expose the Promise so a concurrent
+  // call for the same attachId can await it.
+  const finishTask = _beginTask(attachId);
+
+  // A placeholder from showAgecordPlaceholder (locked/disabled) has no slot key —
+  // clear it now so it doesn't survive alongside the result.
+  liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])')
+    .forEach(el => { _discardMsgWrapper(el); });
+
+  const capturedGeneration = _generation;
+
+  try {
+    if (_generation !== capturedGeneration) return;
+
+    // ── Fetch CDN bytes ────────────────────────────────────────────────
+
+    // Identity was fetched at UNLOCK and cached in the file crypto workers.
+    // Candidate signers are needed before download so the bridge can reject unauthenticated
+    // files after ~8 KiB. If unavailable, skip download; the recheck renders the status.
+    let fileBuffer = null;
+    const pre = checkDecryptPreconditions();
+    if (pre.ready) {
+      ({ buffer: fileBuffer } = await iframePlainFetch(cdnUrl, {
+        mode: 'full', maxBytes: TEXT_MAX_CIPHERTEXT_BYTES,
+        allowedHints: buildCandidateKeysB64(pre.active.entry),
+      }));
+    }
+    if (_generation !== capturedGeneration) return;
+
+    // Capture AFTER the awaits — session/contacts are now stable.
+    const precheck = checkDecryptPreconditions();
+
+    if (!precheck.ready) {
+      if (precheck.reason === 'locked') {
+        // Extension locked mid-flight — retriable once unlocked.
+        hideFileCard(fileCard);
+        renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'));
+      } else if (precheck.reason === 'no-entry') {
+        // Skips channels without configured entries.
+        // Clears attachment state so future updates can retry.
+        hideFileCard(fileCard);
+        renderDecryptedMessage(liElement, _status('No entry configured for this channel.', 'key'));
+      }
+      // else reason === 'retry': contacts genuinely haven't arrived from the
+      // background yet — the finally block releases so the next UNLOCK/
+      // scanExisting can retry with real contacts.
+      return;
+    }
+    if (!fileBuffer) return;   // became ready only after the skipped download: retry on next scan
+    const capturedActive = precheck.active;
+
+    // Contacts loaded and we have an active entry — show the decrypting
+    // placeholder now that we're committed to real work.
+    const mosaicItem = hideFileCard(fileCard);
+    renderDecryptedMessage(liElement, null, attachId, mosaicItem ?? fileCard);
+
+    if (fileBuffer.byteLength < SIG_VERSION_LEN + SIG_BYTES + 1) throw new Error('message.txt.age too short');
+
+    // The version byte (SIG_VERSION) was already enforced by the bridge (checkHeader) before
+    // any bytes reached this script, so no version check is needed here.
+    // No slice: the worker reads the signature at SIG_VERSION_LEN inside the same buffer.
+
+    // ── Build sig prefix and candidate key list ─────────────────────
+
+    // Builds signature prefix and candidate keys for verification.
+    // Uses CDN channel ID to match the sender's signing context.
+    const { entry } = capturedActive;
+    const msgCdnChannelId = cdnChannelId(cdnUrl);
+    if (!msgCdnChannelId) throw new Error('Could not extract channel ID from CDN URL');
+    const prefix = buildSigPrefix(entry, msgCdnChannelId);
+    const candidateKeysB64 = buildCandidateKeysB64(entry);
+
+    if (_generation !== capturedGeneration) return;
+
+    // ── Fused verify + decrypt + decompress in the Worker ────────────
+
+    // Transfers fileBuffer zero-copy; worker performs ML-DSA-87 verify,
+    // age decrypt, and deflate-raw decompress off the main thread, returning
+    // { sigValid, plaintext } in one round-trip.
+    const workerResult = await workerVerifyDecryptDecompress(
+      fileBuffer, prefix, candidateKeysB64, SIG_VERSION_LEN
+    );
+    // Checked again after the worker await — a RELOCK/UNLOCK during the
+    // worker run bumps _generation; writing stale plaintext into the new
+    // session's cache would be a cross-session leak.
+    if (_generation !== capturedGeneration) return;
+
+    if (!workerResult.sigValid) {
+      renderDecryptedMessage(liElement, _sigFailureStatus(workerResult), attachId, mosaicItem ?? fileCard);
       return;
     }
 
-    // ── In-flight deduplication ───────────────────────────────────────────────
-
-    // Deduplicates concurrent attachment tasks by attachId and element.
-    // Reuses in-flight work; stale elements retry through cache.
-    if (await _awaitStaleInFlight(attachId, liElement, fileCard, cdnUrl, originalName, previousRoot)) return;
-
-    // No in-flight task — start one and expose the Promise so a concurrent
-    // call for the same attachId can await it.
-    const finishTask = _beginTask(attachId);
-
-    // A placeholder from showAgecordPlaceholder (locked/disabled) has no slot key —
-    // clear it now so it doesn't survive alongside the result.
-    liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])')
-      .forEach(el => { _discardMsgWrapper(el); });
-
-    const capturedGeneration = _generation;
-    // Hoisted so the catch block can reference it for error rendering.
-    let mosaicItem = fileCard.closest('div[class*="mosaicItem_"]');
-
-    try {
-      if (_generation !== capturedGeneration) return;
-
-      // ── Fetch CDN bytes ────────────────────────────────────────────────
-
-      // Identity was fetched at UNLOCK and cached in the file crypto workers.
-      // Candidate signers are needed before download so the bridge can reject unauthenticated
-      // files after ~8 KiB. If unavailable, skip download; the recheck renders the status.
-      let fileBuffer = null;
-      const pre = checkDecryptPreconditions();
-      if (pre.ready) {
-        ({ buffer: fileBuffer } = await iframePlainFetch(cdnUrl, {
-          mode: 'full', maxBytes: TEXT_MAX_CIPHERTEXT_BYTES,
-          allowedHints: buildCandidateKeysB64(pre.active.entry),
-        }));
-      }
-      if (_generation !== capturedGeneration) return;
-
-      // Capture AFTER the awaits — session/contacts are now stable.
-      const precheck = checkDecryptPreconditions();
-
-      if (!precheck.ready) {
-        if (precheck.reason === 'locked') {
-          // Extension locked mid-flight — retriable once unlocked.
-          mosaicItem = hideFileCard(fileCard);
-          renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'));
-        } else if (precheck.reason === 'no-entry') {
-          // Skips channels without configured entries.
-          // Clears attachment state so future updates can retry.
-          mosaicItem = hideFileCard(fileCard);
-          renderDecryptedMessage(liElement, _status('No entry configured for this channel.', 'key'));
-        }
-        // else reason === 'retry': contacts genuinely haven't arrived from the
-        // background yet — the finally block releases so the next UNLOCK/
-        // scanExisting can retry with real contacts.
-        return;
-      }
-      if (!fileBuffer) return;   // became ready only after the skipped download: retry on next scan
-      const capturedActive = precheck.active;
-
-      // Contacts loaded and we have an active entry — show the decrypting
-      // placeholder now that we're committed to real work.
-      mosaicItem = hideFileCard(fileCard);
-      renderDecryptedMessage(liElement, null, attachId, mosaicItem ?? fileCard);
-
-      if (fileBuffer.byteLength < SIG_VERSION_LEN + SIG_BYTES + 1) throw new Error('message.txt.age too short');
-
-      // The version byte (SIG_VERSION) was already enforced by the bridge (checkHeader) before
-      // any bytes reached this script, so no version check is needed here.
-      // No slice: the worker reads the signature at SIG_VERSION_LEN inside the same buffer.
-
-      // ── Build sig prefix and candidate key list ─────────────────────
-
-      // Builds signature prefix and candidate keys for verification.
-      // Uses CDN channel ID to match the sender's signing context.
-      const { entry } = capturedActive;
-      const msgCdnChannelId = cdnChannelId(cdnUrl);
-      if (!msgCdnChannelId) throw new Error('Could not extract channel ID from CDN URL');
-      const prefix = buildSigPrefix(entry, msgCdnChannelId);
-      const candidateKeysB64 = buildCandidateKeysB64(entry);
-
-      if (_generation !== capturedGeneration) return;
-
-      // ── Fused verify + decrypt + decompress in the Worker ────────────
-
-      // Transfers fileBuffer zero-copy; worker performs ML-DSA-87 verify,
-      // age decrypt, and deflate-raw decompress off the main thread, returning
-      // { sigValid, plaintext } in one round-trip.
-      const workerResult = await workerVerifyDecryptDecompress(
-        fileBuffer, prefix, candidateKeysB64, SIG_VERSION_LEN
-      );
-      // Checked again after the worker await — a RELOCK/UNLOCK during the
-      // worker run bumps _generation; writing stale plaintext into the new
-      // session's cache would be a cross-session leak.
-      if (_generation !== capturedGeneration) return;
-
-      if (!workerResult.sigValid) {
-        renderDecryptedMessage(liElement, _sigFailureStatus(workerResult), attachId, mosaicItem ?? fileCard);
-        return;
-      }
-
-      if (workerResult.reason === 'not-recipient') {
-        renderDecryptedMessage(liElement, _notRecipientStatus(), attachId, mosaicItem ?? fileCard);
-        return;
-      }
-
-      const { plaintext } = workerResult;
-
-      // Cache only AFTER a successful render: a render that throws must not leave a poisoned entry,
-      // and is a display failure, not a decrypt failure.
-      try {
-        renderDecryptedMessage(liElement, plaintext, attachId, mosaicItem ?? fileCard);
-      } catch (re) {
-        console.error('[agecord] message render failed:', re?.message ?? re);
-        renderDecryptedMessage(liElement, _status("Couldn't display message.", 'lock-open'), attachId, mosaicItem ?? fileCard);
-        return;
-      }
-      _processedIds.add(attachId);
-      _decryptedCache.set(attachId, plaintext);
-
-    } catch (e) {
-      // A generation change means showAllPlaceholders already wrote the
-      // correct status — don't overwrite it with "Couldn't decrypt."
-      if (_generation !== capturedGeneration) return;
-      // Checks extension state before showing decrypt errors.
-      // Avoids masking context invalidation as a decryption failure.
-      if (!isContextValid()) return;
-      const _errMosaicItem = hideFileCard(fileCard);
-      if ((e?.message ?? e) === 'NOT_UNLOCKED') {
-        // NOT_UNLOCKED indicates a worker-state race; otherwise treat it as a regression.
-        console.error('[agecord] NOT_UNLOCKED decrypting text attachment — worker desynced from session state:', { attachId });
-        renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'), attachId, _errMosaicItem ?? fileCard);
-        return;
-      }
-      const _tf = _transportFailureStatus(e);
-      if (_tf) {
-        console.info('[agecord] message.txt.age not decrypted:', e?.code ?? e?.message);
-        renderDecryptedMessage(liElement, _tf, attachId, _errMosaicItem ?? fileCard);
-        return;
-      }
-      console.info('[agecord] message.txt.age decrypt skipped (not a valid Agecord file or not encrypted):', e?.message ?? e);
-      renderDecryptedMessage(liElement, _status("Couldn't decrypt.", 'lock-open'), attachId, _errMosaicItem ?? fileCard);
-    } finally {
-      // Single release point for every exit above.
-      finishTask();
+    if (workerResult.reason === 'not-recipient') {
+      renderDecryptedMessage(liElement, _notRecipientStatus(), attachId, mosaicItem ?? fileCard);
+      return;
     }
+
+    const { plaintext } = workerResult;
+
+    // Cache only AFTER a successful render: a render that throws must not leave a poisoned entry,
+    // and is a display failure, not a decrypt failure.
+    try {
+      renderDecryptedMessage(liElement, plaintext, attachId, mosaicItem ?? fileCard);
+    } catch (re) {
+      console.error('[agecord] message render failed:', re?.message ?? re);
+      renderDecryptedMessage(liElement, _status("Couldn't display message.", 'lock-open'), attachId, mosaicItem ?? fileCard);
+      return;
+    }
+    _processedIds.add(attachId);
+    _decryptedCache.set(attachId, plaintext);
+
+  } catch (e) {
+    // A generation change means showAllPlaceholders already wrote the
+    // correct status — don't overwrite it with "Couldn't decrypt."
+    if (_generation !== capturedGeneration) return;
+    // Checks extension state before showing decrypt errors.
+    // Avoids masking context invalidation as a decryption failure.
+    if (!isContextValid()) return;
+    const _errMosaicItem = hideFileCard(fileCard);
+    if ((e?.message ?? e) === 'NOT_UNLOCKED') {
+      // NOT_UNLOCKED indicates a worker-state race; otherwise treat it as a regression.
+      console.error('[agecord] NOT_UNLOCKED decrypting text attachment — worker desynced from session state:', { attachId });
+      renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'), attachId, _errMosaicItem ?? fileCard);
+      return;
+    }
+    const _tf = _transportFailureStatus(e);
+    if (_tf) {
+      console.info('[agecord] message.txt.age not decrypted:', e?.code ?? e?.message);
+      renderDecryptedMessage(liElement, _tf, attachId, _errMosaicItem ?? fileCard);
+      return;
+    }
+    console.info('[agecord] message.txt.age decrypt skipped (not a valid Agecord file or not encrypted):', e?.message ?? e);
+    renderDecryptedMessage(liElement, _status("Couldn't decrypt.", 'lock-open'), attachId, _errMosaicItem ?? fileCard);
+  } finally {
+    // Single release point for every exit above.
+    finishTask();
   }
 }
 
