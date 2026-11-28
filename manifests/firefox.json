@@ -70,7 +70,8 @@
         "content/file-crypto-worker.js",
         "content/cdn-bridge.html",
         "lib/age.min.js",
-        "lib/agecord-sign.min.js"
+        "lib/agecord-sign.min.js",
+        "lib/tlottie.min.js"
       ],
       "matches": ["https://discord.com/*"]
     }
