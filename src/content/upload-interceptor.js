@@ -239,6 +239,20 @@
       setTimeout(() => location.reload(), 800);
     }
 
+    // Sticker click: replace composer content with the sticker URL (see content.js, sticker interception).
+    if (type === 'AGE_REPLACE_COMPOSER_TEXT') {
+      const { text, token } = e.data;
+      if (typeof text === 'string' && text.length > 0 && text.length <= 2048 &&
+          typeof token === 'string' && /^[0-9a-f]{32}$/.test(token)) {
+        // Exactly the composer content.js evaluated (draft/channel gate); never fall back to another one.
+        const tb = document.querySelector(`[data-slate-editor="true"][data-age-sticker-target="${token}"]`);
+        if (tb) {
+          tb.removeAttribute('data-age-sticker-target');
+          if (tb.closest('form') && !tb.closest('li[id^="chat-messages-"]')) clearSlateTextbox(text, tb);
+        }
+      }
+    }
+
     if (type === 'AGE_CLEAR_TEXTBOX') {
       const nonce = e.data?.nonce;
       const ok = clearSlateTextbox();
@@ -487,9 +501,11 @@
     return { channelId: null, guildId: null };
   }
 
-  function clearSlateTextbox() {
+  // replacement === undefined: clear. A string: replace the whole composer content with it.
+  // tbOverride: the exact composer to edit (sticker replace); otherwise the main/focused one.
+  function clearSlateTextbox(replacement, tbOverride) {
     try {
-      const tb = getMainTextbox();
+      const tb = tbOverride ?? getMainTextbox();
       if (!tb) throw new Error('Slate textbox not found');
 
       const editor = walkFiberUp(tb, (fiber) => {
@@ -517,6 +533,16 @@
       };
 
       editor.deleteFragment();
+
+      if (typeof replacement === 'string') {
+        // Selection is collapsed at the start after deleteFragment; insertText goes through
+        // Slate's normal pipeline, so Discord's onChange/draft handling sees an ordinary edit.
+        editor.insertText(replacement);
+        // Closing the picker can hand focus back to its trigger button; Enter must reach the composer.
+        tb.focus();
+        setTimeout(() => tb.focus(), 100);
+        return true;
+      }
 
       try {
         editor.selection = { anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 0 } };
