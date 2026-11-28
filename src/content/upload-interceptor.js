@@ -546,7 +546,7 @@
 
       try {
         editor.selection = { anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 0 } };
-      } catch (_) {}
+      } catch {}
 
       return true;
     } catch (e) {
