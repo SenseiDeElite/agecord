@@ -3545,7 +3545,12 @@ function _buildDownloadCard(url, strippedName) {
   dlBtn.append(_agcIcon('download'), _agcEl('span', '', 'Save'));
 
   card.append(iconWrap, textCol, dlBtn);
-  return card;
+
+  // Same lock badge as image/video/audio so encrypted files are marked too.
+  const cardWrap = _agcEl('div', 'agc-att-row');
+  cardWrap.appendChild(_makeLockMark());
+  cardWrap.appendChild(card);
+  return cardWrap;
 }
 
 // Keep decrypted media at final size, but blurred, inert, and unfocusable until clicked.
