@@ -74,7 +74,7 @@ async function probe(cdnUrl, req) {
   let resp;
   try {
     resp = await fetch(cdnUrl, { cache: 'no-store', headers: { Range: `bytes=0-${HEADER_LEN - 1}` } });
-  } catch (e) { throw fail('FETCH_FAILED', 'probe fetch failed'); }
+  } catch { throw fail('FETCH_FAILED', 'probe fetch failed'); }
   // Standard: RFC 9110 §14.4, Content-Range; deliberately rejects "/*" because the size gate needs a numeric complete-length
   const m = /^bytes 0-(\d+)\/(\d+)$/.exec(resp.headers.get('content-range') ?? '');
   if (resp.status !== 206 || !m || Number(m[1]) !== HEADER_LEN - 1) {
