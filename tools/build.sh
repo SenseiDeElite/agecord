@@ -41,6 +41,7 @@ SRC_SHARED=(
   'lib/agecord-identity.min.js'
   'lib/agecord-sign.min.js'
   'lib/agecord-vault.min.js'
+  'lib/tlottie.min.js'
   'popup/crypto-worker.js'
   'popup/import-helper.html'
   'popup/import-helper.js'
