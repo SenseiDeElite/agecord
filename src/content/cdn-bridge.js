@@ -162,24 +162,24 @@ addEventListener('message', (e) => {
   if (port) return;                                           // one-shot
   if (e.source !== window.parent) return;
   const d = e.data;
-  if (d?.type !== 'AGE_BRIDGE_INIT' || !secret || d.secret !== secret) return;
+  if (d?.type !== 'AGECORD_BRIDGE_INIT' || !secret || d.secret !== secret) return;
   if (e.ports.length !== 1) return;
   port = e.ports[0];
   port.onmessage = onRequest;
-  port.postMessage({ type: 'AGE_BRIDGE_READY' });
+  port.postMessage({ type: 'AGECORD_BRIDGE_READY' });
 });
 
 async function onRequest(e) {
   const { type, requestId, cdnUrl } = e.data ?? {};
-  if (type !== 'AGE_FETCH_RAW' && type !== 'AGE_FETCH_LOTTIE') return;
+  if (type !== 'AGECORD_FETCH_RAW' && type !== 'AGECORD_FETCH_LOTTIE') return;
   // requestId is opaque here: it is only echoed back.
   // content.js owns its format and matching; an id it does not know is ignored there.
-  const req = type === 'AGE_FETCH_RAW' ? parseRequest(e.data) : null;
-  if (type === 'AGE_FETCH_RAW' && !req) return; // malformed numeric fields: ignored
+  const req = type === 'AGECORD_FETCH_RAW' ? parseRequest(e.data) : null;
+  if (type === 'AGECORD_FETCH_RAW' && !req) return; // malformed numeric fields: ignored
 
   // cdnUrl is echoed in EVERY reply: content.js ignores a reply whose URL is not the one it asked for.
   function reply(payload) {
-    port.postMessage({ type: 'AGE_FETCH_RAW_RESULT', requestId, cdnUrl, ...payload },
+    port.postMessage({ type: 'AGECORD_FETCH_RAW_RESULT', requestId, cdnUrl, ...payload },
       payload.buffer ? [payload.buffer] : []);
   }
 
@@ -188,7 +188,7 @@ async function onRequest(e) {
       throw fail('BAD_REQUEST', `${type}: cdnUrl missing`);
     // cache: 'no-store' in both fetches — the ArrayBuffer is transferred (neutered) to content.js;
     // a cached response would return an ArrayBuffer(0) on the second fetch.
-    reply(type === 'AGE_FETCH_LOTTIE' ? await fetchLottie(cdnUrl)
+    reply(type === 'AGECORD_FETCH_LOTTIE' ? await fetchLottie(cdnUrl)
         : req.mode === 'probe'        ? await probe(cdnUrl, req)
         :                               await fetchFull(cdnUrl, req));
   } catch (err) {
@@ -198,7 +198,7 @@ async function onRequest(e) {
     const log = ['HINT_REJECTED', 'TOO_LARGE', 'TOO_SHORT'].includes(c) ? console.info
               : ['FETCH_FAILED', 'NOT_RANGEABLE', 'LENGTH_MISMATCH'].includes(c) ? console.warn
               : console.error;
-    log(`[age-iframe] ${type} ${c ?? 'error'} requestId=${requestId}:`, err?.message ?? err);
+    log(`[agecord-iframe] ${type} ${c ?? 'error'} requestId=${requestId}:`, err?.message ?? err);
     reply({ code: err?.code ?? 'FETCH_FAILED', error: err?.message ?? String(err) });
   }
 }
