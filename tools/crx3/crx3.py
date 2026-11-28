@@ -37,7 +37,6 @@ RSA_KEY_BITS = 4096
 # primitives we need: varints, tags, and length-delimited fields.
 # --------------------------------------------------------------------------
 
-WIRE_VARINT = 0
 WIRE_LENGTH_DELIMITED = 2
 
 
