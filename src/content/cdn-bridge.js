@@ -7,6 +7,7 @@
 
 // Hidden iframe bridge for extension-origin cross-origin fetches.
 // Transfers fetched ArrayBuffers to the parent over a private MessageChannel port.
+
 // Crypto is handled by content.js and file-crypto-worker.js.
 
 'use strict';
@@ -137,6 +138,26 @@ async function fetchFull(cdnUrl, req) {
   return { buffer: total === out.buffer.byteLength ? out.buffer : out.buffer.transfer(total), totalBytes: total };
 }
 
+// ── Lottie sticker JSON ──────────────────────────────────────────────────────
+
+// Public, unencrypted animation data served by Discord's own CDN. Only this exact URL shape is
+// fetched, rebuilt by content.js from a validated sticker id; this is not a general-purpose fetch.
+// No size cap: the URL is only ever Discord's own CDN, and the id rides in a size-limited encrypted message.
+// KEEP IN SYNC (content.js LOTTIE_URL_RE).
+const LOTTIE_URL_RE = /^https:\/\/cdn\.discordapp\.com\/stickers\/\d{17,20}\.json$/;
+
+async function fetchLottie(cdnUrl) {
+  if (!LOTTIE_URL_RE.test(cdnUrl)) throw fail('BAD_REQUEST', 'not a Lottie sticker URL');
+  let resp, buffer;
+  try {
+    resp = await fetch(cdnUrl, { cache: 'no-store', credentials: 'omit' });
+    if (resp.ok) buffer = await resp.arrayBuffer();
+  } catch { throw fail('FETCH_FAILED', 'fetch failed'); }
+  if (!resp.ok) throw fail('FETCH_FAILED', `CDN fetch failed: ${resp.status}`);
+  if (buffer.byteLength === 0) throw fail('FETCH_FAILED', 'empty sticker response');
+  return { buffer, totalBytes: buffer.byteLength };
+}
+
 addEventListener('message', (e) => {
   if (port) return;                                           // one-shot
   if (e.source !== window.parent) return;
@@ -150,11 +171,11 @@ addEventListener('message', (e) => {
 
 async function onRequest(e) {
   const { type, requestId, cdnUrl } = e.data ?? {};
-  if (type !== 'AGE_FETCH_RAW') return;
+  if (type !== 'AGE_FETCH_RAW' && type !== 'AGE_FETCH_LOTTIE') return;
   // requestId is opaque here: it is only echoed back.
   // content.js owns its format and matching; an id it does not know is ignored there.
-  const req = parseRequest(e.data);
-  if (!req) return; // malformed numeric fields: ignored
+  const req = type === 'AGE_FETCH_RAW' ? parseRequest(e.data) : null;
+  if (type === 'AGE_FETCH_RAW' && !req) return; // malformed numeric fields: ignored
 
   // cdnUrl is echoed in EVERY reply: content.js ignores a reply whose URL is not the one it asked for.
   function reply(payload) {
@@ -164,10 +185,12 @@ async function onRequest(e) {
 
   try {
     if (!cdnUrl || typeof cdnUrl !== 'string')
-      throw fail('BAD_REQUEST', 'AGE_FETCH_RAW: cdnUrl missing');
+      throw fail('BAD_REQUEST', `${type}: cdnUrl missing`);
     // cache: 'no-store' in both fetches — the ArrayBuffer is transferred (neutered) to content.js;
     // a cached response would return an ArrayBuffer(0) on the second fetch.
-    reply(req.mode === 'probe' ? await probe(cdnUrl, req) : await fetchFull(cdnUrl, req));
+    reply(type === 'AGE_FETCH_LOTTIE' ? await fetchLottie(cdnUrl)
+        : req.mode === 'probe'        ? await probe(cdnUrl, req)
+        :                               await fetchFull(cdnUrl, req));
   } catch (err) {
     // Expected refusals (old/unknown sender key, size limits) are info; network/server trouble is warn;
     // anything else (incl. BAD_REQUEST) is a real bug.
@@ -175,7 +198,7 @@ async function onRequest(e) {
     const log = ['HINT_REJECTED', 'TOO_LARGE', 'TOO_SHORT'].includes(c) ? console.info
               : ['FETCH_FAILED', 'NOT_RANGEABLE', 'LENGTH_MISMATCH'].includes(c) ? console.warn
               : console.error;
-    log(`[age-iframe] AGE_FETCH_RAW ${c ?? 'error'} requestId=${requestId}:`, err?.message ?? err);
+    log(`[age-iframe] ${type} ${c ?? 'error'} requestId=${requestId}:`, err?.message ?? err);
     reply({ code: err?.code ?? 'FETCH_FAILED', error: err?.message ?? String(err) });
   }
 }
