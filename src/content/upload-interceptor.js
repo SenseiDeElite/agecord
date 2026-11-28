@@ -10,15 +10,15 @@
 (() => {
   'use strict';
 
-  function err(...a)  { console.error('[age-intercept]', ...a); }
-  function info(...a) { console.info('[age-intercept]', ...a); }
+  function err(...a)  { console.error('[agecord-intercept]', ...a); }
+  function info(...a) { console.info('[agecord-intercept]', ...a); }
 
   // ─── Lock state (cosmetic only) ────────────────────────────────────────────────
 
   // Best-effort snapshot for dragover cursor hints; upload gating is always live.
   let _locked = true;
   let _activeEntry = false;
-  Object.defineProperty(window, '__ageLocked', { get: () => _locked, configurable: true });
+  Object.defineProperty(window, '__agecordLocked', { get: () => _locked, configurable: true });
 
   // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -155,12 +155,12 @@
     if (e.source !== window) return;
     const { type, requestId } = e.data ?? {};
 
-    if (type === 'AGE_ENCRYPT_FILE_ACK' && _pending.has(requestId)) {
+    if (type === 'AGECORD_ENCRYPT_FILE_ACK' && _pending.has(requestId)) {
       const entry = _pending.get(requestId);
       entry.onAck?.();
     }
 
-    if (type === 'AGE_ENCRYPT_FILE_RESULT' && _pending.has(requestId)) {
+    if (type === 'AGECORD_ENCRYPT_FILE_RESULT' && _pending.has(requestId)) {
       const { resolve, reject, fileName } = _pending.get(requestId);
       _pending.delete(requestId);
       if (e.data.error) {
@@ -171,17 +171,17 @@
       }
     }
 
-    // ── AGE_ENCRYPT_TEXT_MESSAGE ─────────────────────────────────────────────────
+    // ── AGECORD_ENCRYPT_TEXT_MESSAGE ─────────────────────────────────────────────────
 
-    // Same round-trip shape as AGE_ENCRYPT_FILE, but content.js runs the message
+    // Same round-trip shape as AGECORD_ENCRYPT_FILE, but content.js runs the message
     // (compress+sign) pipeline instead of the generic file pipeline — used so a
     // long paste can be sent as message.txt.age, identical to a typed send.
-    if (type === 'AGE_ENCRYPT_TEXT_MESSAGE_ACK' && _pending.has(requestId)) {
+    if (type === 'AGECORD_ENCRYPT_TEXT_MESSAGE_ACK' && _pending.has(requestId)) {
       const entry = _pending.get(requestId);
       entry.onAck?.();
     }
 
-    if (type === 'AGE_ENCRYPT_TEXT_MESSAGE_RESULT' && _pending.has(requestId)) {
+    if (type === 'AGECORD_ENCRYPT_TEXT_MESSAGE_RESULT' && _pending.has(requestId)) {
       const { resolve, reject } = _pending.get(requestId);
       _pending.delete(requestId);
       if (e.data.error) {
@@ -192,28 +192,28 @@
       }
     }
 
-    if (type === 'AGE_INTERCEPTOR_STATE') {
+    if (type === 'AGECORD_INTERCEPTOR_STATE') {
       _locked = !e.data.unlocked;
       _activeEntry = !!e.data.activeEntry;
     }
 
     // Triggers upload preview via React onChange.
     // Avoids DOM events and async bypass handling issues.
-    if (type === 'AGE_DO_UPLOAD') {
+    if (type === 'AGECORD_DO_UPLOAD') {
       try {
         uploadSignedMessageBytes(e.data.buffer);
-        window.postMessage({ type: 'AGE_DO_UPLOAD_RESULT', requestId, ok: true }, '*');
+        window.postMessage({ type: 'AGECORD_DO_UPLOAD_RESULT', requestId, ok: true }, '*');
       } catch (uploadErr) {
-        err('AGE_DO_UPLOAD failed:', uploadErr.message);
-        window.postMessage({ type: 'AGE_DO_UPLOAD_RESULT', requestId, ok: false, error: uploadErr.message }, '*');
+        err('AGECORD_DO_UPLOAD failed:', uploadErr.message);
+        window.postMessage({ type: 'AGECORD_DO_UPLOAD_RESULT', requestId, ok: false, error: uploadErr.message }, '*');
       }
     }
 
-    // ── AGE_UPLOAD_TEXT_AS_FILE ──────────────────────────────────────────────────
+    // ── AGECORD_UPLOAD_TEXT_AS_FILE ──────────────────────────────────────────────────
 
     // Long messages need encrypted-file delivery; this explicit action must never
     // fall back to plaintext.
-    if (type === 'AGE_UPLOAD_TEXT_AS_FILE') {
+    if (type === 'AGECORD_UPLOAD_TEXT_AS_FILE') {
       const { text, channelId: uploadChannelId, guildId: uploadGuildId } = e.data;
       (async () => {
         // Set the gate before awaiting encryption to prevent concurrent flows.
@@ -221,60 +221,60 @@
         try {
           const file = new File([text], 'message.txt', { type: 'text/plain' });
           await deliverEncryptedFiles([file], uploadChannelId, uploadGuildId);
-          window.postMessage({ type: 'AGE_UPLOAD_TEXT_AS_FILE_RESULT', requestId, ok: true }, '*');
+          window.postMessage({ type: 'AGECORD_UPLOAD_TEXT_AS_FILE_RESULT', requestId, ok: true }, '*');
         } catch (uploadErr) {
           _attachmentPending = false; // nothing delivered — don't leave the gate stuck shut
-          err('AGE_UPLOAD_TEXT_AS_FILE failed:', uploadErr.message);
-          window.postMessage({ type: 'AGE_UPLOAD_TEXT_AS_FILE_RESULT', requestId, ok: false, error: uploadErr.message }, '*');
+          err('AGECORD_UPLOAD_TEXT_AS_FILE failed:', uploadErr.message);
+          window.postMessage({ type: 'AGECORD_UPLOAD_TEXT_AS_FILE_RESULT', requestId, ok: false, error: uploadErr.message }, '*');
         }
       })();
     }
 
-    if (type === 'AGE_ATTACHMENT_CLEARED') {
+    if (type === 'AGECORD_ATTACHMENT_CLEARED') {
       _attachmentPending = false;
     }
 
     // 800 ms delay prevents a reload loop on extension uninstall.
-    if (type === 'AGE_CONTEXT_INVALIDATED') {
+    if (type === 'AGECORD_CONTEXT_INVALIDATED') {
       setTimeout(() => location.reload(), 800);
     }
 
     // Sticker click: replace composer content with the sticker URL (see content.js, sticker interception).
-    if (type === 'AGE_REPLACE_COMPOSER_TEXT') {
+    if (type === 'AGECORD_REPLACE_COMPOSER_TEXT') {
       const { text, token } = e.data;
       if (typeof text === 'string' && text.length > 0 && text.length <= 2048 &&
           typeof token === 'string' && /^[0-9a-f]{32}$/.test(token)) {
         // Exactly the composer content.js evaluated (draft/channel gate); never fall back to another one.
-        const tb = document.querySelector(`[data-slate-editor="true"][data-age-sticker-target="${token}"]`);
+        const tb = document.querySelector(`[data-slate-editor="true"][data-agecord-sticker-target="${token}"]`);
         if (tb) {
-          tb.removeAttribute('data-age-sticker-target');
+          tb.removeAttribute('data-agecord-sticker-target');
           if (tb.closest('form') && !tb.closest('li[id^="chat-messages-"]')) clearSlateTextbox(text, tb);
         }
       }
     }
 
-    if (type === 'AGE_CLEAR_TEXTBOX') {
+    if (type === 'AGECORD_CLEAR_TEXTBOX') {
       const nonce = e.data?.nonce;
       const ok = clearSlateTextbox();
       window.postMessage(
-        ok ? { type: 'AGE_CLEAR_TEXTBOX_RESULT', ok: true,  nonce }
-           : { type: 'AGE_CLEAR_TEXTBOX_RESULT', ok: false, nonce, error: 'clearSlateTextbox failed' },
+        ok ? { type: 'AGECORD_CLEAR_TEXTBOX_RESULT', ok: true,  nonce }
+           : { type: 'AGECORD_CLEAR_TEXTBOX_RESULT', ok: false, nonce, error: 'clearSlateTextbox failed' },
         '*'
       );
     }
 
-    // ── AGE_GET_SLATE_TEXT ──────────────────────────────────────────────────────
+    // ── AGECORD_GET_SLATE_TEXT ──────────────────────────────────────────────────────
 
     // Must run in page context: the isolated world gets a proxy of the React
     // fiber heap, not the live instance.
     // Custom emoji <img> nodes are serialised as [name](url) markdown.
-    if (type === 'AGE_GET_SLATE_TEXT') {
+    if (type === 'AGECORD_GET_SLATE_TEXT') {
       const nonce = e.data?.nonce;
       const tb = getMainTextbox();
       if (!tb) {
         // Answer immediately so the content script doesn't wait out its timeout.
-        console.warn('[age] Slate textbox not found');
-        window.postMessage({ type: 'AGE_GET_SLATE_TEXT_RESULT', ok: false, nonce }, '*');
+        console.warn('[agecord] Slate textbox not found');
+        window.postMessage({ type: 'AGECORD_GET_SLATE_TEXT_RESULT', ok: false, nonce }, '*');
         return;
       }
 
@@ -373,10 +373,10 @@
       const text = lines.join('\n').trim() ||
                    (tb.innerText?.trim() ?? '');
 
-      window.postMessage({ type: 'AGE_GET_SLATE_TEXT_RESULT', ok: true, text, nonce }, '*');
+      window.postMessage({ type: 'AGECORD_GET_SLATE_TEXT_RESULT', ok: true, text, nonce }, '*');
       } catch (readErr) {
-        err('AGE_GET_SLATE_TEXT failed:', readErr?.message ?? readErr);
-        window.postMessage({ type: 'AGE_GET_SLATE_TEXT_RESULT', ok: false, nonce }, '*');
+        err('AGECORD_GET_SLATE_TEXT failed:', readErr?.message ?? readErr);
+        window.postMessage({ type: 'AGECORD_GET_SLATE_TEXT_RESULT', ok: false, nonce }, '*');
       }
     }
   });
@@ -611,7 +611,7 @@
     return withPendingRequest(
       (requestId) => {
         window.postMessage(
-          { type: 'AGE_ENCRYPT_FILE', requestId, fileName, mimeType, buffer, channelId, guildId },
+          { type: 'AGECORD_ENCRYPT_FILE', requestId, fileName, mimeType, buffer, channelId, guildId },
           '*',
           [buffer]
         );
@@ -680,19 +680,19 @@
   function clearStalePending() {
     if (!_attachmentPending) return;
     _attachmentPending = false;
-    window.postMessage({ type: 'AGE_ATTACHMENT_CLEARED' }, '*');
+    window.postMessage({ type: 'AGECORD_ATTACHMENT_CLEARED' }, '*');
   }
 
   // Signs text through content.js pipeline.
-  // Returns signed AGE bytes; no plaintext fallback.
+  // Returns signed Agecord bytes; no plaintext fallback.
   function encryptTextMessage(text, channelId, guildId) {
     return withPendingRequest((requestId) => {
-      window.postMessage({ type: 'AGE_ENCRYPT_TEXT_MESSAGE', requestId, text, channelId, guildId }, '*');
+      window.postMessage({ type: 'AGECORD_ENCRYPT_TEXT_MESSAGE', requestId, text, channelId, guildId }, '*');
     });
   }
 
-  // Wraps already-signed age bytes as message.txt.age and hands them to React's
-  // onChange, identical to what AGE_DO_UPLOAD and the paste handler both need —
+  // Wraps already-signed Agecord bytes as message.txt.age and hands them to React's
+  // onChange, identical to what AGECORD_DO_UPLOAD and the paste handler both need —
   // factored out so neither has to duplicate the DataTransfer/File plumbing.
   function uploadSignedMessageBytes(buffer, sourceForm) {
     const file = new File([buffer], 'message.txt.age', { type: 'application/octet-stream' });
@@ -744,7 +744,7 @@
       trayAppearObserver.disconnect();
       trayGoneObserver?.disconnect();
       _attachmentPending = false;
-      window.postMessage({ type: 'AGE_ATTACHMENT_CLEARED' }, '*');
+      window.postMessage({ type: 'AGECORD_ATTACHMENT_CLEARED' }, '*');
     }
 
     function watchForTrayGone() {
