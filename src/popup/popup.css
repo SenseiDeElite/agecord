@@ -295,7 +295,7 @@
     p  { margin-top: 8px; max-width: 272px; font-size: 15px; line-height: 21px; color: var(--ink-2); text-wrap: pretty; }
   }
   .navbar + .hero { padding-top: 0; }
-  .about-logo { display: block; flex: none; width: 72px; height: 72px; }
+  .about-logo { display: block; flex: none; width: 72px; height: 72px; user-select: none; -webkit-user-drag: none; }
   .sect {
     display: flex; align-items: center; justify-content: space-between;
     padding: 24px 28px 9px; min-height: 48px;
