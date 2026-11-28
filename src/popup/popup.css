@@ -523,7 +523,6 @@
     --h: var(--h-md); color: var(--accent); background: none; box-shadow: none; font-weight: 600; padding: 0 14px;
     &:hover  { filter: none; background: var(--press); }
     &:active { background: var(--press); filter: none; }
-    &.is-quiet { color: var(--ink-2); }
   }
   .btn-danger {
     color: var(--on-danger);
