@@ -19,7 +19,7 @@
 
 'use strict';
 
-const { age: ageUrl, sign: signUrl, tlottie: tlottieUrl } = self.__AGE_LIB_URLS;
+const { age: ageUrl, sign: signUrl, tlottie: tlottieUrl } = self.__AGECORD_LIB_URLS;
 const { Encrypter, Decrypter } = await import(ageUrl);
 const { init, ml_dsa87_sign, ml_dsa87_verify, ml_dsa87_verifying_key_from_seed } =
   await import(signUrl);
@@ -300,7 +300,7 @@ async function verifyAndDecrypt({ fileBuffer, candidateKeysB64,
     // Malformed key or sig — sigValid stays false, but log so a real
     // wasm-call bug (bad arg types, panic, etc.) isn't indistinguishable
     // from an ordinary failed verification.
-    console.error(`[age] ${opName}: ml_dsa87_verify threw:`, e?.message ?? e);
+    console.error(`[agecord] ${opName}: ml_dsa87_verify threw:`, e?.message ?? e);
   }
 
   if (!sigValid) return { sigValid: false, reason: 'bad-signature' };
@@ -512,7 +512,7 @@ self.onmessage = async ({ data }) => {
     if (id === undefined) {
       // UNLOCK/RELOCK carry no id, so content.js's pendingMap has nowhere to
       // route a posted error — log locally instead of failing silently.
-      console.error(`[age] file-crypto-worker ${op} error:`, message);
+      console.error(`[agecord] file-crypto-worker ${op} error:`, message);
       return;
     }
     self.postMessage({ op: `${op}_ERROR`, id, error: message });
