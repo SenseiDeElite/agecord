@@ -31,7 +31,7 @@ const HLJS_LANGUAGES  = globalThis.__AGECORD_HLJS_LANGUAGES__;
 delete globalThis.__AGECORD_EMOJI_MAP__;
 delete globalThis.__AGECORD_HLJS_LANGUAGES__;
 if (!EMOJI_MAP || !HLJS_LANGUAGES) {
-  throw new Error('[age] emoji_map.js / highlight_map.js must load before content.js');
+  throw new Error('[agecord] emoji_map.js / highlight_map.js must load before content.js');
 }
 
 // ML-DSA-87 signature size (bytes). Fixed by the standard.
@@ -84,12 +84,12 @@ function _mediaCategory(ext) {
 }
 
 // Strips the trailing .age extension from a filename, if present.
-function stripAgeSuffix(name) {
+function stripAgecordSuffix(name) {
   return name.replace(/\.age$/i, '');
 }
 
 function classifyFile(originalName) {
-  const ext = stripAgeSuffix(originalName).split('.').pop().toLowerCase();
+  const ext = stripAgecordSuffix(originalName).split('.').pop().toLowerCase();
   return _mediaCategory(ext) ?? 'download';
 }
 
@@ -290,7 +290,7 @@ function _signalContextInvalidated() {
 
   try { showAllPlaceholders('locked'); } catch {}
 
-  window.postMessage({ type: 'AGE_CONTEXT_INVALIDATED' }, PAGE_ORIGIN);
+  window.postMessage({ type: 'AGECORD_CONTEXT_INVALIDATED' }, PAGE_ORIGIN);
 }
 
 // Synchronous, zero-IPC context check. Call this before any operation that
@@ -481,7 +481,7 @@ function isEncryptionActive(channelIdOverride, serverIdOverride) {
 }
 
 // Authoritative outbound decision, evaluated at encryption time.
-// Consumed by AGE_ENCRYPT_FILE/AGE_ENCRYPT_TEXT_MESSAGE.
+// Consumed by AGECORD_ENCRYPT_FILE/AGECORD_ENCRYPT_TEXT_MESSAGE.
 // 'blocked'     — explicit failure; callers throw (e.g. missing channel or recipients).
 // 'passthrough' — encryption disabled, extension locked, or no channel contact configured.
 // 'encrypt'     — entry and channelId are ready.
@@ -574,9 +574,9 @@ function attachEnterHook() {
   window.addEventListener('pointerdown', _trackComposer, { capture: true, passive: true });
   window.addEventListener('focusin',     _trackComposer, { capture: true, passive: true });
   for (const tb of getTextboxes()) {
-    if (tb._ageKeyHandler) continue;
-    tb._ageKeyHandler = _makeEnterHandler(tb);
-    tb.addEventListener('keydown', tb._ageKeyHandler, { capture: true });
+    if (tb._agecordKeyHandler) continue;
+    tb._agecordKeyHandler = _makeEnterHandler(tb);
+    tb.addEventListener('keydown', tb._agecordKeyHandler, { capture: true });
   }
 }
 
@@ -588,16 +588,16 @@ function detachEnterHook() {
   window.removeEventListener('focusin',     _trackComposer, { capture: true });
   _lastComposer = null;
   for (const tb of getTextboxes()) {
-    if (tb._ageKeyHandler) {
-      tb.removeEventListener('keydown', tb._ageKeyHandler, { capture: true });
-      delete tb._ageKeyHandler;
+    if (tb._agecordKeyHandler) {
+      tb.removeEventListener('keydown', tb._agecordKeyHandler, { capture: true });
+      delete tb._agecordKeyHandler;
     }
   }
   // Sweep lingering handlers on composers no longer in getTextboxes() (e.g. thread panel closed).
   document.querySelectorAll('[data-slate-editor="true"]').forEach(tb => {
-    if (tb._ageKeyHandler) {
-      tb.removeEventListener('keydown', tb._ageKeyHandler, { capture: true });
-      delete tb._ageKeyHandler;
+    if (tb._agecordKeyHandler) {
+      tb.removeEventListener('keydown', tb._agecordKeyHandler, { capture: true });
+      delete tb._agecordKeyHandler;
     }
   });
 }
@@ -706,7 +706,7 @@ function _handleStickerEvent(e, key) {
 
   const sticker = _stickerFromEl(el);
   if (!sticker) {
-    console.info('[age] Sticker not sent: unsupported sticker type.');
+    console.info('[agecord] Sticker not sent: unsupported sticker type.');
     return;
   }
   // Discord closes the picker after a send; we swallowed that, so close it ourselves (before the
@@ -714,10 +714,10 @@ function _handleStickerEvent(e, key) {
   try { _expandedTrigger(tb)?.click(); } catch {}
   // One-time token marks the exact composer for the page world (it cannot see our module state).
   const token = newRequestId();
-  tb.dataset.ageStickerTarget = token;
-  setTimeout(() => { if (tb.dataset.ageStickerTarget === token) delete tb.dataset.ageStickerTarget; }, 1000);
+  tb.dataset.agecordStickerTarget = token;
+  setTimeout(() => { if (tb.dataset.agecordStickerTarget === token) delete tb.dataset.agecordStickerTarget; }, 1000);
   window.postMessage({
-    type: 'AGE_REPLACE_COMPOSER_TEXT',
+    type: 'AGECORD_REPLACE_COMPOSER_TEXT',
     token,
     text: buildStickerUrl(sticker.stickerId, sticker.ext, sticker.name),
   }, PAGE_ORIGIN);
@@ -996,7 +996,7 @@ function reportSendFailure(key) {
   const log = (key === 'locked' || key === 'noRecipients' || key === 'tooLong') ? console.info
             : key === 'composerUnread' ? console.warn
             : console.error;
-  log(`[age] Message not sent: ${SEND_FAIL[key] ?? SEND_FAIL.encryptFailed}. Your text is still in the box.`);
+  log(`[agecord] Message not sent: ${SEND_FAIL[key] ?? SEND_FAIL.encryptFailed}. Your text is still in the box.`);
 }
 
 // ─── Tray state machine ───────────────────────────────────────────────────────
@@ -1053,7 +1053,7 @@ function getSlateTextViaPageContext() {
   return new Promise((resolve) => {
     const nonce = newRequestId();
     const handler = (e) => {
-      if (e.source !== window || e.data?.type !== 'AGE_GET_SLATE_TEXT_RESULT') return;
+      if (e.source !== window || e.data?.type !== 'AGECORD_GET_SLATE_TEXT_RESULT') return;
       if (e.data?.nonce !== nonce) return;
       window.removeEventListener('message', handler);
       clearTimeout(timer);
@@ -1061,10 +1061,10 @@ function getSlateTextViaPageContext() {
       resolve(e.data.ok === false ? null : (e.data.text ?? ''));
     };
     window.addEventListener('message', handler);
-    window.postMessage({ type: 'AGE_GET_SLATE_TEXT', nonce }, PAGE_ORIGIN);
+    window.postMessage({ type: 'AGECORD_GET_SLATE_TEXT', nonce }, PAGE_ORIGIN);
     const timer = setTimeout(() => {
       window.removeEventListener('message', handler);
-      console.warn('[age] AGE_GET_SLATE_TEXT timed out — send aborted, text left in composer.');
+      console.warn('[agecord] AGECORD_GET_SLATE_TEXT timed out — send aborted, text left in composer.');
       resolve(null);
     }, 500);
   });
@@ -1081,14 +1081,14 @@ async function clearViaPageContext() {
     // consuming a later call's result if the 500ms timeout already fired.
     const nonce = newRequestId();
     const handler = (e) => {
-      if (e.source !== window || e.data?.type !== 'AGE_CLEAR_TEXTBOX_RESULT') return;
+      if (e.source !== window || e.data?.type !== 'AGECORD_CLEAR_TEXTBOX_RESULT') return;
       if (e.data?.nonce !== nonce) return;
       window.removeEventListener('message', handler);
       clearTimeout(timer);
       resolve(e.data);
     };
     window.addEventListener('message', handler);
-    window.postMessage({ type: 'AGE_CLEAR_TEXTBOX', nonce }, PAGE_ORIGIN);
+    window.postMessage({ type: 'AGECORD_CLEAR_TEXTBOX', nonce }, PAGE_ORIGIN);
     const timer = setTimeout(() => {
       window.removeEventListener('message', handler);
       resolve({ ok: false, error: 'timeout' });
@@ -1097,10 +1097,10 @@ async function clearViaPageContext() {
 }
 
 // Compresses and signs `plain` using the typed-message pipeline.
-// Returns signed age bytes for message.txt.age upload.
+// Returns signed Agecord bytes for message.txt.age upload.
 // Shared by typed-send and long-text paste paths.
 async function encryptTextAsMessage(plain, entry, channelId) {
-  // Single choke point (typed send, paste, AGE_ENCRYPT_TEXT_MESSAGE): never emit what receivers refuse.
+  // Single choke point (typed send, paste, AGECORD_ENCRYPT_TEXT_MESSAGE): never emit what receivers refuse.
   if (typeof plain !== 'string' || plain.length === 0 || plain.length > MAX_INLINE_MESSAGE_CHARS)
     throw _blocked('Message empty or too long.');
   const recipients = buildRecipientList(entry);
@@ -1125,10 +1125,10 @@ function uploadSignedMessageBytes(fileBytes) {
   return new Promise((resolve, reject) => {
     const requestId = newRequestId();
     const handler = (e) => {
-      if (e.source !== window || e.data?.type !== 'AGE_DO_UPLOAD_RESULT') return;
+      if (e.source !== window || e.data?.type !== 'AGECORD_DO_UPLOAD_RESULT') return;
       if (e.data.requestId !== requestId) return;
       cleanup();
-      if (e.data.ok) resolve(); else reject(new Error('AGE_DO_UPLOAD failed: ' + e.data.error));
+      if (e.data.ok) resolve(); else reject(new Error('AGECORD_DO_UPLOAD failed: ' + e.data.error));
     };
     const cleanup = () => {
       window.removeEventListener('message', handler);
@@ -1137,7 +1137,7 @@ function uploadSignedMessageBytes(fileBytes) {
     _pendingUpload = { requestId, cleanup };
     window.addEventListener('message', handler);
     window.postMessage(
-      { type: 'AGE_DO_UPLOAD', requestId, buffer: fileBytes.buffer },
+      { type: 'AGECORD_DO_UPLOAD', requestId, buffer: fileBytes.buffer },
       PAGE_ORIGIN,
       [fileBytes.buffer]
     );
@@ -1152,10 +1152,10 @@ function uploadTextAsFile(text, channelId, guildId) {
     const requestId = newRequestId();
     const timer = setTimeout(() => {
       window.removeEventListener('message', handler);
-      reject(new Error('AGE_UPLOAD_TEXT_AS_FILE timeout'));
+      reject(new Error('AGECORD_UPLOAD_TEXT_AS_FILE timeout'));
     }, UPLOAD_TEXT_AS_FILE_TIMEOUT_MS);
     const handler = (e) => {
-      if (e.source !== window || e.data?.type !== 'AGE_UPLOAD_TEXT_AS_FILE_RESULT') return;
+      if (e.source !== window || e.data?.type !== 'AGECORD_UPLOAD_TEXT_AS_FILE_RESULT') return;
       if (e.data?.requestId !== requestId) return;
       window.removeEventListener('message', handler);
       clearTimeout(timer);
@@ -1163,9 +1163,9 @@ function uploadTextAsFile(text, channelId, guildId) {
     };
     window.addEventListener('message', handler);
     // guildId travels with channelId through upload-interceptor.js and back
-    // to our own AGE_ENCRYPT_FILE handler, so that round-trip's entry lookup
+    // to our own AGECORD_ENCRYPT_FILE handler, so that round-trip's entry lookup
     // stays pinned to this moment too, not just this initial send.
-    window.postMessage({ type: 'AGE_UPLOAD_TEXT_AS_FILE', requestId, text, channelId, guildId }, PAGE_ORIGIN);
+    window.postMessage({ type: 'AGECORD_UPLOAD_TEXT_AS_FILE', requestId, text, channelId, guildId }, PAGE_ORIGIN);
   });
 }
 
@@ -1235,7 +1235,7 @@ async function handleEncryptClick() {
     // fire on a spammed Enter while text is still in the composer.
     const clearResult = await clearViaPageContext();
     if (!clearResult.ok) {
-      console.warn('[age] textbox clear failed:', clearResult.error);
+      console.warn('[agecord] textbox clear failed:', clearResult.error);
     }
 
     // clearOnce is idempotent — whichever fires first (state machine or safety timeout) wins.
@@ -1250,7 +1250,7 @@ async function handleEncryptClick() {
         _trayObserver.disconnect();
         _trayState = 'idle';
       }
-      window.postMessage({ type: 'AGE_ATTACHMENT_CLEARED' }, PAGE_ORIGIN);
+      window.postMessage({ type: 'AGECORD_ATTACHMENT_CLEARED' }, PAGE_ORIGIN);
     }
 
     watchTrayGone(clearOnce);
@@ -1263,7 +1263,7 @@ async function handleEncryptClick() {
       : /too long|too large/i.test(msg) ? 'tooLong'
       : 'encryptFailed';
     // Expected states are logged (at info) by reportSendFailure; only log the raw error for real failures.
-    if (key === 'encryptFailed') console.error('[age] encrypt error:', err);
+    if (key === 'encryptFailed') console.error('[agecord] encrypt error:', err);
     reportSendFailure(key);
   } finally {
     _sending = false;
@@ -1357,7 +1357,7 @@ function attachMsgObserver(list, slot) {
           if (canDecrypt()) {
             processLiFull(li);
           } else {
-            showAgePlaceholder(li, _lockReason());
+            showAgecordPlaceholder(li, _lockReason());
           }
         }
       }
@@ -1424,20 +1424,20 @@ function hideFileCard(fileCard) {
   return mosaicItem ?? null;
 }
 
-// Mirrors showAgePlaceholder but for quotedChatMessage containers (no li.id).
+// Mirrors showAgecordPlaceholder but for quotedChatMessage containers (no li.id).
 function showQuotedPlaceholder(container, reason) {
   const nameLinks = container.querySelectorAll(FILE_LINK_SEL);
-  let hasAgeFile = false;
+  let hasAgecordFile = false;
   let lastAnchor = null;
   for (const nameEl of nameLinks) {
     if (!(nameEl.textContent?.trim() ?? '').endsWith('.age')) continue;
-    hasAgeFile = true;
+    hasAgecordFile = true;
     const fileCard = nameEl.closest('div[class*="file_"]');
     const mosaicItem = hideFileCard(fileCard);
     lastAnchor = mosaicItem ?? fileCard ?? lastAnchor;
   }
-  if (!hasAgeFile) return;
-  container.querySelectorAll('[data-age-msg], [data-age-msg-slot], [data-age-attachment]')
+  if (!hasAgecordFile) return;
+  container.querySelectorAll('[data-agecord-msg], [data-agecord-msg-slot], [data-agecord-attachment]')
     .forEach(el => { _discardMsgWrapper(el); });
   const text = reason === 'disabled' ? _status('Decryption disabled.', 'lock-open') : _status('Extension locked.', 'lock');
   renderDecryptedMessage(container, text, undefined, lastAnchor);
@@ -1449,7 +1449,7 @@ function showQuotedPlaceholders(reason) {
 }
 
 function scanExistingLocked(reason) {
-  document.querySelectorAll('li[id^="chat-messages-"]').forEach(li => showAgePlaceholder(li, reason));
+  document.querySelectorAll('li[id^="chat-messages-"]').forEach(li => showAgecordPlaceholder(li, reason));
   showQuotedPlaceholders(reason);
 }
 
@@ -1997,13 +1997,13 @@ function _navigateInPage(url) {
   window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
 }
 
-// Capture clicks on links inside [data-age-msg] before Discord handles them.
+// Capture clicks on links inside [data-agecord-msg] before Discord handles them.
 // Ignore modified and non-primary clicks to preserve default browser behavior.
 document.addEventListener('click', (e) => {
   if (e.defaultPrevented || e.button !== 0) return;
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   const a = e.target?.closest?.('a[href]');
-  if (!a || !a.closest('[data-age-msg]')) return;
+  if (!a || !a.closest('[data-agecord-msg]')) return;
   if (!_isSpaNavTarget(a.href)) return; // falls through to target="_blank"
   e.preventDefault();
   _navigateInPage(a.href);
@@ -2336,7 +2336,7 @@ function getFetchIframe() {
   resetBridge();
 
   const host = document.createElement('div');
-  host.id = 'age-fetch-iframe-host';
+  host.id = 'agecord-fetch-iframe-host';
   host.style.cssText = 'display:none!important;position:absolute;width:0;height:0;';
   const shadow = host.attachShadow({ mode: 'closed' });
 
@@ -2351,7 +2351,7 @@ function getFetchIframe() {
     _bridgePort = port1;
     port1.onmessage = onBridgeMessage;
     // '*' is acceptable: a navigated-away frame has no bridge listener, and the secret is single-use.
-    iframe.contentWindow.postMessage({ type: 'AGE_BRIDGE_INIT', secret }, '*', [port2]);
+    iframe.contentWindow.postMessage({ type: 'AGECORD_BRIDGE_INIT', secret }, '*', [port2]);
   }, { once: true });
   shadow.appendChild(iframe);
   document.documentElement.appendChild(host);
@@ -2383,7 +2383,7 @@ function iframePlainFetch(cdnUrl, opts) {
       _iframePending.set(requestId, { resolve, reject, port, cdnUrl });
       try {
         port.postMessage({
-          type:         'AGE_FETCH_RAW',
+          type:         'AGECORD_FETCH_RAW',
           requestId,
           cdnUrl,
           mode:         opts.mode,
@@ -2421,7 +2421,7 @@ function iframeFetchLottie(cdnUrl) {
         reject, port, cdnUrl,
       });
       try {
-        port.postMessage({ type: 'AGE_FETCH_LOTTIE', requestId, cdnUrl });
+        port.postMessage({ type: 'AGECORD_FETCH_LOTTIE', requestId, cdnUrl });
       } catch (err) {
         _iframePending.delete(requestId);
         reject(Object.assign(new Error('fetch iframe request failed'), { code: 'FETCH_FAILED' }));
@@ -2433,14 +2433,14 @@ function iframeFetchLottie(cdnUrl) {
 // Port messages only: the page window never sees them.
 function onBridgeMessage(e) {
   const d = e.data;
-  if (d?.type === 'AGE_BRIDGE_READY') {
+  if (d?.type === 'AGECORD_BRIDGE_READY') {
     if (_iframeReady) return;
     _iframeReady = true;
     for (const fn of _iframeQueue.splice(0)) fn();
     return;
   }
 
-  if (d?.type === 'AGE_FETCH_RAW_RESULT') {
+  if (d?.type === 'AGECORD_FETCH_RAW_RESULT') {
     const { requestId, buffer, error, code, totalBytes, cdnUrl: echoedUrl } = d;
     const entry = _iframePending.get(requestId);
     if (!entry) return;
@@ -2488,7 +2488,7 @@ function _spawnWorker(pendingMap) {
     // Loaded lazily by the worker, only when a Lottie sticker is first drawn.
     tlottie: browser.runtime.getURL('lib/tlottie.min.js'),
   };
-  const shimSrc   = `self.__AGE_LIB_URLS=${JSON.stringify(libUrls)};import(${JSON.stringify(workerUrl)});`;
+  const shimSrc   = `self.__AGECORD_LIB_URLS=${JSON.stringify(libUrls)};import(${JSON.stringify(workerUrl)});`;
   const shimBlob  = new Blob([shimSrc], { type: 'application/javascript' });
   const shimUrl   = URL.createObjectURL(shimBlob);
 
@@ -2496,14 +2496,14 @@ function _spawnWorker(pendingMap) {
   URL.revokeObjectURL(shimUrl);
 
   // Buffer messages until WORKER_READY confirms the imported worker is listening.
-  worker.__ageReady   = false;
-  worker.__agePending = [];
+  worker.__agecordReady   = false;
+  worker.__agecordPending = [];
 
   worker.onmessage = ({ data }) => {
     if (data?.op === 'WORKER_READY') {
-      worker.__ageReady = true;
-      const pending = worker.__agePending;
-      worker.__agePending = [];
+      worker.__agecordReady = true;
+      const pending = worker.__agecordPending;
+      worker.__agecordPending = [];
       for (const { message, transfer } of pending) worker.postMessage(message, transfer);
       return;
     }
@@ -2530,8 +2530,8 @@ function _spawnWorker(pendingMap) {
 function _postToWorker(worker, message, transfer) {
   // Throw instead of returning silently: a pending entry registered by the caller would never settle.
   if (!worker) throw new Error('file-crypto-worker unavailable');
-  if (worker.__ageReady) worker.postMessage(message, transfer);
-  else                   worker.__agePending.push({ message, transfer });
+  if (worker.__agecordReady) worker.postMessage(message, transfer);
+  else                   worker.__agecordPending.push({ message, transfer });
 }
 
 // Forwards UNLOCK with the current session so the worker caches its Decrypter and ML-DSA seed.
@@ -2570,9 +2570,9 @@ function _unlockWorkers() {
 // (After the READY flush the queue is empty and the buffer is detached, so nothing is zeroed twice.)
 function _terminateWorker(worker) {
   if (!worker) return;
-  if (worker.__agePending) {
-    for (const { message } of worker.__agePending) message?.mldsaSeed?.fill(0);
-    worker.__agePending.length = 0;
+  if (worker.__agecordPending) {
+    for (const { message } of worker.__agecordPending) message?.mldsaSeed?.fill(0);
+    worker.__agecordPending.length = 0;
   }
   worker.terminate();
 }
@@ -2585,7 +2585,7 @@ function getTextWorker() {
   if (!_textWorker) {
     const worker = _textWorker = _spawnWorker(_textWorkerPending);
     worker.onerror = (e) => {
-      console.error('[age] file-crypto-worker (text) crashed:', e.message);
+      console.error('[agecord] file-crypto-worker (text) crashed:', e.message);
       for (const { reject } of _textWorkerPending.values())
         reject(new Error(`file-crypto-worker (text) crashed: ${e.message}`));
       _textWorkerPending.clear();
@@ -2602,7 +2602,7 @@ function getMediaWorker() {
   if (!_mediaWorker) {
     const worker = _mediaWorker = _spawnWorker(_mediaWorkerPending);
     worker.onerror = (e) => {
-      console.error('[age] file-crypto-worker (media) crashed:', e.message);
+      console.error('[agecord] file-crypto-worker (media) crashed:', e.message);
       // Snapshot, clear and null the worker BEFORE rejecting: each reject() runs settle(), which
       // dispatches the next queued op, and that op must start on a FRESH worker, not this dead one.
       const inflight = [..._mediaWorkerPending.values()];
@@ -2650,7 +2650,7 @@ function _dispatchNextMediaOp() {
   msgArgs.id = id;
   try {
     worker = getMediaWorker();
-    if (msgArgs.op === 'VERIFY_DECRYPT' || msgArgs.op === 'ENCRYPT') worker.__ageHighWater = Math.max(worker.__ageHighWater ?? 0, byteLength);
+    if (msgArgs.op === 'VERIFY_DECRYPT' || msgArgs.op === 'ENCRYPT') worker.__agecordHighWater = Math.max(worker.__agecordHighWater ?? 0, byteLength);
     _postToWorker(worker, msgArgs, transfers);
   } catch (e) {
     settle(reject, e);   // a synchronous throw (DataCloneError, Worker ctor) must not wedge the queue
@@ -2664,7 +2664,7 @@ function _dispatchNextMediaOp() {
 function _maybeRecycleMediaWorker(worker) {
   if (!worker || worker !== _mediaWorker) return;
   if (_mediaQueue.length !== 0 || _mediaWorkerPending.size !== 0) return;
-  if ((worker.__ageHighWater ?? 0) < MEDIA_WORKER_RECYCLE_BYTES) return;
+  if ((worker.__agecordHighWater ?? 0) < MEDIA_WORKER_RECYCLE_BYTES) return;
   _mediaWorker = null;       // the next op spawns a fresh worker and replays the identity from the session
   _terminateWorker(worker);
 }
@@ -2907,7 +2907,7 @@ function _runLottiePlayer(canvas, stickerId, target) {
   // Fatal for this sticker: report, free everything, leave the canvas empty (nothing visible).
   const fail = (err) => {
     if (state === 'dead') return;
-    console.error('[age] Lottie sticker failed:', err);
+    console.error('[agecord] Lottie sticker failed:', err);
     dispose();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
@@ -3024,7 +3024,7 @@ const _blocked = (message) => Object.assign(new Error(message), { code: 'BLOCKED
 function listenForInterceptorMessages() {
   window.addEventListener('message', async (e) => {
     if (e.source !== window) return;
-    if (e.data?.type !== 'AGE_ENCRYPT_FILE') return;
+    if (e.data?.type !== 'AGECORD_ENCRYPT_FILE') return;
 
     const { requestId, fileName, mimeType } = e.data;
     const plainBuffer = e.data.buffer;
@@ -3037,7 +3037,7 @@ function listenForInterceptorMessages() {
     if (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 64) return;
 
     // ACK before any await — upload-interceptor.js's ACK_TIMEOUT_MS (2 s) detects bridge failures.
-    window.postMessage({ type: 'AGE_ENCRYPT_FILE_ACK', requestId }, PAGE_ORIGIN);
+    window.postMessage({ type: 'AGECORD_ENCRYPT_FILE_ACK', requestId }, PAGE_ORIGIN);
 
     let counted = false;
     try {
@@ -3091,7 +3091,7 @@ function listenForInterceptorMessages() {
 
       // Transfer back to page context — zero-copy.
       window.postMessage(
-        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, buffer: signed, encryptedName: anonymizeFileName(fileName, mimeType) },
+        { type: 'AGECORD_ENCRYPT_FILE_RESULT', requestId, buffer: signed, encryptedName: anonymizeFileName(fileName, mimeType) },
         PAGE_ORIGIN,
         [signed]
       );
@@ -3100,9 +3100,9 @@ function listenForInterceptorMessages() {
       if (isArrayBuffer(plainBuffer)) new Uint8Array(plainBuffer).fill(0);
       // Gate passthrough (off/locked/no contact) and size/recipient refusals are expected, not bugs.
       const expected = err?.code === 'PASSTHROUGH' || /^(File too large|No recipients)/.test(err?.message ?? '');
-      (expected ? console.info : console.error)('[age] AGE_ENCRYPT_FILE error requestId=%s:', requestId, err?.message ?? err);
+      (expected ? console.info : console.error)('[agecord] AGECORD_ENCRYPT_FILE error requestId=%s:', requestId, err?.message ?? err);
       window.postMessage(
-        { type: 'AGE_ENCRYPT_FILE_RESULT', requestId, error: err?.code ? err.message : 'Encryption failed.', errorCode: err?.code ?? 'BLOCKED' },
+        { type: 'AGECORD_ENCRYPT_FILE_RESULT', requestId, error: err?.code ? err.message : 'Encryption failed.', errorCode: err?.code ?? 'BLOCKED' },
         PAGE_ORIGIN
       );
     } finally {
@@ -3114,13 +3114,13 @@ function listenForInterceptorMessages() {
   // MAX_INLINE_MESSAGE_CHARS, producing message.txt.age.
   window.addEventListener('message', async (e) => {
     if (e.source !== window) return;
-    if (e.data?.type !== 'AGE_ENCRYPT_TEXT_MESSAGE') return;
+    if (e.data?.type !== 'AGECORD_ENCRYPT_TEXT_MESSAGE') return;
 
     const { requestId, text, channelId: msgChannelId, guildId: msgGuildId } = e.data;
     if (typeof requestId !== 'string' || requestId.length === 0 || requestId.length > 64) return;
 
     // ACK before any await — upload-interceptor.js's ACK_TIMEOUT_MS (2 s) detects bridge failures.
-    window.postMessage({ type: 'AGE_ENCRYPT_TEXT_MESSAGE_ACK', requestId }, PAGE_ORIGIN);
+    window.postMessage({ type: 'AGECORD_ENCRYPT_TEXT_MESSAGE_ACK', requestId }, PAGE_ORIGIN);
 
     let counted = false;
     try {
@@ -3139,7 +3139,7 @@ function listenForInterceptorMessages() {
       }
 
       // Both ids passed explicitly — see getActiveEntry's doc comment.
-      await _awaitBootUnlock(); // see AGE_ENCRYPT_FILE
+      await _awaitBootUnlock(); // see AGECORD_ENCRYPT_FILE
       const gate = resolveUploadGate(msgChannelId, msgGuildId ?? null);
       if (gate.outcome !== 'encrypt') {
         throw Object.assign(new Error(gate.reason), { code: gate.outcome.toUpperCase() });
@@ -3148,16 +3148,16 @@ function listenForInterceptorMessages() {
       const fileBytes = await encryptTextAsMessage(text, gate.entry, msgChannelId);
 
       window.postMessage(
-        { type: 'AGE_ENCRYPT_TEXT_MESSAGE_RESULT', requestId, buffer: fileBytes.buffer },
+        { type: 'AGECORD_ENCRYPT_TEXT_MESSAGE_RESULT', requestId, buffer: fileBytes.buffer },
         PAGE_ORIGIN,
         [fileBytes.buffer]
       );
     } catch (err) {
       // Gate passthrough (off/locked/no contact) and size/recipient refusals are expected, not bugs.
       const expected = err?.code === 'PASSTHROUGH' || /^(File too large|No recipients)/.test(err?.message ?? '');
-      (expected ? console.info : console.error)('[age] AGE_ENCRYPT_TEXT_MESSAGE error requestId=%s:', requestId, err?.message ?? err);
+      (expected ? console.info : console.error)('[agecord] AGECORD_ENCRYPT_TEXT_MESSAGE error requestId=%s:', requestId, err?.message ?? err);
       window.postMessage(
-        { type: 'AGE_ENCRYPT_TEXT_MESSAGE_RESULT', requestId, error: err?.code ? err.message : 'Encryption failed.', errorCode: err?.code ?? 'BLOCKED' },
+        { type: 'AGECORD_ENCRYPT_TEXT_MESSAGE_RESULT', requestId, error: err?.code ? err.message : 'Encryption failed.', errorCode: err?.code ?? 'BLOCKED' },
         PAGE_ORIGIN
       );
     } finally {
@@ -3170,7 +3170,7 @@ function listenForInterceptorMessages() {
 // Unconfigured channels pass uploads through to Discord.
 function relayInterceptorState(unlocked) {
   const active = (unlocked && _globalOn) ? !!getActiveEntry() : false;
-  window.postMessage({ type: 'AGE_INTERCEPTOR_STATE', unlocked: unlocked && _globalOn, activeEntry: active }, PAGE_ORIGIN);
+  window.postMessage({ type: 'AGECORD_INTERCEPTOR_STATE', unlocked: unlocked && _globalOn, activeEntry: active }, PAGE_ORIGIN);
 }
 
 // Evicts non-DOM message cache entries and revokes blob URLs.
@@ -3232,8 +3232,8 @@ function _unlockPayloadProblem(payload) {
       !IDENTITY_LINE_PREFIXES.some(pfx => payload.identityLine.startsWith(pfx)))
     return 'identityLine is missing or malformed';
   if (!_isPlainObject(payload.contacts)) return 'contacts is not a plain object';
-  if (payload.ageRecipient != null && !_recipientShapeOk(payload.ageRecipient))
-    return 'ageRecipient is malformed';
+  if (payload.agecordRecipient != null && !_recipientShapeOk(payload.agecordRecipient))
+    return 'agecordRecipient is malformed';
   return null;
 }
 
@@ -3243,7 +3243,7 @@ function applyUnlockPayload(payload) {
   const problem = _unlockPayloadProblem(payload);
   if (problem) {
     // Never half-apply: leave whatever session already existed untouched.
-    console.error('[age] unlock payload rejected:', problem);
+    console.error('[agecord] unlock payload rejected:', problem);
     return;
   }
   const mldsaSeedBytes = fromB64(payload.mldsaSeedB64); // 32-byte ML-DSA-87 seed
@@ -3255,7 +3255,7 @@ function applyUnlockPayload(payload) {
   _setSession({
     mldsaSeedBytes,
     cachedIdentityLine: payload.identityLine,
-    selfRecipient:      payload.ageRecipient || null,
+    selfRecipient:      payload.agecordRecipient || null,
     contacts:           payload.contacts,
     contactsLoaded:     true,
   });
@@ -3279,7 +3279,7 @@ function applyUnlockPayload(payload) {
       relayInterceptorState(false);
     }
   } catch (e) {
-    console.error('[age] unlock error:', e);
+    console.error('[agecord] unlock error:', e);
   } finally {
     _syncDisplayToSession();
   }
@@ -3291,7 +3291,7 @@ function listenForMessages() {
   // work runs in handleBackgroundMessage, whose failures are logged here.
   browser.runtime.onMessage.addListener((msg) => {
     handleBackgroundMessage(msg)
-      .catch(e => console.error('[age] background message handler failed:', e?.message ?? e));
+      .catch(e => console.error('[agecord] background message handler failed:', e?.message ?? e));
   });
 
   async function handleBackgroundMessage(msg) {
@@ -3312,7 +3312,7 @@ function listenForMessages() {
       if (_session) {
         if (_isPlainObject(msg.contacts)) _session.contacts = msg.contacts;
         _session.contactsLoaded = true;
-        if (_recipientShapeOk(msg.ageRecipient)) _session.selfRecipient = msg.ageRecipient;
+        if (_recipientShapeOk(msg.agecordRecipient)) _session.selfRecipient = msg.agecordRecipient;
       }
       // Always re-relay when contacts change while unlocked so activeEntry in
       // upload-interceptor.js tracks the latest contacts.
@@ -3339,7 +3339,7 @@ function listenForMessages() {
     if (msg?.type === 'RELOCK') {
       _clearSession();
       // Never let a worker hiccup stop the UI from locking (the wipe itself already ran in a finally).
-      try { _wipeAttachmentState({ workers: 'relock' }); } catch (e) { console.error('[age] relock: worker RELOCK failed:', e); }
+      try { _wipeAttachmentState({ workers: 'relock' }); } catch (e) { console.error('[agecord] relock: worker RELOCK failed:', e); }
       detachEnterHook();
       relayInterceptorState(false);
       showAllPlaceholders('locked');
@@ -3364,7 +3364,7 @@ async function requestUnlock() {
     const resp = await browser.runtime.sendMessage({ type: 'REQUEST_UNLOCK' });
     if (resp?.ok) await applyUnlockPayload(resp);
   } catch (e) {
-    console.info('[age] REQUEST_UNLOCK failed:', e?.message);
+    console.info('[agecord] REQUEST_UNLOCK failed:', e?.message);
   }
 }
 
@@ -3556,9 +3556,9 @@ function _buildDownloadCard(url, strippedName) {
 // Keep decrypted media at final size, but blurred, inert, and unfocusable until clicked.
 // Wrap only the media; keep the .agc-att-row lock mark visible.
 // Use the full key to avoid attachment collisions; compare in JS, never interpolate into selectors.
-function _attachmentCardKey(urlOrName) { return 'age-att-' + String(urlOrName); }
+function _attachmentCardKey(urlOrName) { return 'agecord-att-' + String(urlOrName); }
 function _attachmentWrappers(liElement, cardKey) {
-  return [...liElement.querySelectorAll('[data-age-attachment]')].filter(el => el.dataset.ageAttachment === cardKey);
+  return [...liElement.querySelectorAll('[data-agecord-attachment]')].filter(el => el.dataset.agecordAttachment === cardKey);
 }
 
 function _wrapAttachmentSpoiler(content, cardKey) {
@@ -3600,7 +3600,7 @@ function _wrapAttachmentSpoiler(content, cardKey) {
 }
 
 function renderDecryptedAttachment(liElement, fileCard, url, originalName, type, cdnUrl) {
-  const strippedName = stripAgeSuffix(originalName);
+  const strippedName = stripAgecordSuffix(originalName);
 
   const isSpoiler = isSpoilerAttachment(fileCard);
   const mosaicItem = hideFileCard(fileCard);
@@ -3611,13 +3611,13 @@ function renderDecryptedAttachment(liElement, fileCard, url, originalName, type,
   const cardKey = _attachmentCardKey(cdnUrl ?? originalName);
   _attachmentWrappers(liElement, cardKey).forEach(el => el.remove());
 
-  // Clear any unslotted [data-age-msg] placeholder (message.txt.age clears at decrypt-start;
+  // Clear any unslotted [data-agecord-msg] placeholder (message.txt.age clears at decrypt-start;
   // media files clear here, just before inserting the player/image/download).
-  liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
+  liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])')
     .forEach(el => { _discardMsgWrapper(el); });
 
   const wrapper = document.createElement('div');
-  wrapper.dataset.ageAttachment = cardKey;
+  wrapper.dataset.agecordAttachment = cardKey;
   wrapper.className = 'agc agc-att';
 
   let body;
@@ -3656,14 +3656,14 @@ function isForwardedAttachment(root) {
 
 // ─── Large-file confirmation prompt ──────────────────────────────────────────
 
-// Replaces the existing [data-age-msg] spinner with a compact tonal card.
+// Replaces the existing [data-agecord-msg] spinner with a compact tonal card.
 // Resolves true when the user clicks "Decrypt anyway", or false if
 // _generation changes (RELOCK / disable) while the prompt is visible.
 function showLargeFilePrompt(liElement, spinnerWrapper, originalName, byteLength, capturedGen) {
   // Always shown in MiB (we divide by 1024*1024); only invoked for files > LARGE_FILE_THRESHOLD.
   const sizeMib = (byteLength / (1024 * 1024)).toFixed(1);
   const thresholdMib = LARGE_FILE_THRESHOLD / (1024 * 1024);
-  const displayName = stripAgeSuffix(originalName);
+  const displayName = stripAgecordSuffix(originalName);
 
   // Repurpose the spinner wrapper as the prompt card — preserves DOM position.
   const wrapper = spinnerWrapper;
@@ -3795,7 +3795,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
             renderDecryptedMessage(liElement, cached, attachId, mosaicItem ?? fileCard);
           } catch (e) {
             // A cached plaintext that cannot be rendered must not throw outside any try on every re-render.
-            console.error('[age] cached message render failed:', e?.message ?? e);
+            console.error('[agecord] cached message render failed:', e?.message ?? e);
             _releaseEntry(attachId);
             try { renderDecryptedMessage(liElement, _status("Couldn't display message.", 'lock-open'), attachId, mosaicItem ?? fileCard); } catch { }
           }
@@ -3814,9 +3814,9 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
     // call for the same attachId can await it.
     const finishTask = _beginTask(attachId);
 
-    // A placeholder from showAgePlaceholder (locked/disabled) has no slot key —
+    // A placeholder from showAgecordPlaceholder (locked/disabled) has no slot key —
     // clear it now so it doesn't survive alongside the result.
-    liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
+    liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])')
       .forEach(el => { _discardMsgWrapper(el); });
 
     const capturedGeneration = _generation;
@@ -3916,7 +3916,7 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
       try {
         renderDecryptedMessage(liElement, plaintext, attachId, mosaicItem ?? fileCard);
       } catch (re) {
-        console.error('[age] message render failed:', re?.message ?? re);
+        console.error('[agecord] message render failed:', re?.message ?? re);
         renderDecryptedMessage(liElement, _status("Couldn't display message.", 'lock-open'), attachId, mosaicItem ?? fileCard);
         return;
       }
@@ -3933,17 +3933,17 @@ async function _processEncryptedTextMessage(liElement, fileCard, cdnUrl, origina
       const _errMosaicItem = hideFileCard(fileCard);
       if ((e?.message ?? e) === 'NOT_UNLOCKED') {
         // NOT_UNLOCKED indicates a worker-state race; otherwise treat it as a regression.
-        console.error('[age] NOT_UNLOCKED decrypting text attachment — worker desynced from session state:', { attachId });
+        console.error('[agecord] NOT_UNLOCKED decrypting text attachment — worker desynced from session state:', { attachId });
         renderDecryptedMessage(liElement, _status('Extension locked.', 'lock'), attachId, _errMosaicItem ?? fileCard);
         return;
       }
       const _tf = _transportFailureStatus(e);
       if (_tf) {
-        console.info('[age] message.txt.age not decrypted:', e?.code ?? e?.message);
+        console.info('[agecord] message.txt.age not decrypted:', e?.code ?? e?.message);
         renderDecryptedMessage(liElement, _tf, attachId, _errMosaicItem ?? fileCard);
         return;
       }
-      console.info('[age] message.txt.age decrypt skipped (not a valid age file or not encrypted):', e?.message ?? e);
+      console.info('[agecord] message.txt.age decrypt skipped (not a valid Agecord file or not encrypted):', e?.message ?? e);
       renderDecryptedMessage(liElement, _status("Couldn't decrypt.", 'lock-open'), attachId, _errMosaicItem ?? fileCard);
     } finally {
       // Single release point for every exit above.
@@ -4018,7 +4018,7 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
       const totalBytes = probe.totalBytes;
 
       // Capture the spinner wrapper so showLargeFilePrompt can mutate it in-place.
-      const spinnerWrapper = liElement.querySelector('[data-age-msg]:not([data-age-msg-slot])');
+      const spinnerWrapper = liElement.querySelector('[data-agecord-msg]:not([data-agecord-msg-slot])');
       if (totalBytes > LARGE_FILE_THRESHOLD) {
         const confirmed = await showLargeFilePrompt(
           liElement, spinnerWrapper, originalName, totalBytes, capturedGeneration
@@ -4085,21 +4085,21 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     if (_generation !== capturedGeneration) return;
 
     if (!workerResult.sigValid) {
-      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
+      liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])')
         .forEach(el => { _discardMsgWrapper(el); });
       renderDecryptedMessage(liElement, _sigFailureStatus(workerResult), undefined, _attMosaicItem ?? fileCard);
       return;
     }
 
     if (workerResult.reason === 'not-recipient') {
-      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
+      liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])')
         .forEach(el => { _discardMsgWrapper(el); });
       renderDecryptedMessage(liElement, _notRecipientStatus(), undefined, _attMosaicItem ?? fileCard);
       return;
     }
 
     const type     = classifyFile(originalName);
-    const ext      = stripAgeSuffix(originalName).split('.').pop().toLowerCase();
+    const ext      = stripAgecordSuffix(originalName).split('.').pop().toLowerCase();
     const mimeType = { image: 'image/' + ext, video: 'video/' + ext, audio: 'audio/' + ext }[type]
                   ?? 'application/octet-stream';
 
@@ -4119,10 +4119,10 @@ async function _processEncryptedMediaAttachment(liElement, fileCard, cdnUrl, ori
     if (_generation !== capturedGeneration) return;
     if (!isContextValid()) return;
     // Transport/size refusals are handled outcomes (shown as a status), not extension errors.
-    if (_transportFailureStatus(e)) console.info('[age] attachment not decrypted:', e?.code ?? e?.message);
-    else console.error('[age] attachment decrypt error:', e?.message ?? e);
+    if (_transportFailureStatus(e)) console.info('[agecord] attachment not decrypted:', e?.code ?? e?.message);
+    else console.error('[agecord] attachment decrypt error:', e?.message ?? e);
     // Replace the "Decrypting…" placeholder with an error badge.
-    liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])')
+    liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])')
       .forEach(el => { _discardMsgWrapper(el); });
     if ((e?.message ?? e) === 'NOT_UNLOCKED') {
       // Only expected for a RELOCK race; already logged by the catch handler.
@@ -4208,22 +4208,22 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
   _resetRelBudget();   // fresh live-timer budget per rendered message
   if (slotKey) {
     // Remove this slot's existing wrapper.
-    liElement.querySelectorAll('[data-age-msg-slot]').forEach(el => {
-      if (el.dataset.ageMsgSlot === slotKey) { _discardMsgWrapper(el); }
+    liElement.querySelectorAll('[data-agecord-msg-slot]').forEach(el => {
+      if (el.dataset.agecordMsgSlot === slotKey) { _discardMsgWrapper(el); }
     });
     // A final result (non-spinner) also clears any unslotted wrapper so two
     // status badges never appear at the same time.
     if (plaintext !== null) {
-      liElement.querySelectorAll('[data-age-msg]:not([data-age-msg-slot])').forEach(el => { _discardMsgWrapper(el); });
+      liElement.querySelectorAll('[data-agecord-msg]:not([data-agecord-msg-slot])').forEach(el => { _discardMsgWrapper(el); });
     }
   } else {
-    // Unslotted — clear ALL [data-age-msg] wrappers including per-slot ones.
-    liElement.querySelectorAll('[data-age-msg]').forEach(el => { _discardMsgWrapper(el); });
+    // Unslotted — clear ALL [data-agecord-msg] wrappers including per-slot ones.
+    liElement.querySelectorAll('[data-agecord-msg]').forEach(el => { _discardMsgWrapper(el); });
   }
 
   const wrapper = document.createElement('div');
-  wrapper.dataset.ageMsg = '1';
-  if (slotKey) wrapper.dataset.ageMsgSlot = slotKey;
+  wrapper.dataset.agecordMsg = '1';
+  if (slotKey) wrapper.dataset.agecordMsgSlot = slotKey;
   // .agc-msg sets overflow-wrap:anywhere (breaks long unbreakable tokens such as
   // URLs and base64) and min-width:0 (lets flex children shrink below content size).
   wrapper.className = 'agc agc-msg';
@@ -4238,7 +4238,7 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
     // Cap at MAX_INLINE_MESSAGE_CHARS — senders already enforce this, but guard anyway
     // to prevent runaway DOM growth from crafted messages.
     if (plaintext.length > MAX_INLINE_MESSAGE_CHARS) {
-      console.info('[age] message truncated for display: %d of %d characters shown', MAX_INLINE_MESSAGE_CHARS, plaintext.length);
+      console.info('[agecord] message truncated for display: %d of %d characters shown', MAX_INLINE_MESSAGE_CHARS, plaintext.length);
     }
     const truncated = plaintext.length > MAX_INLINE_MESSAGE_CHARS;
     let displayText = truncated ? plaintext.slice(0, MAX_INLINE_MESSAGE_CHARS) : plaintext;
@@ -4269,7 +4269,7 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
 
 // ─── Placeholder display ──────────────────────────────────────────────────────
 
-// showAgePlaceholder(li, reason): hides .age attachments, clears render
+// showAgecordPlaceholder(li, reason): hides .age attachments, clears render
 // wrappers, and inserts a status badge.
 
 // showAllPlaceholders(reason): updates all visible chat items.
@@ -4279,9 +4279,9 @@ function renderDecryptedMessage(liElement, plaintext, slotKey, insertAfter) {
 //   'locked'   → Extension locked.
 //   'disabled' → Decryption disabled.
 
-function showAgePlaceholder(li, reason) {
+function showAgecordPlaceholder(li, reason) {
   const nameLinks = li.querySelectorAll(FILE_LINK_SEL);
-  let hasAgeFile = false;
+  let hasAgecordFile = false;
   // Track the last hidden card/mosaic as an insertAfter anchor, placing the
   // status badge right after the hidden file card — matching
   // processEncryptedAttachment behaviour.
@@ -4289,7 +4289,7 @@ function showAgePlaceholder(li, reason) {
 
   for (const nameEl of nameLinks) {
     if (!(nameEl.textContent?.trim() ?? '').endsWith('.age')) continue;
-    hasAgeFile = true;
+    hasAgecordFile = true;
 
     const fileCard = nameEl.closest('div[class*="file_"]');
     const mosaicItem = hideFileCard(fileCard);
@@ -4297,9 +4297,9 @@ function showAgePlaceholder(li, reason) {
     lastAnchor = mosaicItem ?? fileCard ?? lastAnchor;
   }
 
-  if (!hasAgeFile) return;
+  if (!hasAgecordFile) return;
 
-  li.querySelectorAll('[data-age-msg], [data-age-msg-slot], [data-age-attachment]')
+  li.querySelectorAll('[data-agecord-msg], [data-agecord-msg-slot], [data-agecord-attachment]')
     .forEach(el => { _discardMsgWrapper(el); });
 
   const text = reason === 'disabled'
@@ -4311,7 +4311,7 @@ function showAgePlaceholder(li, reason) {
 
 function showAllPlaceholders(reason) {
   document.querySelectorAll('li[id^="chat-messages-"]')
-    .forEach(li => showAgePlaceholder(li, reason));
+    .forEach(li => showAgecordPlaceholder(li, reason));
   showQuotedPlaceholders(reason);
 }
 
@@ -4326,8 +4326,8 @@ const FILE_LINK_SEL =
 // with U+FFFD. Each root contains at most a few wrappers.
 
 function _rootShowsSlot(root, attachId) {
-  for (const el of root.querySelectorAll('[data-age-msg-slot]')) {
-    if (el.dataset.ageMsgSlot === attachId) return true;
+  for (const el of root.querySelectorAll('[data-agecord-msg-slot]')) {
+    if (el.dataset.agecordMsgSlot === attachId) return true;
   }
   return false;
 }
@@ -4367,7 +4367,7 @@ function _scanForEncryptedAttachments(root, keyFn, { checkExtraGuards = false } 
 
     processEncryptedAttachment(root, fileCard, cdnUrl, rawName, _previousRoot).catch(e => {
       _attachmentInProgress.delete(attachId);
-      console.error('[age] attachment task failed:', e?.message ?? e);
+      console.error('[agecord] attachment task failed:', e?.message ?? e);
     });
   }
 }
@@ -4444,8 +4444,8 @@ _bootUnlock = requestUnlock();
 listenForInterceptorMessages();
 
 if (document.body) {
-  init().catch(e => console.error('[age] init error:', e));
+  init().catch(e => console.error('[agecord] init error:', e));
 } else {
-  document.addEventListener('DOMContentLoaded', () => init().catch(e => console.error('[age] init error:', e)));
+  document.addEventListener('DOMContentLoaded', () => init().catch(e => console.error('[agecord] init error:', e)));
 }
 })();
