@@ -41,8 +41,6 @@
     --agc-ease-effects: cubic-bezier(.2, 0, 0, 1);
   }
 
-  &.theme-light .agc { color-scheme: light; }
-
   @media (prefers-contrast: more) {
     .agc {
       --agc-hair:  light-dark(oklch(.2 .02 var(--agc-cool) / .45), oklch(1 0 0 / .38));
