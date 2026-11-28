@@ -25,7 +25,7 @@ const _wasmReady = _rustcryptoInit();
 let _identity          = null;
 let _contactsKeyBytes  = null; // raw Uint8Array, derived by popup's crypto-worker
 let _contacts          = {};
-let _ageRecipient      = null;
+let _agecordRecipient      = null;
 let _globalOn          = true; // owned here; copied in from the popup
 
 // Restrict storage.local to trusted contexts.
@@ -38,7 +38,7 @@ let _globalOn          = true; // owned here; copied in from the popup
     await area.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
     return true;
   } catch (e) {
-    console.info('[age] storage.local setAccessLevel failed:', e?.message);
+    console.info('[agecord] storage.local setAccessLevel failed:', e?.message);
     return false;
   }
 })();
@@ -90,9 +90,9 @@ function encryptContacts(jsonStr) {
 // Keys held in browser.storage.session; shared by ensureIdentity's read and
 // RELOCK's clear so the two can't silently drift out of sync.
 
-// age_contacts_key mirrors _contactsKeyBytes and is written atomically with
+// agecord_contacts_key mirrors _contactsKeyBytes and is written atomically with
 // identity so service-worker wake cannot restore them independently.
-const SESSION_KEYS = ['age_unlocked', 'age_identity', 'age_contacts', 'age_recipient', 'age_contacts_key', 'age_global_on'];
+const SESSION_KEYS = ['agecord_unlocked', 'agecord_identity', 'agecord_contacts', 'agecord_recipient', 'agecord_contacts_key', 'agecord_global_on'];
 
 // Restores identity, contacts, and key from session storage.
 // Discards stale results superseded by RELOCK or a newer UNLOCK.
@@ -102,18 +102,18 @@ async function ensureIdentity() {
   try {
     const d = await browser.storage.session.get(SESSION_KEYS);
     if (_epoch !== myEpoch) return _identity !== null; // superseded mid-read
-    if (!d.age_unlocked || !d.age_identity) return false;
-    _identity = d.age_identity;
-    if (d.age_contacts && typeof d.age_contacts === 'object') _contacts = d.age_contacts;
-    if (d.age_recipient) _ageRecipient = d.age_recipient;
-    if (typeof d.age_global_on === 'boolean') _globalOn = d.age_global_on;
-    if (d.age_contacts_key) {
+    if (!d.agecord_unlocked || !d.agecord_identity) return false;
+    _identity = d.agecord_identity;
+    if (d.agecord_contacts && typeof d.agecord_contacts === 'object') _contacts = d.agecord_contacts;
+    if (d.agecord_recipient) _agecordRecipient = d.agecord_recipient;
+    if (typeof d.agecord_global_on === 'boolean') _globalOn = d.agecord_global_on;
+    if (d.agecord_contacts_key) {
       _contactsKeyBytes?.fill(0);
-      _contactsKeyBytes = fromB64(d.age_contacts_key);
+      _contactsKeyBytes = fromB64(d.agecord_contacts_key);
     }
     return true;
   } catch (e) {
-    console.error('[age] ensureIdentity: session read failed:', e?.message);
+    console.error('[agecord] ensureIdentity: session read failed:', e?.message);
     return false;
   }
 }
@@ -129,18 +129,18 @@ function buildUnlockPayload() {
     const identityLine = _identity.split('\n')[0];
     if (!identityLine) {
       // Empty identityLine means malformed identity, not a locked state.
-      console.error('[age] buildUnlockPayload: identityLine is empty — identity blob is malformed');
+      console.error('[agecord] buildUnlockPayload: identityLine is empty — identity blob is malformed');
     }
     return {
       mldsaSeedB64: toB64(getMldsaSeed(_identity)),
       identityLine,
       contacts:     _contacts,
-      ageRecipient: _ageRecipient,
+      agecordRecipient: _agecordRecipient,
       globalOn:     _globalOn,
     };
   } catch (e) {
     // A malformed blob must not throw out of the callers.
-    console.error('[age] buildUnlockPayload failed:', e?.message);
+    console.error('[agecord] buildUnlockPayload failed:', e?.message);
     return null;
   }
 }
@@ -153,7 +153,7 @@ async function sendUnlockToTab(tabId) {
   try {
     await browser.tabs.sendMessage(tabId, { type: 'UNLOCK', ...payload });
   } catch (e) {
-    console.info(`[age] sendUnlockToTab: tab ${tabId} not reachable, will self-heal via its own pull:`, e?.message);
+    console.info(`[agecord] sendUnlockToTab: tab ${tabId} not reachable, will self-heal via its own pull:`, e?.message);
   }
 }
 
@@ -167,7 +167,7 @@ async function broadcastToTabs(payload) {
   const tabs = await getDiscordTabs();
   for (const tab of tabs) {
     browser.tabs.sendMessage(tab.id, payload)
-      .catch(e => console.info(`[age] broadcastToTabs: tab ${tab.id} did not receive ${payload.type}:`, e?.message));
+      .catch(e => console.info(`[agecord] broadcastToTabs: tab ${tab.id} did not receive ${payload.type}:`, e?.message));
   }
 }
 
@@ -181,36 +181,36 @@ function handleUnlock(msg, _sender, sendResponse) {
       _epoch++; // supersede any in-flight ensureIdentity()/RELOCK race
       _identity     = msg.identity;
       _contacts     = msg.contacts     ?? _contacts;
-      _ageRecipient = msg.ageRecipient ?? _ageRecipient;
+      _agecordRecipient = msg.agecordRecipient ?? _agecordRecipient;
       if (typeof msg.globalOn === 'boolean') _globalOn = msg.globalOn;
       if (msg.contactsKeyB64) {
         _contactsKeyBytes?.fill(0);
         _contactsKeyBytes = fromB64(msg.contactsKeyB64);
       }
       // Atomic session write; roll back if _epoch changes during the write to prevent
-      // RELOCK races from resurrecting age_unlocked state.
+      // RELOCK races from resurrecting agecord_unlocked state.
       const myEpoch = _epoch;
-      // age_contacts_key is written only when a key is held: an UNLOCK without
+      // agecord_contacts_key is written only when a key is held: an UNLOCK without
       // one must never overwrite a key that is already in the session.
-      // age_contacts is written separately so an over-quota list
+      // agecord_contacts is written separately so an over-quota list
       // drops only the mirror, never the unlock.
       await browser.storage.session.set({
-        age_unlocked:  true,
-        age_identity:  _identity,
-        age_recipient: _ageRecipient,
-        age_global_on: _globalOn,
-        ...(_contactsKeyBytes ? { age_contacts_key: toB64(_contactsKeyBytes) } : {}),
+        agecord_unlocked:  true,
+        agecord_identity:  _identity,
+        agecord_recipient: _agecordRecipient,
+        agecord_global_on: _globalOn,
+        ...(_contactsKeyBytes ? { agecord_contacts_key: toB64(_contactsKeyBytes) } : {}),
       });
       try {
-        await browser.storage.session.set({ age_contacts: _contacts });
+        await browser.storage.session.set({ agecord_contacts: _contacts });
       } catch (e) {
-        console.warn('[age] UNLOCK: contacts mirror not stored in session:', e?.message);
-        await browser.storage.session.remove('age_contacts').catch(() => {});
+        console.warn('[agecord] UNLOCK: contacts mirror not stored in session:', e?.message);
+        await browser.storage.session.remove('agecord_contacts').catch(() => {});
       }
       if (_epoch !== myEpoch) {
         // Superseded during the write; remove the stale identity from storage.
         await browser.storage.session.remove(SESSION_KEYS)
-          .catch(e => console.error('[age] UNLOCK post-RELOCK cleanup failed:', e?.message));
+          .catch(e => console.error('[agecord] UNLOCK post-RELOCK cleanup failed:', e?.message));
         sendResponse({ ok: false, error: 'superseded' });
         return;
       }
@@ -222,7 +222,7 @@ function handleUnlock(msg, _sender, sendResponse) {
       await Promise.all(tabs.map(tab => sendUnlockToTab(tab.id)));
       sendResponse({ ok: true });
     } catch (e) {
-      console.error('[age] UNLOCK error:', e?.message);
+      console.error('[agecord] UNLOCK error:', e?.message);
       sendResponse({ ok: false, error: e?.message ?? String(e) });
     }
   })();
@@ -242,16 +242,16 @@ function handleRelock(_msg, _sender, sendResponse) {
   _identity = null;
   _contactsKeyBytes?.fill(0);
   _contactsKeyBytes = null;
-  _contacts = {}; _ageRecipient = null; _globalOn = true;
+  _contacts = {}; _agecordRecipient = null; _globalOn = true;
   // Clear session storage before async work so concurrent ensureIdentity() sees
-  // age_unlocked=false, aborts, and can't restore stale identity after relock.
+  // agecord_unlocked=false, aborts, and can't restore stale identity after relock.
   
   // The epoch bump above additionally covers reads that already passed that
   // check and are waiting on their own .get() to resolve.
   browser.storage.session.remove(SESSION_KEYS)
-    .catch(e => console.error('[age] RELOCK session clear failed:', e?.message));
+    .catch(e => console.error('[agecord] RELOCK session clear failed:', e?.message));
   broadcastToTabs({ type: 'RELOCK' })
-    .catch(e => console.error('[age] RELOCK broadcast failed:', e?.message));
+    .catch(e => console.error('[agecord] RELOCK broadcast failed:', e?.message));
   sendResponse({ ok: true });
   return false;
 }
@@ -262,7 +262,7 @@ function handleReloadDiscordTabs(_msg, _sender, sendResponse) {
       const tabs = await getDiscordTabs();
       for (const t of tabs) browser.tabs.reload(t.id);
     } catch (e) {
-      console.error('[age] RELOAD_DISCORD_TABS failed:', e?.message);
+      console.error('[agecord] RELOAD_DISCORD_TABS failed:', e?.message);
     }
   })();
   sendResponse({ ok: true });
@@ -280,7 +280,7 @@ function handleContactsUpdated(msg, _sender, sendResponse) {
 
       if (msg.contacts && typeof msg.contacts === 'object' && !Array.isArray(msg.contacts))
         _contacts = msg.contacts;
-      if (typeof msg.ageRecipient === 'string' && msg.ageRecipient) _ageRecipient = msg.ageRecipient;
+      if (typeof msg.agecordRecipient === 'string' && msg.agecordRecipient) _agecordRecipient = msg.agecordRecipient;
       if (typeof msg.globalOn === 'boolean') _globalOn = msg.globalOn;
 
       // Sync session storage; re-check _epoch after set() so a RELOCK race
@@ -288,28 +288,28 @@ function handleContactsUpdated(msg, _sender, sendResponse) {
       const myEpoch = _epoch;
       try {
         await browser.storage.session.set({
-          age_recipient: _ageRecipient,
-          age_global_on: _globalOn,
+          agecord_recipient: _agecordRecipient,
+          agecord_global_on: _globalOn,
         });
         try {
-          await browser.storage.session.set({ age_contacts: _contacts });
+          await browser.storage.session.set({ agecord_contacts: _contacts });
         } catch (e) {
-          console.warn('[age] CONTACTS_UPDATED: contacts mirror not stored in session:', e?.message);
-          await browser.storage.session.remove('age_contacts').catch(() => {});
+          console.warn('[agecord] CONTACTS_UPDATED: contacts mirror not stored in session:', e?.message);
+          await browser.storage.session.remove('agecord_contacts').catch(() => {});
         }
         if (_epoch !== myEpoch) {
           await browser.storage.session.remove(SESSION_KEYS);
         }
       } catch (e) {
-        console.error('[age] CONTACTS_UPDATED session sync failed:', e?.message);
+        console.error('[agecord] CONTACTS_UPDATED session sync failed:', e?.message);
       }
       broadcastToTabs({
         type: 'CONTACTS_UPDATED',
-        contacts: _contacts, ageRecipient: _ageRecipient, globalOn: _globalOn,
+        contacts: _contacts, agecordRecipient: _agecordRecipient, globalOn: _globalOn,
       });
       sendResponse({ ok: true });
     } catch (e) {
-      console.error('[age] CONTACTS_UPDATED error:', e?.message);
+      console.error('[agecord] CONTACTS_UPDATED error:', e?.message);
       sendResponse({ ok: false, error: e?.message ?? String(e) });
     }
   })();
@@ -323,7 +323,7 @@ function handleEncryptContacts(msg, _sender, sendResponse) {
       await ensureIdentity(); // restore contacts key too if the SW just woke up
       sendResponse({ ok: true, ciphertextB64: encryptContacts(msg.json) });
     } catch (e) {
-      console.error('[age] ENCRYPT_CONTACTS error:', e?.message);
+      console.error('[agecord] ENCRYPT_CONTACTS error:', e?.message);
       sendResponse({ ok: false, error: e?.message ?? String(e) });
     }
   })();
@@ -342,7 +342,7 @@ function handleRequestUnlock(_msg, _sender, sendResponse) {
       if (!payload) { sendResponse({ ok: false }); return; }
       sendResponse({ ok: true, ...payload });
     } catch (e) {
-      console.error('[age] REQUEST_UNLOCK error:', e?.message);
+      console.error('[agecord] REQUEST_UNLOCK error:', e?.message);
       sendResponse({ ok: false, error: e?.message ?? String(e) });
     }
   })();
@@ -403,11 +403,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!handler) return false;
   const allowed = SENDER_POLICY[type];
   if (!allowed) {
-    console.error(`[age] ${type} has a handler but no SENDER_POLICY entry; rejected`);
+    console.error(`[agecord] ${type} has a handler but no SENDER_POLICY entry; rejected`);
     return false;
   }
   if (!allowed(sender)) {
-    console.warn(`[age] ${type} rejected: unauthorized sender`);
+    console.warn(`[agecord] ${type} rejected: unauthorized sender`);
     return false;
   }
   return handler(msg, sender, sendResponse);
